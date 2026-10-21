@@ -49,7 +49,7 @@ describe('Given a branch under review, ', { timeout: 300_000 }, () => {
   };
   const record = (): Record => JSON.parse(fs.readFileSync(recordPath()!, 'utf8'));
   const env = (more: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ UNTANGLE_NOTES_QUIET: '100', BROWSER: path.join(bin, 'browser.sh'), ...more });
-  const reviews = () => untangleCommand(['reviews'], { cacheDir: cache, gh, cwd: repo.dir, env: env() });
+  const reviews = () => untangleCommand(['reviews', '-list'], { cacheDir: cache, gh, cwd: repo.dir, env: env() });
   const start = async () => {
     run = await startUntangle(repo.dir, { cacheDir: cache, gh, base: 'main', env: env() });
     client = reviewClient(run.url);

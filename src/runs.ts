@@ -20,6 +20,8 @@ export interface RunInfo {
   title?: string;
   head?: string;
   started: string;
+  /** The page's tab in Orca, when the review opened it there. */
+  page?: string | null;
 }
 
 /** What a command looks for: a pull request, or a directory's repository and branch. */

@@ -152,6 +152,9 @@ function codexLog(chat: Chat): string | null {
   return null;
 }
 
+/** A Codex thread's log, found under its home by the day in its id. */
+export const chatLog = (c: Pick<Chat, 'id' | 'home'> & { kind: 'codex' }) => codexLog({ ...c, pid: null, started: null, bin: null, orca: null });
+
 /** The last time a turn started or ended in a Codex thread's log: busy since then, or not. */
 function codexBusy(file: string): { busy: boolean; since: number } | null {
   let fd: number;

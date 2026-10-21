@@ -57,8 +57,9 @@ const pageOf = (json: string): string | null => {
 
 // Inside Orca, its CLI opens a tab in Orca's browser, in the terminal's worktree. Orca opens it
 // behind the tab in front, so it's then brought to the front of that worktree: on screen when the
-// worktree is, and waiting there when another is.
-async function inOrca(url: string): Promise<boolean> {
+// worktree is, and waiting there when another is. The tab's page, which brings it back later; false
+// when Orca isn't there or didn't open it.
+async function inOrca(url: string): Promise<{ page: string | null } | false> {
   const cli = process.env.ORCA_CLI_COMMAND;
   if (!cli || !has(cli)) return false;
   const worktree = process.env.ORCA_WORKTREE_ID ? ['--worktree', 'id:' + process.env.ORCA_WORKTREE_ID] : [];
@@ -66,7 +67,7 @@ async function inOrca(url: string): Promise<boolean> {
   if (created == null) return false;
   const page = pageOf(created);
   if (page) await orca(cli, ['tab', 'switch', '--page', page, ...worktree, '--focus']);
-  return true;
+  return { page };
 }
 
 function launch(c: { cmd: string; args: string[]; cwd?: string }): boolean {
@@ -82,11 +83,16 @@ function launch(c: { cmd: string; args: string[]; cwd?: string }): boolean {
 
 /**
  * Opens the URL: with $BROWSER when it's set, in Orca's browser when untangle runs inside Orca
- * (falling back when that fails), else in the default browser. Says where, or null.
+ * (falling back when that fails), else in the default browser. Says where, with Orca's page for
+ * the tab it opened; null when nothing opened it.
  */
-export async function openBrowser(url: string): Promise<'orca' | 'browser' | null> {
-  if (process.env.BROWSER) return launch({ cmd: process.env.BROWSER, args: [url] }) ? 'browser' : null;
-  if (await inOrca(url)) return 'orca';
+export async function openPage(url: string): Promise<{ where: 'orca' | 'browser'; page: string | null } | null> {
+  if (process.env.BROWSER) return launch({ cmd: process.env.BROWSER, args: [url] }) ? { where: 'browser', page: null } : null;
+  const tab = await inOrca(url);
+  if (tab) return { where: 'orca', page: tab.page };
   const c = command(url);
-  return c && launch(c) ? 'browser' : null;
+  return c && launch(c) ? { where: 'browser', page: null } : null;
 }
+
+/** Opens the URL, as openPage does, and says where. */
+export const openBrowser = async (url: string): Promise<'orca' | 'browser' | null> => (await openPage(url))?.where ?? null;

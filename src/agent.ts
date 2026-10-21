@@ -4,15 +4,14 @@
 // background, as Claude does. A watch from Codex returns at once instead: untangle puts a line in
 // its chat when there's news. `reply` answers in a note’s thread, `note` writes a note of the
 // agent's own, `notes` prints the open notes, and `stop` closes the review.
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chatOf, type Chat } from './chats.js';
+import { launch, logTail } from './launcher.js';
 import { call, failed, Gone } from './client.js';
 import { isPrUrl } from './target.js';
 import { openBrowser } from './open.js';
-import { findRun, listRuns, pidAlive, prKey, removeRun, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
+import { findRun, listRuns, pidAlive, prKey, removeRun, wantedDir, type RunInfo, type Wanted } from './runs.js';
 import { outdatedSkill } from './skill.js';
 
 // The server answers a wait at least this often, so no connection sits idle for long; the command
@@ -74,38 +73,20 @@ async function running(review: string | null): Promise<RunInfo> {
   return run;
 }
 
-/** The last lines a review that didn't start printed. */
-const tail = (file: string) => {
-  try {
-    return fs.readFileSync(file, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').trim().split('\n').slice(-6).join('\n');
-  } catch {
-    return '';
-  }
-};
-
 /**
  * Starts a review in the background, as `untangle [flags] <target>` would, and finds its run file.
- * A launcher starts it and exits, so the review isn't this watch's child: an agent that stops the
- * watch ends everything under it.
+ * The launcher starts it, so the review isn't this watch's child: an agent that stops the watch
+ * ends everything under it.
  */
 async function start(target: string, flags: string[]): Promise<{ run: RunInfo; log: string }> {
-  fs.mkdirSync(runDir(), { recursive: true, mode: 0o700 });
-  // Logs of reviews started a day ago or more are no longer read.
-  for (const name of fs.readdirSync(runDir())) {
-    const file = path.join(runDir(), name);
-    if (/^start-.*\.log$/.test(name) && Date.now() - fs.statSync(file).mtimeMs > 86_400_000) fs.rmSync(file, { force: true });
-  }
-  const log = path.join(runDir(), `start-${Date.now()}-${process.pid}.log`);
-  const at = (name: string) => fileURLToPath(new URL(name, import.meta.url));
-  const launched = spawnSync(process.execPath, [at('./launch.js'), log, at('./cli.js'), ...flags, '--', target], { cwd: process.cwd(), env: { ...process.env, UNTANGLE_FROM_AGENT: '1' }, encoding: 'utf8', windowsHide: true });
-  const pid = Number(launched.stdout?.trim());
+  const { pid, log } = launch([...flags, '--', target], { ...process.env, UNTANGLE_FROM_AGENT: '1' });
   for (let i = 0; pid > 0 && i < 600; i++) {
     const run = listRuns().find((r) => r.pid === pid);
     if (run) return { run, log };
     if (!pidAlive(pid)) break;
     await sleep(100);
   }
-  throw new Error(`the review didn’t start${tail(log) ? ':\n' + tail(log) : ''}`);
+  throw new Error(`the review didn’t start${logTail(log) ? ':\n' + logTail(log) : ''}`);
 }
 
 /** Waits until the review is built: until then it answers 503. */
@@ -115,7 +96,7 @@ async function ready(run: RunInfo, agent: string, log: string | null): Promise<R
     try {
       r = await call(run, 'GET', 'notes/hello', { query: { agent } });
     } catch (e) {
-      if (!(e instanceof Gone) || !alive(run.pid)) throw new Error(`the review stopped before it was ready${log && tail(log) ? ':\n' + tail(log) : ''}`);
+      if (!(e instanceof Gone) || !alive(run.pid)) throw new Error(`the review stopped before it was ready${log && logTail(log) ? ':\n' + logTail(log) : ''}`);
       r = { status: 503, data: {} };
     }
     if (r.status !== 503) {

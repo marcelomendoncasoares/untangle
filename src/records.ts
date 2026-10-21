@@ -15,6 +15,8 @@ export interface ChatRecord {
   id: string;
   /** The folder it ran in: Claude finds a chat by its folder. */
   folder: string | null;
+  /** Where its agent keeps its state: Claude's config folder, or Codex's home. */
+  home: string | null;
   /** Its terminal in Orca, when it ran in one: the handle, and the pane that finds it again. */
   orca: { handle: string; pane: string | null } | null;
   /** When it last held the review. */
@@ -156,6 +158,27 @@ export function dirSize(dir: string): number {
     }
   };
   walk(dir);
+  return total;
+}
+
+/** The same, without holding up the process: a folder at a time, a few files at once. */
+export async function dirSizeAsync(dir: string): Promise<number> {
+  let total = 0;
+  const walk = async (d: string): Promise<void> => {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const files = entries.filter((e) => e.isFile());
+    for (let i = 0; i < files.length; i += 64) {
+      const sizes = await Promise.all(files.slice(i, i + 64).map((e) => fs.promises.lstat(path.join(d, e.name)).then((st) => (st.blocks != null ? st.blocks * 512 : st.size), () => 0)));
+      total += sizes.reduce((a, b) => a + b, 0);
+    }
+    for (const e of entries) if (e.isDirectory()) await walk(path.join(d, e.name));
+  };
+  await walk(dir);
   return total;
 }
 

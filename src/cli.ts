@@ -17,7 +17,7 @@ import { LiveSession } from './live.js';
 import { rss } from './metrics.js';
 import { Narrator, type Status } from './narrate.js';
 import { NoteError, Notes, notesFile, type NoteAction, type Scope } from './notes.js';
-import { openBrowser } from './open.js';
+import { openPage } from './open.js';
 import { fonts, highlighter, progressPage, reviewPage, type PageConfig } from './page.js';
 import { readRecord, recordFile, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
 import { reviews, type Summary } from './reviews.js';
@@ -57,7 +57,7 @@ async function main(): Promise<number> {
   if (command.cmd === 'stop') return agent.stop(command);
   if (command.cmd === 'skill') return skill(command);
   if (command.cmd === 'upgrade') return upgrade();
-  if (command.cmd === 'reviews') return reviews();
+  if (command.cmd === 'reviews') return reviews(command);
   return review(command.opts);
 }
 
@@ -129,6 +129,7 @@ async function review(opts: Options): Promise<number> {
           if (head && head !== target.headSha && route !== 'metrics') return Promise.resolve({ status: 409, data: { error: `untangle now reviews ${target.headSha.slice(0, 7)}: reload the page.`, moved: target.headSha } });
           if (route === 'notes' || route.startsWith('notes/')) return notesCall(notes, route, method, query, body, signal);
           if (route === 'state') recordSoon();
+          if (route === 'metrics') active = Date.now();
           return session.call(route, method, query, body);
         },
       },
@@ -138,7 +139,15 @@ async function review(opts: Options): Promise<number> {
     url = await server.listen();
     say.serving(url);
     if (opts.quiet) process.stdout.write(url + '\n');
-    if (opts.open) void openBrowser(url).then((where) => { opened = where; if (!where) say.note('no browser to open: open the link above'); else say.verbose(where === 'orca' ? 'opened in Orca’s browser' : 'opened in the browser'); });
+    if (opts.open) {
+      void openPage(url).then((p) => {
+        opened = p?.where ?? null;
+        if (!p) return say.note('no browser to open: open the link above');
+        say.verbose(p.where === 'orca' ? 'opened in Orca’s browser' : 'opened in the browser');
+        // The tab, for untangle reviews to bring back.
+        if (p.page && run) writeRun(run = { ...run, page: p.page });
+      });
+    }
     // The run file: how untangle's commands (watch, reply, notes, stop) reach this review.
     const m = byUrl ? /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(opts.target) : null;
     const w = byUrl ? null : wantedDir(dir);
@@ -170,11 +179,16 @@ async function review(opts: Options): Promise<number> {
   process.on('SIGINT', () => stop('signal'));
   process.on('SIGTERM', () => stop('signal'));
 
+  // When the review was last in use: a page in front (it asks for its metrics while it's shown),
+  // its notes changing, an agent at work.
+  let active = Date.now();
   // What untangle reviews shows of this review while it runs: the build, progress, notes, where
   // its agents' chats are, and memory.
   const summary = (): Summary => {
     const lsp = live?.state();
     const st = say.status;
+    const agents = notes?.agents() ?? [];
+    if (agents.some((a) => a.state === 'working' || a.state === 'queued')) active = Date.now();
     return {
       title: target ? names(target).title : st.title,
       phase: st.phase,
@@ -184,9 +198,11 @@ async function review(opts: Options): Promise<number> {
       head: target?.headSha ?? null,
       progress: session?.progress() ?? null,
       notes: notes?.counts() ?? null,
-      agents: notes?.agents() ?? [],
+      waiting: notes?.waiting() ?? [],
+      agents,
       memory: { untangle: process.memoryUsage().rss, lsp: lsp?.pid ? rss(lsp.pid) : null },
       pages: server?.pageCount ?? 0,
+      active,
       refreshing: refreshing ? refreshView() : null,
     };
   };
@@ -205,7 +221,7 @@ async function review(opts: Options): Promise<number> {
       record.notes = notes.counts();
       for (const { agent: name, chat } of notes.chats()) {
         const was = record.chats.find((c) => c.id === chat.id);
-        const c: ChatRecord = { agent: name, kind: chat.kind, id: chat.id, folder: chatFolder(chat) ?? was?.folder ?? null, orca: chat.orca ? { handle: chat.orca.handle, pane: chat.orca.pane } : was?.orca ?? null, at: now };
+        const c: ChatRecord = { agent: name, kind: chat.kind, id: chat.id, folder: chatFolder(chat) ?? was?.folder ?? null, home: chat.home, orca: chat.orca ? { handle: chat.orca.handle, pane: chat.orca.pane } : was?.orca ?? null, at: now };
         record.chats = [c, ...record.chats.filter((x) => x.id !== chat.id)];
       }
       // Its checkouts, once they're made.
@@ -258,7 +274,7 @@ async function review(opts: Options): Promise<number> {
     const file = notesFile(t.repoKey, n.snapshotKey);
     if (!notes || notes.file !== file) {
       notes?.close();
-      const book: Notes = new Notes(file, () => { server?.broadcast({ notes: book.revision }); recordSoon(); }, undefined, byAgent);
+      const book: Notes = new Notes(file, () => { server?.broadcast({ notes: book.revision }); active = Date.now(); recordSoon(); }, undefined, byAgent);
       notes = book;
     }
     notes.attach(s.notesContext(t.pr ? `${t.pr.owner}/${t.pr.repo}#${t.pr.number}` : t.repoKey.startsWith('local/') ? path.basename(t.repo) : n.repoName, t.pr ? t.pr.headRefName : n.branch, byUrl ? worktreeDir(t.repoKey, t.headSha) : null));

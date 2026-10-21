@@ -113,6 +113,17 @@ export function reviewPage(data: ReviewData, title: string, mode: 'served' | 'ex
   return (config) => pieces[0] + inline(config) + pieces[1];
 }
 
+/** The manager's page, untangle reviews': the reviews on this machine, live. */
+export function managerPage(config: { version: string }): string {
+  const script = read('manager.js');
+  if (/<\/script/i.test(script)) throw new Error('manager.js contains </script');
+  return read('manager.html')
+    .replace('<!--FONTS-->', fontsLink(fonts()))
+    .replace('<!--PRESENCE-->', presence())
+    .replace('/*CONFIG*/', () => inline(config))
+    .replace('/*MANAGER*/', () => script);
+}
+
 /** The page shown while the review is being built: it follows the steps and reloads when done. */
 export function progressPage(): string {
   return read('progress.html').replace('<!--FONTS-->', fontsLink(fonts())).replace('<!--PRESENCE-->', presence());

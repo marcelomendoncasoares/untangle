@@ -281,10 +281,26 @@ own, so a watch or a chat that ends never closes the page.
 
 ### Your reviews
 
-`untangle reviews` lists every review `untangle` remembers on this machine:
+`untangle reviews` opens a page with every review `untangle` remembers on this machine: the ones
+running, the ones paused, and the closed ones. Each row is a pull request, or a branch, with its
+progress, what waits for you (an agent's answer, a note it wrote), where its agent's chat is, and
+the memory it holds with its language server. Open a row and it shows the chat's last lines, read
+from the agent's own transcript, the notes waiting for you, and what the review holds on disk.
+
+| Key           |                                         |
+| ------------- | --------------------------------------- |
+| `↑` `↓`       | the previous or next review             |
+| `Enter`       | bring the review's page to the front    |
+| `C`           | bring its chat's terminal to the front  |
+| `Space`       | open the next review that needs you     |
+
+A small process serves the page, at `http://127.0.0.1:7777/` unless something else has that port.
+`untangle reviews` starts it the first time, and it stops once the page has been closed for a
+while. Reviews stay their own processes: the page reads what each one says of itself every two
+seconds while it's shown. `untangle reviews -list` prints the same reviews in the terminal:
 
 ```text
-$ untangle reviews
+$ untangle reviews -list
 untangle: 2 running, 1 paused, 0 closed.
 
 running  serverpod#5869  feat: Add passwordless OTP login to the email…  214/1,092  Claude is listening  1.4 GB
@@ -292,10 +308,8 @@ running  serverpod#5871  feat: Retry mechanism for future calls             88/2
 paused   serverpod#5787  feat: Unified account linking / merging flow       61/845  Claude’s chat, kept  239 MB on disk
 ```
 
-Each review keeps a record in the cache, so it's listed while it runs and after it stops. A
-running review shows its progress, where its agent's chat is, and the memory it holds with its
-language server. A paused one stopped and kept its notes, marks and the chat that held it, and
-shows what it holds on disk. A closed one is done with.
+Each review keeps a record in the cache, so it's listed while it runs and after it stops. A paused
+review stopped and kept its notes, marks and the chat that held it. A closed one is done with.
 
 ### Upgrading
 
@@ -401,7 +415,8 @@ versions kept marks on move to it when their review starts.
   - `reviews/`: per pair of commits, the analyzer's facts, the review, and marks on parts of a
   change.
   - `notes/`: your notes, per review, named like its marks (`notes/github.com/<owner>/<repo>/pr-<number>.json`).
-  - `run/`: the port and token of each review running now, for the agent's commands.
+  - `run/`: the port and token of each review running now, for the agent's commands, and of
+  the reviews page (`manager.json`).
   - `sessions/`: a record of each review, named like its notes, for `untangle reviews`: what it
   reviews, its progress, the chats that held it, whether it runs, and the checkouts and analyses
   it uses.

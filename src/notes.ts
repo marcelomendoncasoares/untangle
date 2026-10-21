@@ -534,6 +534,13 @@ export class Notes {
     return [...this.holders].flatMap(([agent, h]) => (h.chat ? [{ agent, chat: h.chat }] : []));
   }
 
+  /** The open notes an agent had the last word on: where they are, who, and whether it wrote them. */
+  waiting(): Array<{ n: number; path: string; line: number | null; by: string; wrote: boolean }> {
+    return this.data.notes
+      .filter((n) => !n.resolved && n.comments[n.comments.length - 1].by !== null)
+      .map((n) => ({ n: n.n, path: n.path, line: n.line, by: n.comments[n.comments.length - 1].by!, wrote: n.comments[0].by !== null }));
+  }
+
   /** Open notes, and those an agent had the last word on: they wait for your answer. */
   counts(): { open: number; waiting: number } {
     const open = this.data.notes.filter((n) => !n.resolved);

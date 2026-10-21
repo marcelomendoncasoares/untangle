@@ -3,6 +3,7 @@
 // others say what they hold on disk.
 import '../viewer/core.js';
 import { call } from './client.js';
+import { openPage } from './open.js';
 import type { Status, StepStatus } from './narrate.js';
 import type { AgentView } from './notes.js';
 import { listRecords, recordSize, type Listed } from './records.js';
@@ -19,11 +20,15 @@ export interface Summary {
   head: string | null;
   progress: { done: number; total: number } | null;
   notes: { open: number; waiting: number } | null;
+  /** The open notes an agent had the last word on: they wait for your answer. */
+  waiting: Array<{ n: number; path: string; line: number | null; by: string; wrote: boolean }>;
   agents: AgentView[];
   /** Bytes in memory: untangle's own, and its language server's. */
   memory: { untangle: number; lsp: number | null };
   /** The pages open on it now. */
   pages: number;
+  /** When it was last in use, in ms: a page in front, its notes changing, an agent at work. */
+  active: number;
   /** A newer head being built, when it's refreshing. */
   refreshing: unknown;
 }
@@ -72,8 +77,22 @@ export function agentOf(r: Listed, s: Summary | undefined): string {
   return c ? `${c.agent}’s chat, kept` : 'no agent';
 }
 
+/**
+ * Opens the manager's page, starting the manager when it isn't running; -list prints the reviews
+ * instead, and -serve is the manager itself.
+ */
+export async function reviews(o: { list: boolean; open: boolean; port: number | null; serve: boolean }): Promise<number> {
+  if (o.list) return printReviews();
+  const { findManager, serveManager, startManager } = await import('./manager.js');
+  if (o.serve) return serveManager({ port: o.port, quiet: false });
+  const m = (await findManager()) ?? (await startManager(o.port));
+  const p = o.open ? await openPage(m.url) : null;
+  process.stdout.write(`untangle: your reviews are ${p?.where === 'orca' ? 'open in Orca’s browser, at' : p ? 'open in the browser, at' : 'at'} ${m.url}\n`);
+  return 0;
+}
+
 /** Prints the reviews: running first, then paused, then closed. */
-export async function reviews(): Promise<number> {
+async function printReviews(): Promise<number> {
   const list = listRecords();
   if (!list.length) {
     process.stdout.write('untangle: no reviews yet. untangle <pr-url> starts one, or untangle in a branch.\n');

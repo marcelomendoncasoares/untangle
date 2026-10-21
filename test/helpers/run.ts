@@ -237,10 +237,20 @@ export function runsIn(cacheDir: string): Array<{ pid: number; url: string; toke
   });
 }
 
-/** Stops the reviews running from this cache, and waits until they're gone. */
+/** The manager running from this cache: untangle reviews starts it in the background. */
+export function managerIn(cacheDir: string): { pid: number; url: string; token: string } | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(cacheDir, 'run', 'manager.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Stops the reviews running from this cache, and its manager, and waits until they're gone. */
 export async function stopRuns(cacheDir: string): Promise<void> {
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-  for (const { pid } of runsIn(cacheDir)) {
+  const manager = managerIn(cacheDir);
+  for (const { pid } of [...runsIn(cacheDir), ...(manager ? [manager] : [])]) {
     if (pid === process.pid) continue;
     try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } }
     for (let i = 0; i < 40 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));

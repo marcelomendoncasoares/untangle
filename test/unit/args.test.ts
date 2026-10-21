@@ -254,25 +254,38 @@ describe('Given the agent’s commands, ', () => {
   );
 
   it(
-    'when reviews is given, alone, with -list, with -h, or with an argument, '
-    + 'then it lists the reviews, shows its usage, or is refused.',
+    'when reviews is given, alone, with its flags, with -h, or with an argument, '
+    + 'then it opens the manager, prints the list, serves the page, shows its usage, or is refused.',
     () => {
       const help = parseCommand(['reviews', '-h']);
-      assert.deepEqual([parseCommand(['reviews']), parseCommand(['reviews', '-list']), help.cmd === 'help' && help.text.split('\n')], [{ cmd: 'reviews', list: false }, { cmd: 'reviews', list: true }, [
-        'untangle reviews - the reviews on this machine',
-        '',
-        'usage:',
-        '  untangle reviews [flags]',
-        '',
-        'Lists every review untangle remembers: the ones running, the ones paused (stopped, with their notes,',
-        'marks and chats kept, to pick up again), and the closed ones, with their progress, where each',
-        'one’s agent is, and what each holds in memory or on disk. A directory named reviews is ./reviews.',
-        '',
-        'flags:',
-        '  -list',
-        '    \tprint the reviews in the terminal',
-        '',
-      ]]);
+      assert.deepEqual([parseCommand(['reviews']), parseCommand(['reviews', '-list']), parseCommand(['reviews', '-serve', '-port', '0', '-no-open']), help.cmd === 'help' && help.text.split('\n')], [
+        { cmd: 'reviews', list: false, open: true, port: null, serve: false },
+        { cmd: 'reviews', list: true, open: true, port: null, serve: false },
+        { cmd: 'reviews', list: false, open: false, port: 0, serve: true },
+        [
+          'untangle reviews - the reviews on this machine',
+          '',
+          'usage:',
+          '  untangle reviews [flags]',
+          '',
+          'Opens a page with every review untangle remembers: the ones running, the ones paused (stopped, with',
+          'their notes, marks and chats kept, to pick up again), and the closed ones, with their progress,',
+          'where each one’s agent is, and what each holds in memory or on disk. A small process serves it,',
+          'started the first time and stopped once the page has been closed a while. With -list, the same',
+          'reviews print in the terminal. A directory named reviews is ./reviews.',
+          '',
+          'flags:',
+          '  -list',
+          '    \tprint the reviews in the terminal, instead of opening the page',
+          '  -no-open',
+          '    \tdo not open the page: print its link',
+          '  -port int',
+          '    \tthe port the manager listens on, when it starts (0 picks a free one) (default 7777)',
+          '  -serve',
+          '    \tserve the page from this process, in the foreground, until it stops',
+          '',
+        ],
+      ]);
       assert.throws(() => parseCommand(['reviews', 'all']), (error: unknown) => error instanceof UsageError && error.message === 'untangle reviews takes no arguments (got all)');
     },
   );
