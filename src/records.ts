@@ -62,6 +62,8 @@ export interface ReviewRecord {
   updated: string;
   stopped: { at: string; why: StopReason } | null;
   closed: string | null;
+  /** The pull request merged or closed on GitHub, as the manager last saw: then the review is closed. */
+  github?: { state: 'merged' | 'closed'; at: string } | null;
   /** The commits checked out for it, and the pairs of commits it was analysed at (base, head). */
   checkouts: string[];
   analyses: Array<[string, string]>;

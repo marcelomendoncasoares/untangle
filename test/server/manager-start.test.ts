@@ -8,6 +8,7 @@ import { reviewClient, type ReviewClient } from '../helpers/http.ts';
 import { pubspec } from '../helpers/review.ts';
 import { TempRepo, type Person } from '../helpers/repo.ts';
 import { runsIn, stopRuns, untangleCommand } from '../helpers/run.ts';
+import { heldGit, type SlowGit } from '../helpers/slow-git.ts';
 
 const ada = (date: string): Person => ({ name: 'Ada Review', email: 'ada@example.com', date });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -131,6 +132,73 @@ describe('Given the manager, and GitHub asking you to review a pull request, ', 
       const shown = await review.call('reviews/open', { method: 'POST', body: { id: others[0].id } });
       assert.deepEqual([shown.status, shown.data], [200, { where: 'browser' }]);
       assert.equal(fs.readFileSync(opened, 'utf8').trim().split('\n').length, before + 1);
+    },
+  );
+});
+
+describe('Given the manager, and a review it started that’s still being built, ', { timeout: 300_000 }, () => {
+  let repo: TempRepo;
+  let gh: GhStub;
+  let git: SlowGit & { release(): void };
+  let cache = '', bin = '', opened = '';
+  let manager: ReviewClient;
+  let id = '';
+  const rows = async () => ((await manager.call('reviews')).data as { reviews: Row[] }).reviews;
+
+  before(async () => {
+    repo = TempRepo.create();
+    repo.write('pubspec.yaml', pubspec);
+    repo.write('lib/a.dart', "void greet() {\n  print('hi');\n}\n");
+    repo.commit({ subject: 'start', author: ada('2020-06-01T00:00:00Z'), committer: ada('2020-06-01T00:00:00Z') });
+    repo.branch('feature');
+    repo.write('lib/a.dart', "void greet() {\n  print('hello');\n}\n");
+    repo.commit({ subject: 'Say hello', author: ada('2020-06-02T00:00:00Z'), committer: ada('2020-06-02T00:00:00Z') });
+    gh = stubGh();
+    // Its build waits at the base's checkout, with its page up.
+    git = heldGit(['worktree']);
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    bin = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-bin-'));
+    opened = path.join(bin, 'opened.log');
+    fs.writeFileSync(path.join(bin, 'browser.sh'), `#!/bin/sh\necho "$1" >> ${JSON.stringify(opened)}\n`, { mode: 0o755 });
+    const env = { BROWSER: path.join(bin, 'browser.sh'), PATH: [git.dir, bin, gh.binDir, process.env.PATH].join(path.delimiter) };
+    const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd: repo.dir, env });
+    assert.equal(started.code, 0, started.err);
+    manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
+    await manager.open();
+    const r = await manager.call('start', { method: 'POST', body: { target: fs.realpathSync(repo.dir) } });
+    assert.equal(r.status, 200, r.text);
+    id = (await until('its row', async () => (await rows()).find((x) => x.id.startsWith('run:'))))!.id;
+  });
+
+  after(async () => {
+    git.release();
+    await stopRuns(cache);
+    git.remove();
+    gh.remove();
+    repo.remove();
+    fs.rmSync(cache, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  });
+
+  it(
+    'when its row is opened, '
+    + 'then its page comes to the front, as a built one’s does.',
+    async () => {
+      const before = fs.existsSync(opened) ? fs.readFileSync(opened, 'utf8').trim().split('\n').length : 0;
+      const r = await manager.call('open', { method: 'POST', body: { id } });
+      assert.deepEqual([r.status, r.data], [200, { where: 'browser' }]);
+      const lines = fs.readFileSync(opened, 'utf8').trim().split('\n');
+      assert.deepEqual([lines.length, lines.at(-1)], [before + 1, runsIn(cache)[0].url]);
+    },
+  );
+
+  it(
+    'when it’s closed, '
+    + 'then it stops before it’s built, and nothing is left of it in the list.',
+    async () => {
+      assert.equal((await manager.call('close', { method: 'POST', body: { id } })).status, 200);
+      await until('its process to end', () => runsIn(cache).length === 0);
+      assert.deepEqual(await rows(), []);
     },
   );
 });

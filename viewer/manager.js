@@ -132,8 +132,9 @@
     const a = r.agents[0];
     const c = r.chat;
     const id = c ? `${c.kind === 'codex' ? 'Thread' : 'Session'} ${c.id.slice(0, 8)}` : '';
+    if (r.status === 'running' && a && r.pausing) return `<span class="agent"><span class="lab" data-st="pausing"><i></i><span>Pausing after ${esc(a.name)}’s turn</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
     if (r.status === 'running' && a) return `<span class="agent"><span class="lab" data-st="${esc(a.state)}"><i></i><span>${esc(a.label)}</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
-    if (r.status !== 'running' && c) return `<span class="agent"><span class="lab" data-st="kept"><i></i><span>${esc(c.agent)}’s chat, kept</span></span><small>${esc(id)}</small></span>`;
+    if ((r.status !== 'running' || r.build) && c) return `<span class="agent"><span class="lab" data-st="kept"><i></i><span>${esc(c.agent)}’s chat, kept</span></span><small>${esc(id)}</small></span>`;
     return `<span class="agent"><span class="lab" data-st="none"><i></i><span>No agent</span></span><small>${r.status === 'running' ? 'a chat’s untangle watch holds it' : 'no chat held it'}</small></span>`;
   }
 
@@ -158,7 +159,7 @@
   function memCell(r) {
     const up = Date.now() - Date.parse(r.opened);
     if (r.status === 'running') return `<span class="memc"><b>${r.memory ? bytes(memOf(r)) : '—'}</b><small>${up < 60000 ? 'just now' : span(up)}</small></span>`;
-    const again = `<button type="button" class="btn sm" data-act="start" data-id="${esc(r.id)}">${ICON.play}${r.status === 'closed' ? 'Reopen' : 'Resume'}</button>`;
+    const again = `<button type="button" class="btn sm" data-act="${r.status === 'closed' ? 'start' : 'resume'}" data-id="${esc(r.id)}">${ICON.play}${r.status === 'closed' ? 'Reopen' : 'Resume'}</button>`;
     return `<span class="memc">${S.starting.has(r.id) ? '<small>starting…</small>' : again}<small>${r.disk != null ? bytes(r.disk) + ' on disk' : ''}</small></span>`;
   }
 
@@ -167,7 +168,7 @@
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
     const l2 = r.status === 'running'
       ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · <span class="a">+${fmt(r.size.add)}</span> <span class="d">−${fmt(r.size.del)}</span> in ${fmt(r.size.files)} file${r.size.files === 1 ? '' : 's'}`
-      : `${r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
+      : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
     const ev = r.status === 'running' ? events(r) : '';
     return `<div class="rw${sel ? ' sel' : ''}" data-id="${esc(r.id)}">
       <div class="row ${r.status}" data-act="sel" data-id="${esc(r.id)}">
@@ -200,13 +201,14 @@
     const w = r.waiting;
     const notes = `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
     const running = r.status === 'running';
-    const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${r.status !== 'closed' && !r.id.startsWith('run:') ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
-      ${S.menu === 'more:' + r.id ? `<div class="pop" style="right:8px;top:40px;width:220px"><button type="button" class="mi" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close review</button></div>` : ''}
+    const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${r.status !== 'closed' ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
+      ${S.menu === 'more:' + r.id ? `<div class="pop" style="right:8px;top:40px;width:236px">${running && working(r) && !r.pausing ? `<button type="button" class="mi" data-act="pause-now" data-id="${esc(r.id)}">${ICON.pause}Pause now, mid-turn</button>` : ''}${r.status === 'paused' && r.chat ? `<button type="button" class="mi" data-act="resume-bare" data-id="${esc(r.id)}">${ICON.play}Resume without the agent</button>` : ''}<button type="button" class="mi" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close review</button></div>` : ''}
       ${running ? `<div class="kv"><span>untangle</span><b>${r.memory ? bytes(r.memory.untangle) : '—'}</b><span></span></div>
       <div class="kv"><span>Language server</span><b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b>${r.memory && r.memory.lsp ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}</div>` : ''}
       <div class="kv"><span>On disk</span><b>${r.disk != null ? bytes(r.disk) : 'measuring…'}</b><span></span></div>
       <div class="kv"><span>Head</span><b>${esc(r.head.slice(0, 7))}</b><span></span></div>
-      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button></div>` : ''}`;
+      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.build ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}</div>` : ''}
+      ${r.status === 'paused' ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="resume" data-id="${esc(r.id)}">${ICON.play}Resume<kbd>R</kbd></button></div>` : ''}`;
     return `<div class="peek"><div class="pk">${chat}</div><div class="pk">${notes}</div><div class="pk res">${res}</div></div>`;
   }
 
@@ -232,7 +234,9 @@
     }
     const list0 = $('#sheet .list');
     const scroll = list0 ? list0.scrollTop : 0;
-    $('#sheet').innerHTML = `<div class="head"><h1>${esc(title)}</h1><span class="sub">${S.data ? `${list.length} · newest first` : ''}</span></div><div class="list">${body}</div>${pill()}`;
+    const idle = S.tab === 'open' && S.filter === 'all' ? open().find((r) => idleFor(r) > 3600000 && !r.pausing && r.memory) : null;
+    const hint = idle ? `<span class="hint">${esc(idle.name.replace(/^[^#]*#/, '#'))} sat idle ${span(idleFor(idle))} · pausing frees <b>${bytes(memOf(idle))}</b><button type="button" class="btn" data-act="pause" data-id="${esc(idle.id)}">Pause</button></span>` : '';
+    $('#sheet').innerHTML = `<div class="head"><h1>${esc(title)}</h1><span class="sub">${S.data ? `${list.length} · newest first` : ''}</span><span class="sp"></span>${hint}</div><div class="list">${body}</div>${pill()}`;
     $('#sheet .list').scrollTop = scroll;
   }
 
@@ -247,6 +251,7 @@
       h += `<div class="pop" style="right:${Math.round(innerWidth - m.right)}px;top:${Math.round(m.bottom + 6)}px;width:400px" role="dialog" aria-label="Memory">
         <div class="pop-h">Memory<span>${bytes(total)}</span></div>
         ${run.map((r) => `<div class="pop-r"><small><span class="who">${esc(r.name)}</span>untangle ${r.memory ? bytes(r.memory.untangle) : '—'} · language server ${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'off'}</small><b>${r.memory ? bytes(memOf(r)) : '—'}</b></div>`).join('')}
+        ${run.filter((r) => idleFor(r) > 3600000 && !r.pausing).map((r) => `<div class="pop-r"><button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}">${ICON.pause}Pause ${esc(r.name)}, idle ${span(idleFor(r))} · frees ${bytes(memOf(r))}</button><span></span></div>`).join('')}
         <div class="pop-r"><small>This page’s own process</small><b>${bytes(S.data.memory.manager)}</b></div>
       </div>`;
     }
@@ -422,7 +427,8 @@
     }
     closePalette();
     if (c.id && !c.again) return act('open', c.id);
-    const body = c.target ? { target: c.target } : { id: c.id };
+    if (c.id) return act('resume', c.id);
+    const body = { target: c.target };
     const key = c.id || c.target;
     S.starting.add(key);
     toast(c.again ? `Resuming ${c.num}…` : `Starting the review of ${c.num}…`);
@@ -474,7 +480,25 @@
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
     if (name === 'close') {
       S.menu = null;
-      post('close', { id }).then(() => { toast(`Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; poll(); }, (e) => toast(e.message, true));
+      post('close', { id }).then(() => { toast(id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; poll(); }, (e) => toast(e.message, true));
+    }
+    if (name === 'pause' || name === 'pause-now') {
+      S.menu = null;
+      post('pause', { id, now: name === 'pause-now' }).then((d) => {
+        const a = r.agents[0];
+        toast(d.waiting ? `${short(r)} pauses when ${a ? a.name : 'its agent'}’s turn ends` : `Paused ${short(r)}: ${r.memory ? bytes(memOf(r)) + ' back' : 'its memory is back'}${r.chat ? `. ${r.chat.agent}’s chat is kept` : ''}`);
+        poll();
+      }, (e) => toast(e.message, true));
+    }
+    if (name === 'resume' || name === 'resume-bare') {
+      S.menu = null;
+      S.starting.add(id);
+      render();
+      post('resume', { id, agent: name === 'resume' }).then((d) => {
+        if (d.command && navigator.clipboard) navigator.clipboard.writeText(d.command).then(() => toast(`${short(r)} is starting again. Copied ${r.chat.agent}’s command: paste it in a terminal`), () => toast(`Run this in a terminal: ${d.command}`));
+        else toast(`${short(r)} is starting again${name === 'resume' && r.chat ? `, with ${r.chat.agent}’s chat` : ''}`);
+        poll();
+      }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(id); render(); });
     }
     if (name === 'start') {
       S.starting.add(id);
@@ -523,6 +547,10 @@
       case 'lsp':
       case 'close':
       case 'start':
+      case 'pause':
+      case 'pause-now':
+      case 'resume':
+      case 'resume-bare':
         act(b.dataset.act === 'next' ? 'open' : b.dataset.act, id);
         break;
       case 'more':
@@ -629,6 +657,8 @@
     else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); go(at < 0 ? 0 : at - 1); }
     else if (e.key === 'Enter' && S.sel) { e.preventDefault(); act('open', S.sel); }
     else if (e.key === 'c' && S.sel && byId(S.sel) && byId(S.sel).chat && byId(S.sel).chat.orca) act('chat', S.sel);
+    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build) act('pause', S.sel);
+    else if (e.key === 'r' && S.sel && byId(S.sel) && byId(S.sel).status === 'paused') act('resume', S.sel);
     else if (e.key === ' ') {
       const r = open().find(needs);
       if (r) { e.preventDefault(); act('open', r.id); }

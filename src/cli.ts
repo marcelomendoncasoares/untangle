@@ -173,7 +173,7 @@ async function review(opts: Options): Promise<number> {
       recordNow();
     }
     // A waiting untangle watch hears that the review closed before it does.
-    if (notes) { notes.close(); await new Promise((r) => setTimeout(r, 100)); }
+    if (notes) { notes.close(why === 'paused'); await new Promise((r) => setTimeout(r, 100)); }
     await server?.close();
     await live?.stop();
     process.exit(0);
@@ -321,6 +321,7 @@ async function review(opts: Options): Promise<number> {
       updated: now,
       stopped: null,
       closed: null,
+      github: was?.github ?? null,
       checkouts: was?.checkouts ?? [],
       analyses: [...(was?.analyses ?? []).filter(([b, h]) => b !== pair[0] || h !== pair[1]), pair],
     };

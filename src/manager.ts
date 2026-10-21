@@ -4,14 +4,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import '../viewer/core.js';
-import { agentCommand, agentOptions, rememberStart, type AgentChoice } from './agents.js';
+import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
 import { cacheRoot, cloneDir } from './cache.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
-import { newTerminal, orcaCli, reviewsWorkspace, showTab, showTerminal } from './orca.js';
+import { newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTerminal } from './orca.js';
 import { fonts, managerPage } from './page.js';
 import { dirSizeAsync, listRecords, readRecord, recordDirs, recordFile, writeRecord, type Listed } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
@@ -106,6 +106,10 @@ export interface Row {
   /** While it's being built: the step it's on, of the steps it expects. */
   build: { phase: string; step: { label: string; count: [number, number] | null } | null; plan: string[] | null; error: string | null } | null;
   pages: number;
+  /** Pausing once its agent's turn ends. */
+  pausing: boolean;
+  /** Merged or closed on GitHub, when it was. */
+  github: { state: 'merged' | 'closed'; at: string } | null;
   /** What waits for you, in words: Claude answered N3 and N4. And the first note it's about. */
   need: string | null;
   needAt: number | null;
@@ -132,7 +136,7 @@ function starting(run: RunInfo, s: Summary | undefined): Row {
     progress: { done: 0, total: 0 }, notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null,
     memory: s?.memory ?? null,
     build: { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, need: null, needAt: null, active: s?.active ?? null, disk: null,
+    pages: s?.pages ?? 0, pausing: false, github: null, need: null, needAt: null, active: s?.active ?? null, disk: null,
   };
 }
 
@@ -194,10 +198,13 @@ function row(r: Listed, s: Summary | undefined, disk: number | null): Row {
     notes: s?.notes ?? r.notes,
     waiting,
     agents: (s?.agents ?? []).map((a) => ({ name: a.name, kind: a.kind, state: a.state, on: a.on, label: globalThis.ReviewCore.agentLabel(a) })),
-    chat: c ? { agent: c.agent, kind: c.kind, id: c.id, orca: !!c.orca } : null,
+    // Pause closes the terminals of the chats the manager started.
+    chat: c ? { agent: c.agent, kind: c.kind, id: c.id, orca: !!c.orca && (r.status === 'running' || !startedHere(c)) } : null,
     memory: s?.memory ?? null,
     build: s && s.phase !== 'ready' ? { phase: s.phase, step: s.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s.plan, error: s.error } : null,
     pages: s?.pages ?? 0,
+    pausing: false,
+    github: r.github ?? null,
     need: need(waiting),
     needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null,
     active: s?.active ?? null,
@@ -252,6 +259,13 @@ async function summariesOf(runs: RunInfo[]): Promise<Map<number, Summary>> {
 
 export class Manager {
   private readonly sizes = new Sizes();
+  // Reviews pausing once their agent's turn ends: Pause waits for it, Pause now doesn't.
+  private readonly pausing = new Set<string>();
+  private pauseTimer: NodeJS.Timeout | null = null;
+  // GitHub, asked about paused reviews' pull requests: when the page opens, then hourly.
+  private githubAt = 0;
+  // Reviews started again from their row, by process: their row shows them starting.
+  private readonly launched = new Map<number, string>();
   // GitHub's pull requests for the palette, asked at most once a minute.
   private pullsKept: { at: number; value: { asked: Pull[]; yours: Pull[]; error: string | null } } | null = null;
 
@@ -280,16 +294,22 @@ export class Manager {
    * child; it opens its own page. It runs until it's paused or closed, its tab or not. A review of
    * it already running isn't started again.
    */
-  async start(target: string, agent: AgentChoice | null = null): Promise<{ status?: number; data: unknown }> {
+  async start(target: string, agent: AgentChoice | null = null, id: string | null = null): Promise<{ status?: number; data: unknown }> {
     if (!isPrUrl(target) && !(path.isAbsolute(target) && fs.existsSync(target))) return { status: 400, data: { error: `${target} is not a pull request’s link` } };
     const w = wanted(target);
-    const running = w && findRun(w);
+    let running = w && findRun(w);
+    // One that's stopping (paused or closed a moment ago) is let go first.
+    if (running && listRecords().some((r) => r.pid === running!.pid && r.stopped)) {
+      for (let i = 0; i < 100 && pidAlive(running.pid); i++) await new Promise((r) => setTimeout(r, 50));
+      running = w && findRun(w);
+    }
     if (running) return { data: { already: true, pid: running.pid } };
     // In Orca, its page opens as a tab of the Reviews workspace, and its chat runs there.
     const cli = orcaCli();
     const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
     const env = ws && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: ws.worktree } : process.env;
     const { pid, log } = launch(['-autoclose=false', '--', target], env);
+    if (id && pid > 0) this.launched.set(pid, id);
     for (let i = 0; pid > 0 && i < 300; i++) {
       if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid, ...(agent ? await this.chat(target, agent, ws) : {}) } };
       if (!pidAlive(pid)) break;
@@ -312,8 +332,101 @@ export class Manager {
     return { chat: { id, handle }, command: handle ? null : command };
   }
 
+  /** Whether the manager has something to finish: a pause waiting for a turn to end. */
+  get busy(): boolean {
+    return this.pausing.size > 0;
+  }
+
+  /**
+   * Pauses a review: it stops, its tab closes, and so does its chat's terminal when the manager
+   * started it; the chat, its notes and marks stay, to resume. While its agent is in a turn, it
+   * pauses once the turn ends, unless now.
+   */
+  async pause(f: { record: Listed; run: RunInfo | null }, now: boolean): Promise<{ status?: number; data: unknown }> {
+    if (!f.run) return { status: 409, data: { error: `${shortName(f.record)} isn’t running` } };
+    if (!now) {
+      const s = (await summariesOf([f.run])).get(f.run.pid);
+      if (s && s.agents.some((a) => a.state === 'working')) {
+        this.pausing.add(idOf(f.record));
+        this.pauseTimer ??= setInterval(() => void this.pauseWhenIdle(), 2000);
+        return { data: { waiting: true } };
+      }
+    }
+    await this.pauseNow(f.record, f.run);
+    return { data: { paused: true } };
+  }
+
+  private async pauseWhenIdle() {
+    for (const id of [...this.pausing]) {
+      const f = this.find(id);
+      if (!f || !f.run) { this.pausing.delete(id); continue; }
+      const s = (await summariesOf([f.run])).get(f.run.pid);
+      if (!s || !s.agents.some((a) => a.state === 'working')) await this.pauseNow(f.record, f.run);
+    }
+    if (!this.pausing.size && this.pauseTimer) { clearInterval(this.pauseTimer); this.pauseTimer = null; }
+  }
+
+  private async pauseNow(record: Listed, run: RunInfo) {
+    const id = idOf(record);
+    this.pausing.delete(id);
+    try {
+      await call(run, 'POST', 'stop', { body: { why: 'paused' } });
+    } catch (e) {
+      if (!(e instanceof Gone)) throw e;
+    }
+    const cli = orcaCli();
+    if (!cli) return;
+    for (const page of [run.page, this.pages.get(run.pid)]) if (page) await orca(['tab', 'close', '--page', page], cli);
+    this.pages.delete(run.pid);
+    const c = record.chats[0];
+    if (c?.orca && startedHere(c)) await orca(['terminal', 'close', '--terminal', c.orca.handle, '--tab'], cli);
+  }
+
+  /**
+   * Resumes a paused review: it starts again, from the cache, and so does the chat that held it,
+   * told the review is back. A chat the manager started comes back in a new terminal of the
+   * Reviews workspace, in its own folder; one you started yourself, still open, gets the line in
+   * its terminal. Without the agent, only the review.
+   */
+  async resume(f: { record: Listed; run: RunInfo | null }, withAgent: boolean): Promise<{ status?: number; data: unknown }> {
+    const started = await this.start(f.record.target, null, idOf(f.record));
+    if (started.status || !withAgent || (started.data as { already?: boolean }).already) return started;
+    const c = f.record.chats[0];
+    if (!c) return started;
+    const line = `untangle: the review of ${shortName(f.record)} is open again. Run untangle watch to hold it.`;
+    const cli = orcaCli();
+    if (cli && c.orca && !startedHere(c) && (await orca(['terminal', 'send', '--terminal', c.orca.handle, '--text', line, '--enter'], cli)).ok) return { data: { ...(started.data as object), told: true } };
+    const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
+    const command = resumeCommand(c, line, flagsOf(c.kind), ws ? ws.folder : '');
+    const handle = ws ? await newTerminal(ws.worktree, `${shortName(f.record).replace(/^[^#]*#/, '#')} · ${c.agent}`, command, cli) : null;
+    rememberStart({ kind: c.kind, resume: c.id, flags: flagsOf(c.kind), message: '' }, { id: c.id, handle });
+    return { data: { ...(started.data as object), chat: { id: c.id, handle }, command: handle ? null : command } };
+  }
+
+  /** Paused reviews whose pull request merged or closed on GitHub are closed too. */
+  private async github() {
+    if (Date.now() - this.githubAt < 3600_000 || !has('gh')) return;
+    this.githubAt = Date.now();
+    for (const r of listRecords().filter((x) => x.status === 'paused' && x.pr)) {
+      const m = /^([^/]+)\/([^#]+)#(\d+)$/.exec(r.pr!);
+      if (!m) continue;
+      try {
+        const j = JSON.parse(await runAsync('gh', ['pr', 'view', m[3], '--repo', `${m[1]}/${m[2]}`, '--json', 'state,mergedAt,closedAt'], { timeout: 20_000 })) as { state?: string; mergedAt?: string | null; closedAt?: string | null };
+        if (j.state !== 'MERGED' && j.state !== 'CLOSED') continue;
+        const file = recordFile(r.repoKey, r.key);
+        const now = readRecord(file);
+        // Started again since: it isn't paused any more.
+        if (!now || now.pid !== r.pid || !now.stopped) continue;
+        const at = (j.state === 'MERGED' ? j.mergedAt : j.closedAt) || new Date().toISOString();
+        writeRecord({ ...now, closed: at, github: { state: j.state === 'MERGED' ? 'merged' : 'closed', at }, updated: new Date().toISOString() });
+      } catch {
+        // GitHub didn't answer: next time.
+      }
+    }
+  }
+
   /** Closes a review: a running one stops, saying it's closed; a paused one's record says so. */
-  async close(f: { record: Listed; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
+  async close(f: { record: Listed | null; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
     if (f.run) {
       try {
         const r = await call(f.run, 'POST', 'stop', { body: { close: true } });
@@ -322,17 +435,29 @@ export class Manager {
       } catch (e) {
         if (!(e instanceof Gone)) throw e;
       }
-      return { data: { closed: true } };
+      // It says so in its record, unless it was being built again: the old record does then.
+      if (!f.record || f.record.pid === f.run.pid) return { data: { closed: true } };
     }
+    if (!f.record) return { status: 404, data: { error: 'no such review' } };
     const file = recordFile(f.record.repoKey, f.record.key);
     const r = readRecord(file);
     if (!r) return { status: 404, data: { error: 'no such review' } };
+    // Built and closed by its new process meanwhile.
+    if (r.pid !== f.record.pid) return { data: { closed: true } };
     const at = new Date().toISOString();
     writeRecord({ ...r, closed: at, stopped: r.stopped ?? { at, why: 'stop' }, updated: at });
     return { data: { closed: true } };
   }
-  // The tabs the manager opened for reviews whose own tab it couldn't bring back.
-  private readonly pages = new Map<string, string>();
+  // The tabs the manager opened for reviews whose own tab it couldn't bring back, by process.
+  private readonly pages = new Map<number, string>();
+
+  /** Brings a review's page to the front: its own tab, the one the manager opened for it, or a new one. */
+  private async show(run: RunInfo): Promise<{ status?: number; data: unknown }> {
+    for (const page of [run.page, this.pages.get(run.pid)]) if (page && (await showTab(page))) return { data: { where: 'orca' } };
+    const p = await openPage(run.url);
+    if (p?.page) this.pages.set(run.pid, p.page);
+    return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
+  }
 
   /** The reviews, as the page shows them, with memory and disk (a review's Reviews menu skips disk). */
   async view(o: { disk: boolean } = { disk: true }) {
@@ -343,13 +468,23 @@ export class Manager {
       const known = dirs.map((d) => this.sizes.of(d));
       return known.some((b) => b == null) ? null : known.reduce((a: number, b) => a + b!, 0);
     };
+    void this.github();
     const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, sizeOf(recordDirs(r))));
+    rows.forEach((x) => { x.pausing = this.pausing.has(x.id); });
     // Reviews whose process runs and which have no record yet: they're being built.
     const recorded = new Set(list.filter((r) => r.status === 'running').map((r) => r.pid));
-    const fresh = listRuns().filter((run) => !recorded.has(run.pid));
+    const runs = listRuns();
+    for (const pid of this.launched.keys()) if (recorded.has(pid) || !runs.some((run) => run.pid === pid)) this.launched.delete(pid);
+    const fresh = runs.filter((run) => !recorded.has(run.pid));
     if (fresh.length) {
       const asked = await summariesOf(fresh);
-      rows.unshift(...fresh.map((run) => starting(run, asked.get(run.pid))));
+      for (const run of fresh) {
+        const s = starting(run, asked.get(run.pid));
+        // A paused or closed review starting again keeps its row: what it knows, and how far the build is.
+        const at = rows.findIndex((x) => x.status !== 'running' && (x.id === this.launched.get(run.pid) || (!!run.pr && list.find((r) => idOf(r) === x.id)?.pr === run.pr)));
+        if (at < 0) rows.unshift(s);
+        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, opened: s.opened, memory: s.memory, build: s.build, pages: s.pages, active: s.active, agents: [], waiting: [], need: null, needAt: null };
+      }
     }
     // Disk, each folder once: open reviews' folders, closed ones' that no open review uses, and clones.
     const openDirs = new Set(list.filter((r) => r.status !== 'closed').flatMap(recordDirs));
@@ -365,10 +500,13 @@ export class Manager {
     };
   }
 
+  /** A review by its row's id: its record, and its process when it runs, or when it's being built again. */
   private find(id: unknown): { record: Listed; run: RunInfo | null } | null {
     const record = listRecords().find((r) => idOf(r) === id);
     if (!record) return null;
-    return { record, run: record.status === 'running' ? listRuns().find((x) => x.pid === record.pid) ?? null : null };
+    const runs = listRuns();
+    if (record.status === 'running') return { record, run: runs.find((x) => x.pid === record.pid) ?? null };
+    return { record, run: runs.find((x) => this.launched.get(x.pid) === id || (!!x.pr && x.pr === record.pr)) ?? null };
   }
 
   /** The page's API. */
@@ -384,18 +522,19 @@ export class Manager {
       const c = f?.record.chats[0];
       return { data: { lines: c ? chatTail(c) : null } };
     }
+    // A review being built, with no record yet: its process, to open or to close.
+    const building = typeof b.id === 'string' ? /^run:(\d+)$/.exec(b.id) : null;
+    if (building) {
+      const run = listRuns().find((x) => x.pid === Number(building[1]));
+      if (!run) return { status: 404, data: { error: 'the review stopped' } };
+      if (route === 'open' && method === 'POST') return this.show(run);
+      if (route === 'close' && method === 'POST') return this.close({ record: null, run });
+      return { status: 409, data: { error: 'the review is being built' } };
+    }
     const f = this.find(b.id);
     if (!f) return { status: 404, data: { error: 'no such review' } };
-    if (route === 'open' && method === 'POST') {
-      if (!f.run) return { status: 409, data: { error: `${shortName(f.record)} isn’t running` } };
-      const id = idOf(f.record);
-      // Its own tab, or the one the manager opened for it, when it's still there.
-      for (const page of [f.run.page, this.pages.get(id)]) if (page && (await showTab(page))) return { data: { where: 'orca' } };
-      const p = await openPage(f.run.url);
-      if (p?.page) this.pages.set(id, p.page);
-      return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
-    }
-    if (route === 'start' && method === 'POST') return this.start(f.record.target, agentFrom((b as { agent?: unknown }).agent));
+    if (route === 'open' && method === 'POST') return f.run ? this.show(f.run) : { status: 409, data: { error: `${shortName(f.record)} isn’t running` } };
+    if (route === 'start' && method === 'POST') return this.start(f.record.target, agentFrom((b as { agent?: unknown }).agent), idOf(f.record));
     if (route === 'agent' && method === 'POST') {
       const agent = agentFrom((b as { agent?: unknown }).agent);
       if (!agent) return { status: 400, data: { error: 'which agent? Claude or Codex' } };
@@ -403,6 +542,8 @@ export class Manager {
       return { data: await this.chat(f.record.target, agent) };
     }
     if (route === 'close' && method === 'POST') return this.close(f);
+    if (route === 'pause' && method === 'POST') return this.pause(f, (b as { now?: unknown }).now === true);
+    if (route === 'resume' && method === 'POST') return this.resume(f, (b as { agent?: unknown }).agent !== false);
     if (route === 'chat' && method === 'POST') {
       const c = f.record.chats[0];
       if (!c?.orca) return { status: 409, data: { error: c ? `${c.agent}’s chat isn’t in an Orca terminal` : 'no chat holds this review' } };
@@ -457,7 +598,7 @@ export async function serveManager(o: { port: number | null; quiet: boolean }): 
   process.on('exit', () => { if (readManager()?.pid === process.pid) fs.rmSync(managerFile(), { force: true }); });
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  setInterval(() => { if (!server.pageCount && Date.now() - seen > IDLE_AFTER) void stop(); }, 60_000).unref();
+  setInterval(() => { if (!server.pageCount && !manager.busy && Date.now() - seen > IDLE_AFTER) void stop(); }, 60_000).unref();
   if (!o.quiet) process.stdout.write(`untangle: your reviews are at ${url}\n`);
   return new Promise<number>(() => {});
 }

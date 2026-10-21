@@ -151,7 +151,9 @@ export async function watch(o: { target: string; given: boolean; forward: string
     if (err) throw new Error(err);
     const a = r.data;
     if (a.closed) {
-      say(`the review of ${hello.title} is closed (its page closed, or untangle stop ran): there’s nothing more to watch.`);
+      say(a.paused
+        ? `the review of ${hello.title} paused: its notes and this chat are kept. Resume, in untangle reviews, brings it back and says so here; there’s nothing more to watch until then.`
+        : `the review of ${hello.title} is closed (its page closed, or untangle stop ran): there’s nothing more to watch.`);
       return 0;
     }
     if (a.taken) {

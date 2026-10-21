@@ -46,6 +46,19 @@ export function agentCommand(a: AgentChoice, target: string, name: string): { co
   return { command: ['codex', how, flags, first].filter(Boolean).join(' '), id: a.resume };
 }
 
+/**
+ * The command that resumes a chat that held a review, with one line that says the review is back.
+ * Claude finds a chat by its folder, so the command starts there.
+ */
+export function resumeCommand(c: { kind: AgentKind; id: string; folder: string | null }, line: string, flags: string, here: string): string {
+  const cd = c.kind === 'claude' && c.folder && c.folder !== here ? `cd ${sh(c.folder)} && ` : '';
+  const how = c.kind === 'claude' ? `claude --resume ${sh(c.id)}` : `codex resume ${sh(c.id)}`;
+  return cd + [how, flags.trim(), sh(line)].filter(Boolean).join(' ');
+}
+
+/** The flags an agent last started with. */
+export const flagsOf = (kind: AgentKind) => readSettings().flags[kind] ?? '';
+
 /** Where the manager keeps what it knows of the chats it starts. */
 export const chatsDir = () => path.join(cacheRoot(), 'chats');
 const settingsFile = () => path.join(chatsDir(), 'agents.json');

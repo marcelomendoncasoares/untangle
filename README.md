@@ -293,6 +293,7 @@ from the agent's own transcript, the notes waiting for you, and what the review 
 | `↑` `↓`       | the previous or next review                      |
 | `Enter`       | bring the review's page to the front             |
 | `C`           | bring its chat's terminal to the front           |
+| `P` / `R`     | pause the review, or resume a paused one         |
 | `Space`       | open the next review that needs you              |
 
 New review lists the pull requests GitHub asks you to review and your own (through `gh`), with the
@@ -310,8 +311,15 @@ Inside Orca, the reviews' chats and pages live in one workspace, Reviews: a fold
 cache (`chats/Reviews`), which the manager adds to Orca the first time. Outside Orca, the chat's
 command is copied for you to run in a terminal.
 
-A review started there runs until you close it, with or without its tab. A row's menu closes it,
-a paused review's Resume starts it again, and a closed one reopens.
+A review started there runs until you close it, with or without its tab. Pause gives its memory
+back and keeps the rest: its notes, its marks, and the chat that held it. It waits for the agent's
+turn to end, so the chat stops at a good place, and Pause now, in the row's menu, doesn't wait. The
+review stops, its tab closes, and so does its chat's terminal when the manager started that chat.
+Resume starts the review again and resumes the chat by its id, in the folder it ran in, with a line
+that tells the agent the review is back; Resume without the agent, in the menu, starts only the
+review. A review that sat idle for an hour says so at the top of the list, with what pausing it
+gives back. The menu also closes a review, and a closed one reopens. A paused pull request that's
+merged or closed on GitHub moves to Closed on its own: the manager asks GitHub once an hour.
 
 Inside a review, Reviews, left of its title, lists the others with what's new in each. Its count is
 the ones that need you, a toast says when one comes, and a click brings that review's page to the

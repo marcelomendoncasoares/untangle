@@ -135,7 +135,7 @@ export interface AgentView {
 export type WatchAnswer =
   | { text: string; notes: number; replies: number; first: boolean }
   | { idle: true; first: boolean }
-  | { closed: true }
+  | { closed: true; paused?: true }
   | { taken: true };
 
 /** An agent holding the review in this run: the chat it holds it from, and what it read last. */
@@ -256,6 +256,8 @@ export class Notes {
   // Bumped on every change, the agents' coming and going included: pages ask again when it moves.
   private rev = 0;
   private closed = false;
+  // Closed by a pause: its chats hear it'll be back.
+  private paused = false;
   private lastSent = 0;
   private readonly waiters = new Set<() => void>();
   // The agents holding the review in this run, and the watches waiting now (each from a chat).
@@ -798,7 +800,7 @@ export class Notes {
       };
       const idle = (): WatchAnswer => { const first = !a.told; a.told = true; this.save(); return { idle: true, first }; };
       const check = () => {
-        if (this.closed) return done({ closed: true });
+        if (this.closed) return done(this.paused ? { closed: true, paused: true } : { closed: true });
         if (!this.ctx) return;
         if (h.fresh) return done(this.deliver(agent));
         if (!this.unseen(agent).count) { if (opts.brief) done(idle()); return; }
@@ -882,9 +884,10 @@ export class Notes {
     this.pulse.unref();
   }
 
-  /** The review is closing: waiting agents hear so. */
-  close(): void {
+  /** The review is closing, or pausing: waiting agents hear so. */
+  close(paused = false): void {
     this.closed = true;
+    this.paused = paused;
     this.waiters.forEach((w) => w());
     if (this.pulse) clearInterval(this.pulse);
     if (this.ringing) clearTimeout(this.ringing);
