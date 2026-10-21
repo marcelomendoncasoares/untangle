@@ -31,6 +31,8 @@
     done: svg(`<path d="M3.5 8.5l3 3 6-7" ${LN}/>`),
     plus: svg('<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
     play: svg('<path d="M5 3.3v9.4L12.6 8z" fill="currentColor"/>'),
+    back: svg(`<path d="M10 3.5 5.5 8l4.5 4.5" ${LN}/>`),
+    chev: svg(`<path d="M6 3.5 10.5 8 6 12.5" ${LN}/>`),
     more: svg('<circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/>'),
     stop: svg(`<rect x="3.5" y="3.5" width="9" height="9" rx="1.5" ${LN}/>`),
   };
@@ -38,8 +40,13 @@
   const GLYPH = { claude: { tool: '●', out: '└', say: '●', you: '>' }, codex: { tool: '•', out: '└', say: '•', you: '›' } };
 
   const S = { data: null, tab: 'open', filter: 'all', sel: null, menu: null, tail: null, tailFor: null, toast: null, starting: new Set() };
-  // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come.
-  const P = { open: false, q: '', hl: 0, pulls: null, loading: false };
+  // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
+  // then the review picked, and how its agent starts (the form), or the review an agent joins.
+  const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null };
+  const TEMPLATE = (pr) => `Do an initial review of this ${pr ? 'pull request' : 'branch'}. Read the whole change, then post your findings to untangle as notes on the lines they’re about, one note per point: bugs and edge cases first, then missing tests, then design and naming. Say what you’d change and why, and leave out style nits. Then tell me how many notes you posted, and keep watching the review for mine.`;
+  const AGENT = { claude: 'Claude', codex: 'Codex' };
+  // Quoted for a shell, as untangle types it into the terminal.
+  const sh = (t) => (/^[\w./:@%+=,-]+$/.test(t) ? t : `'${t.replace(/'/g, `'\\''`)}'`);
   let toastTimer = 0;
 
   function api(path, init) {
@@ -189,7 +196,7 @@
     const c = r.chat, a = r.agents[0];
     const chat = c
       ? `<div class="pk-h"><b>${esc(c.agent)}</b><span>${esc(a ? a.label : `${c.agent}’s chat, kept`)}</span><span class="sp"></span>${c.orca ? `<button type="button" class="btn sm" data-act="chat" data-id="${esc(r.id)}">${ICON.term}Chat<kbd>C</kbd></button>` : ''}</div>${tail(r)}`
-      : `<div class="pk-h"><b>No agent</b></div><p class="pk-text">No chat holds this review. In Claude or Codex, “review this in untangle” holds it, with the untangle skill.</p>`;
+      : `<div class="pk-h"><b>No agent</b></div><p class="pk-text">No chat holds this review. Add Claude or Codex, and its chat starts with the untangle skill${S.data && S.data.orca ? ', in Orca' : ''}.</p>${r.status === 'running' && !r.build ? `<div class="pk-act"><button type="button" class="btn sm" data-act="add-agent" data-id="${esc(r.id)}">${ICON.plus}Add an agent</button></div>` : ''}`;
     const w = r.waiting;
     const notes = `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
     const running = r.status === 'running';
@@ -270,9 +277,56 @@
     return out;
   }
 
+  // The command that starts the chat, as untangle will type it.
+  function command() {
+    const f = P.form, it = P.item;
+    const msg = f.msg.trim();
+    const first = `${f.agent === 'claude' ? '/untangle' : '$untangle'} ${it.target}${msg ? ' ' + msg : ''}`;
+    const flags = (f.flags[f.agent] || '').trim();
+    const resume = f.chat === 'resume' && f.resume;
+    const how = f.agent === 'claude' ? (resume ? `--resume ${sh(f.resume)}` : `--session-id ${f.session} -n ${sh('Review ' + it.name)}`) : resume ? `resume ${sh(f.resume)}` : '--no-daemon';
+    return [f.agent, how, flags, sh(first)].filter(Boolean).join(' ');
+  }
+
+  function formHtml() {
+    const f = P.form, it = P.item, ag = P.agents;
+    const kind = f.agent;
+    const seg = ['claude', 'codex', 'none'].map((k) => `<button type="button" data-act="f-agent" data-key="${k}" aria-pressed="${kind === k}"${k !== 'none' && ag && !ag[k].installed ? ' disabled title="Not installed here"' : ''}>${k === 'none' ? 'No agent' : AGENT[k]}</button>`).join('');
+    const chats = ag ? ag.chats.filter((c) => c.kind === kind) : [];
+    const opt = (key, label, small, off) => `<button type="button" class="opt" data-act="f-chat" data-key="${key}" aria-pressed="${f.chat === key}"${off ? ' disabled' : ''}><i class="radio"></i>${label}<small>${small}</small></button>`;
+    const agentRows = kind === 'none' ? '<div class="field"><span>Chat</span><span class="where">None. Add an agent from its row, any time.</span></div>' : `
+      <div class="field"><span>Chat</span><span class="opts">${opt('new', 'New chat', `named Review ${esc(it.name)}`)}${opt('resume', 'Resume a chat', chats.length ? 'one that held a review before' : 'none held a review before', !chats.length)}</span></div>
+      ${f.chat === 'resume' && chats.length ? `<div class="field"><span></span><span class="chats">${chats.map((c) => `<button type="button" class="copt" data-act="f-resume" data-key="${esc(c.id)}" aria-pressed="${f.resume === c.id}"><i class="radio"></i><span>${esc(c.agent)} · Review ${esc(c.from)}</span><small>closed ${esc(ago(c.when))}</small></button>`).join('')}</span></div>` : ''}
+      <div class="field"><span></span><button type="button" class="chk" data-act="f-own" aria-pressed="${f.own}"><i></i>Request an initial review from ${AGENT[kind]}</button></div>
+      <div class="field"><label for="f-msg">First message<small>optional</small></label><span class="msg"><textarea id="f-msg" rows="5" placeholder="Anything for ${AGENT[kind]} to start with. It reads it after ${kind === 'claude' ? '/untangle' : '$untangle'} and the link.">${esc(f.msg)}</textarea><small id="f-msg-note">${f.own ? 'The review template: change it as you like.' : 'Request an initial review fills it with a template.'}</small></span></div>`;
+    const where = ag && ag.orca ? '<b>Reviews</b> workspace: a tab for the page' + (kind === 'none' ? '' : ', a terminal for the chat') : 'Orca isn’t here: ' + (kind === 'none' ? 'the page opens in your browser' : 'the chat’s command is copied, to paste in a terminal');
+    const adv = kind === 'none' ? '' : `<div class="field"><span></span><button type="button" class="adv" data-act="f-adv" aria-expanded="${f.adv}">${ICON.chev}Advanced<span>how ${AGENT[kind]} starts, and its command</span></button></div>
+      ${f.adv ? `<div class="field"><label for="f-flags">Starts with</label><span class="flags"><input id="f-flags" type="text" spellcheck="false" autocomplete="off" value="${esc(f.flags[kind] || '')}" placeholder="${kind === 'claude' ? '--model opus --permission-mode auto' : '-m gpt-6.1-sol'}"></span></div><pre class="cmd" id="f-cmd">${esc(command())}</pre>` : ''}`;
+    return `<div class="sh">${P.addFor ? '<span></span>' : `<button type="button" class="ib" data-act="pal-back" aria-label="Back">${ICON.back}</button>`}<span class="main"><span class="l1"><span class="num">${esc(it.num)}</span>${it.kind ? `<span class="kind">${esc(it.kind)}</span>` : ''}<span class="ttl">${md(it.title)}</span></span><span class="l2">${esc(it.sub)}</span></span></div>
+      <div class="pal-body">
+        ${P.addFor ? '' : `<div class="field"><span>Agent</span><span class="seg">${seg}</span></div>`}
+        ${agentRows}
+        <div class="field"><span>In Orca</span><span class="where">${where}</span></div>
+        ${adv}
+      </div>
+      <div class="pal-foot"><span class="note">${P.addFor ? `${AGENT[kind]} starts with the skill, and holds the review.` : kind === 'none' ? 'The review starts, and its page opens.' : `The review starts first, then ${AGENT[kind]} holds it with the skill.`}</span><span class="sp"></span><button type="button" class="btn sm" data-act="close-pal">Cancel<kbd>Esc</kbd></button><button type="button" class="btn sm primary" data-act="f-start">${P.addFor ? `Start ${AGENT[kind]}` : 'Start review'}<kbd>⏎</kbd></button></div>`;
+  }
+
   function palette() {
     const box = $('#palette');
     if (!P.open) { if (box) box.remove(); return; }
+    if (P.stage === 'start') {
+      const html = `<div class="scrim" data-act="close-pal"></div><div class="pal" role="dialog" aria-label="${P.addFor ? 'Add an agent' : 'Start a review'}">${formHtml()}</div>`;
+      const div = box || document.createElement('div');
+      div.id = 'palette';
+      const was = document.activeElement && document.activeElement.id;
+      const at = document.activeElement && document.activeElement.selectionStart;
+      div.innerHTML = html;
+      if (!box) document.body.appendChild(div);
+      const again = was && document.getElementById(was);
+      if (again) { again.focus(); if (at != null && again.setSelectionRange) again.setSelectionRange(at, at); }
+      return;
+    }
     const list = choices();
     P.hl = Math.max(0, Math.min(P.hl, list.length - 1));
     let h = '', group = '';
@@ -301,11 +355,18 @@
     $('#pal-in').focus();
   }
 
-  function openPalette() {
+  function openPalette(addFor) {
     P.open = true;
     P.q = '';
     P.hl = 0;
+    P.stage = 'pick';
+    P.addFor = null;
     S.menu = null;
+    if (!P.agents) api('agents').then((d) => { P.agents = d; if (P.stage === 'start') palette(); }, () => {});
+    if (addFor) {
+      const r = byId(addFor);
+      if (r) return startForm({ target: r.target, num: r.name.replace(/^[^#]*#/, '#'), name: r.name, title: r.title, kind: r.kind, sub: `${r.repo}${r.author ? ' · ' + r.author : ''} · running` }, addFor);
+    }
     palette();
     if (!P.pulls && !P.loading) {
       P.loading = true;
@@ -315,11 +376,50 @@
 
   function closePalette() {
     P.open = false;
+    P.stage = 'pick';
+    P.addFor = null;
     palette();
+  }
+
+  // The form, for a review picked or a running one an agent joins: the agent you last started.
+  function startForm(item, addFor) {
+    const agents = P.agents || { claude: { installed: true, flags: '' }, codex: { installed: true, flags: '' }, chats: [] };
+    const first = agents.claude.installed ? 'claude' : agents.codex.installed ? 'codex' : 'none';
+    P.stage = 'start';
+    P.item = item;
+    P.addFor = addFor || null;
+    P.form = { agent: addFor && first === 'none' ? 'claude' : first, chat: 'new', resume: null, own: false, msg: '', adv: false, session: crypto.randomUUID(), flags: { claude: agents.claude.flags, codex: agents.codex.flags } };
+    palette();
+  }
+
+  function sendForm() {
+    const f = P.form, it = P.item;
+    const agent = f.agent === 'none' ? null : { kind: f.agent, resume: f.chat === 'resume' ? f.resume : null, session: f.session, flags: f.flags[f.agent] || '', message: f.msg };
+    const addFor = P.addFor;
+    closePalette();
+    const said = (d) => {
+      if (d.command) {
+        // No Orca to start it in: its command, for a terminal.
+        const copy = navigator.clipboard ? navigator.clipboard.writeText(d.command) : Promise.reject(new Error('no clipboard'));
+        copy.then(() => toast(`Copied ${AGENT[agent.kind]}’s command: paste it in a terminal to start the chat`), () => toast(`Run this in a terminal: ${d.command}`));
+      } else if (agent) toast(addFor ? `${AGENT[agent.kind]} is starting, in Orca` : `The review of ${it.num} is starting, and ${AGENT[agent.kind]} with it, in Orca`);
+      else toast(d.already ? `${it.num} is running already` : `The review of ${it.num} is starting`);
+      poll();
+    };
+    if (addFor) return post('agent', { id: addFor, agent }).then(said, (e) => toast(e.message, true));
+    S.starting.add(it.target);
+    post('start', { target: it.target, agent }).then(said, (e) => toast(e.message, true)).finally(() => { S.starting.delete(it.target); render(); });
+    render();
   }
 
   function choose(c) {
     if (!c) return;
+    if (c.target && !c.id) {
+      const m = PR_URL.exec(c.target);
+      const pull = P.pulls ? [...P.pulls.asked, ...P.pulls.yours].find((p) => p.url === c.target) : null;
+      const kt = /^([a-z]+)(?:\([^)]*\))?!?: (.+)$/.exec(pull ? pull.title : '');
+      return startForm({ target: c.target, num: c.num, name: m ? `${m[2]}#${m[3]}` : c.num, title: pull ? (kt ? kt[2] : pull.title) : `${m[1]}/${m[2]}#${m[3]}`, kind: kt ? kt[1] : null, sub: pull ? `${pull.repo} · ${pull.author}${pull.draft ? ' · draft' : ''} · updated ${ago(pull.updated)}` : 'a link you pasted' });
+    }
     closePalette();
     if (c.id && !c.again) return act('open', c.id);
     const body = c.target ? { target: c.target } : { id: c.id };
@@ -438,12 +538,58 @@
       case 'choose':
         choose(choices()[Number(b.dataset.i)]);
         break;
+      case 'pal-back':
+        P.stage = 'pick';
+        $('#palette').remove();
+        palette();
+        break;
+      case 'f-agent':
+        P.form.agent = key;
+        P.form.chat = 'new';
+        P.form.resume = null;
+        if (P.form.own) P.form.msg = TEMPLATE(PR_URL.test(P.item.target));
+        palette();
+        break;
+      case 'f-chat':
+        P.form.chat = key;
+        if (key === 'resume' && !P.form.resume) { const c = P.agents && P.agents.chats.find((x) => x.kind === P.form.agent); P.form.resume = c ? c.id : null; }
+        palette();
+        break;
+      case 'f-resume':
+        P.form.resume = key;
+        palette();
+        break;
+      case 'f-own': {
+        const f = P.form, t = TEMPLATE(PR_URL.test(P.item.target));
+        f.own = !f.own;
+        if (f.own && !f.msg.trim()) f.msg = t;
+        else if (!f.own && f.msg === t) f.msg = '';
+        palette();
+        break;
+      }
+      case 'f-adv':
+        P.form.adv = !P.form.adv;
+        palette();
+        break;
+      case 'f-start':
+        sendForm();
+        break;
+      case 'add-agent':
+        openPalette(id);
+        break;
       default:
         break;
     }
   });
 
   document.addEventListener('input', (e) => {
+    if ((e.target.id === 'f-msg' || e.target.id === 'f-flags') && P.form) {
+      if (e.target.id === 'f-msg') P.form.msg = e.target.value;
+      else P.form.flags[P.form.agent] = e.target.value;
+      const cmd = $('#f-cmd');
+      if (cmd) cmd.textContent = command();
+      return;
+    }
     if (e.target.id !== 'pal-in') return;
     P.q = e.target.value;
     P.hl = 0;
@@ -452,6 +598,11 @@
 
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); return P.open ? closePalette() : openPalette(); }
+    if (P.open && P.stage === 'start') {
+      if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+      else if (e.key === 'Enter' && (e.target.tagName !== 'TEXTAREA' || e.ctrlKey || e.metaKey)) { e.preventDefault(); sendForm(); }
+      return;
+    }
     if (P.open) {
       const list = choices();
       if (e.key === 'Escape') { e.preventDefault(); closePalette(); }

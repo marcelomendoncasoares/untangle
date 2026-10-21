@@ -296,9 +296,22 @@ from the agent's own transcript, the notes waiting for you, and what the review 
 | `Space`       | open the next review that needs you              |
 
 New review lists the pull requests GitHub asks you to review and your own (through `gh`), with the
-paused reviews to resume. Pick one, or paste any pull request's link, and the review starts on its
-own and opens its page. A review started there runs until you close it, with or without its tab.
-A row's menu closes it, a paused review's Resume starts it again, and a closed one reopens.
+paused reviews to resume. Pick one, or paste any pull request's link, then choose its agent:
+Claude, Codex, or none. The review starts on its own and opens its page, and the agent's chat
+starts next to it with the untangle skill (`/untangle <link>` for Claude, `$untangle <link>` for
+Codex). A new Claude chat starts with a session id `untangle` chose, so the review knows it at once.
+You can resume a chat that held a review before instead, and give a first message, which the
+agent reads after the link: "Request an initial review" fills it with a template that asks for
+the agent's findings as notes, and you can change it. The flags each agent starts with, and the
+whole command, are under Advanced, and the flags are kept for the next start. A review that's
+running without an agent gets one the same way, from its row.
+
+Inside Orca, the reviews' chats and pages live in one workspace, Reviews: a folder of untangle's
+cache (`chats/Reviews`), which the manager adds to Orca the first time. Outside Orca, the chat's
+command is copied for you to run in a terminal.
+
+A review started there runs until you close it, with or without its tab. A row's menu closes it,
+a paused review's Resume starts it again, and a closed one reopens.
 
 Inside a review, Reviews, left of its title, lists the others with what's new in each. Its count is
 the ones that need you, a toast says when one comes, and a click brings that review's page to the
@@ -430,6 +443,8 @@ versions kept marks on move to it when their review starts.
   - `sessions/`: a record of each review, named like its notes, for `untangle reviews`: what it
   reviews, its progress, the chats that held it, whether it runs, and the checkouts and analyses
   it uses.
+  - `chats/`: the Reviews workspace's folder, where the chats the manager starts run, and what it
+  keeps of them (`agents.json`: the flags each agent last started with, and the chats it started).
   - `untangle/`: `untangle`'s own clone, which `untangle upgrade` pulls, builds and links. Once
   upgraded, the `untangle` command runs from it, so keep it when you clear the cache.
   - `upgrade.json`: GitHub's `main` as last looked up, kept a day, to say when an upgrade brings a

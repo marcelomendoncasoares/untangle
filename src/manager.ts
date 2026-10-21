@@ -4,13 +4,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import '../viewer/core.js';
-import { cloneDir } from './cache.js';
+import { agentCommand, agentOptions, rememberStart, type AgentChoice } from './agents.js';
+import { cacheRoot, cloneDir } from './cache.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
-import { orcaCli, showTab, showTerminal } from './orca.js';
+import { newTerminal, orcaCli, reviewsWorkspace, showTab, showTerminal } from './orca.js';
 import { fonts, managerPage } from './page.js';
 import { dirSizeAsync, listRecords, readRecord, recordDirs, recordFile, writeRecord, type Listed } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
@@ -81,6 +82,8 @@ export function kindOf(title: string): { kind: string | null; title: string } {
 /** A review as the page lists it. */
 export interface Row {
   id: string;
+  /** What starts it again: the pull request's link, or the directory. */
+  target: string;
   name: string;
   title: string;
   kind: string | null;
@@ -120,6 +123,7 @@ function starting(run: RunInfo, s: Summary | undefined): Row {
   const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || (m ? `#${m[3]}` : 'Starting'));
   return {
     id: `run:${run.pid}`,
+    target: run.pr && m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : run.dir || '',
     name: m ? `${m[2]}#${m[3]}` : (run.dir || '').split(/[\\/]/).pop() || 'review',
     title, kind,
     repo: m ? `${m[1]}/${m[2]}` : (run.repoKey || '').replace(/^github\.com\//, ''),
@@ -137,6 +141,21 @@ function wanted(target: string): Wanted | null {
   const m = /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(target);
   if (m) return { pr: prKey(m[1], m[2], Number(m[3])), dir: null, repoKey: `github.com/${m[1]}/${m[2]}`, branch: null };
   return fs.existsSync(target) ? wantedDir(target) : null;
+}
+
+/** What New review sent for the agent, checked: which, a chat to resume or a new one, flags, a first message. */
+function agentFrom(x: unknown): AgentChoice | null {
+  const a = (x && typeof x === 'object' ? x : null) as { kind?: unknown; resume?: unknown; session?: unknown; flags?: unknown; message?: unknown } | null;
+  if (!a || (a.kind !== 'claude' && a.kind !== 'codex')) return null;
+  const resume = typeof a.resume === 'string' && /^[\w-]{1,100}$/.test(a.resume) ? a.resume : null;
+  const session = typeof a.session === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(a.session) ? a.session : null;
+  return { kind: a.kind, resume, session, flags: typeof a.flags === 'string' ? a.flags.slice(0, 400) : '', message: typeof a.message === 'string' ? a.message.slice(0, 8000) : '' };
+}
+
+/** A review's short name for a terminal's title: #5879, or the repository's for a branch. */
+function nameOf(target: string): string {
+  const m = /github\.com\/[\w.-]+\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(target);
+  return m ? `${m[1]}#${m[2]}` : path.basename(target);
 }
 
 /** A pull request the palette offers: its repository, number, title and author, and when it last moved. */
@@ -158,6 +177,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null): Row {
   const waiting = s?.waiting ?? [];
   return {
     id: idOf(r),
+    target: r.target,
     name: shortName(r),
     title,
     kind,
@@ -260,18 +280,36 @@ export class Manager {
    * child; it opens its own page. It runs until it's paused or closed, its tab or not. A review of
    * it already running isn't started again.
    */
-  async start(target: string): Promise<{ status?: number; data: unknown }> {
+  async start(target: string, agent: AgentChoice | null = null): Promise<{ status?: number; data: unknown }> {
     if (!isPrUrl(target) && !(path.isAbsolute(target) && fs.existsSync(target))) return { status: 400, data: { error: `${target} is not a pull request’s link` } };
     const w = wanted(target);
     const running = w && findRun(w);
     if (running) return { data: { already: true, pid: running.pid } };
-    const { pid, log } = launch(['-autoclose=false', '--', target]);
+    // In Orca, its page opens as a tab of the Reviews workspace, and its chat runs there.
+    const cli = orcaCli();
+    const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
+    const env = ws && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: ws.worktree } : process.env;
+    const { pid, log } = launch(['-autoclose=false', '--', target], env);
     for (let i = 0; pid > 0 && i < 300; i++) {
-      if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid } };
+      if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid, ...(agent ? await this.chat(target, agent, ws) : {}) } };
       if (!pidAlive(pid)) break;
       await new Promise((r) => setTimeout(r, 100));
     }
     return { status: 502, data: { error: `the review didn’t start${logTail(log) ? ': ' + logTail(log).split('\n').pop() : ''}` } };
+  }
+
+  /**
+   * Starts an agent's chat for a review: in a terminal of the Reviews workspace, in Orca, with the
+   * untangle skill. Without Orca, the command, for you to run in a terminal.
+   */
+  async chat(target: string, agent: AgentChoice, ws?: { worktree: string } | null): Promise<{ chat: { id: string | null; handle: string | null }; command: string | null }> {
+    const name = nameOf(target);
+    const { command, id } = agentCommand(agent, target, name);
+    const cli = orcaCli();
+    const space = ws === undefined ? (cli ? await reviewsWorkspace(cacheRoot(), cli) : null) : ws;
+    const handle = space ? await newTerminal(space.worktree, `${name.replace(/^[^#]*#/, '#')} · ${agent.kind === 'claude' ? 'Claude' : 'Codex'}`, command, cli) : null;
+    rememberStart(agent, { id, handle });
+    return { chat: { id, handle }, command: handle ? null : command };
   }
 
   /** Closes a review: a running one stops, saying it's closed; a paused one's record says so. */
@@ -339,7 +377,8 @@ export class Manager {
     if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid } };
     if (route === 'reviews' && method === 'GET') return { data: await this.view() };
     if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
-    if (route === 'start' && method === 'POST' && typeof (b as { target?: unknown }).target === 'string') return this.start((b as { target: string }).target.trim());
+    if (route === 'agents' && method === 'GET') return { data: { ...agentOptions(), orca: !!orcaCli() } };
+    if (route === 'start' && method === 'POST' && typeof (b as { target?: unknown }).target === 'string') return this.start((b as { target: string }).target.trim(), agentFrom((b as { agent?: unknown }).agent));
     if (route === 'tail' && method === 'GET') {
       const f = this.find(query.get('id'));
       const c = f?.record.chats[0];
@@ -356,7 +395,13 @@ export class Manager {
       if (p?.page) this.pages.set(id, p.page);
       return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
     }
-    if (route === 'start' && method === 'POST') return this.start(f.record.target);
+    if (route === 'start' && method === 'POST') return this.start(f.record.target, agentFrom((b as { agent?: unknown }).agent));
+    if (route === 'agent' && method === 'POST') {
+      const agent = agentFrom((b as { agent?: unknown }).agent);
+      if (!agent) return { status: 400, data: { error: 'which agent? Claude or Codex' } };
+      if (!f.run) return { status: 409, data: { error: `${shortName(f.record)} isn’t running` } };
+      return { data: await this.chat(f.record.target, agent) };
+    }
     if (route === 'close' && method === 'POST') return this.close(f);
     if (route === 'chat' && method === 'POST') {
       const c = f.record.chats[0];
