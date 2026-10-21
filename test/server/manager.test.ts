@@ -43,7 +43,7 @@ describe('Given a review Claude holds from a chat in Orca, and the manager, ', {
   const chat = 'cccccccc-0000-4000-8000-000000000007';
   const claude = () => path.join(cache, 'claude');
   // The commands' environment: the browser and Orca's CLI stand in, first on PATH.
-  const env = (more: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ UNTANGLE_NOTES_QUIET: '100', BROWSER: path.join(bin, 'browser.sh'), PATH: `${bin}${path.delimiter}${process.env.PATH}`, ORCA_CLI_COMMAND: 'orca-ide', ...more });
+  const env = (more: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ UNTANGLE_NOTES_QUIET: '100', BROWSER: path.join(bin, 'browser.sh'), PATH: [bin, gh.binDir, process.env.PATH].join(path.delimiter), ORCA_CLI_COMMAND: 'orca-ide', ...more });
   const reviews = () => untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd: repo.dir, env: env() });
   const view = async () => (await manager.call('reviews')).data as View;
   const calls = (): string[][] => (fs.existsSync(orcaLog) ? fs.readFileSync(orcaLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);

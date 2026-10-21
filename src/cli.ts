@@ -20,6 +20,7 @@ import { NoteError, Notes, notesFile, type NoteAction, type Scope } from './note
 import { openPage } from './open.js';
 import { fonts, highlighter, progressPage, reviewPage, type PageConfig } from './page.js';
 import { readRecord, recordFile, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
+import { Manager, openManager } from './manager.js';
 import { reviews, type Summary } from './reviews.js';
 import { prKey, removeRun, wantedDir, writeRun, type RunInfo } from './runs.js';
 import { ReviewServer } from './server.js';
@@ -124,6 +125,7 @@ async function review(opts: Options): Promise<number> {
             return Promise.resolve({ data: { stopping: true } });
           }
           if (route === 'summary' && method === 'GET') return Promise.resolve({ data: summary() });
+          if (route === 'reviews' || route.startsWith('reviews/')) return reviewsCall(route, method, body);
           if (!session || !target || !notes) return Promise.resolve({ status: 503, data: { error: 'the review is still being built' } });
           // A page from before a refresh shows other commits: what it sends would land on the wrong lines.
           if (head && head !== target.headSha && route !== 'metrics') return Promise.resolve({ status: 409, data: { error: `untangle now reviews ${target.headSha.slice(0, 7)}: reload the page.`, moved: target.headSha } });
@@ -178,6 +180,18 @@ async function review(opts: Options): Promise<number> {
   };
   process.on('SIGINT', () => stop('signal'));
   process.on('SIGTERM', () => stop('signal'));
+
+  // The other reviews, for the page's Reviews menu: what the manager lists, read from here, and
+  // its page, opened from here.
+  let others: Manager | null = null;
+  const reviewsCall = async (route: string, method: string, body: unknown): Promise<{ status?: number; data: unknown }> => {
+    others ??= new Manager();
+    const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown; palette?: unknown };
+    if (route === 'reviews' && method === 'GET') return { data: { ...(await others.view({ disk: false })), self: record ? `${record.repoKey}/${record.key}` : null } };
+    if (route === 'reviews/open' && method === 'POST') return others.call('open', 'POST', new URLSearchParams(), { id: b.id });
+    if (route === 'reviews/manager' && method === 'POST') return { data: await openManager({ palette: b.palette === true }) };
+    return { status: 404, data: { error: `no such call: ${method} ${route}` } };
+  };
 
   // When the review was last in use: a page in front (it asks for its metrics while it's shown),
   // its notes changing, an agent at work.

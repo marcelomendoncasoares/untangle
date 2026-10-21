@@ -37,7 +37,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   let page: Browser;
   const chat = 'cccccccc-0000-4000-8000-000000000011';
   const claude = () => path.join(cache, 'claude');
-  const env = (more: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ UNTANGLE_NOTES_QUIET: '100', BROWSER: path.join(bin, 'browser.sh'), PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...more });
+  const env = (more: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ UNTANGLE_NOTES_QUIET: '100', BROWSER: path.join(bin, 'browser.sh'), PATH: [bin, gh.binDir, process.env.PATH].join(path.delimiter), ...more });
   const branch = (r: TempRepo, said: string) => {
     r.write('pubspec.yaml', pubspec);
     r.write('lib/a.dart', "void greet() {\n  print('hi');\n}\n");
@@ -52,7 +52,8 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     other = TempRepo.create();
     const head = branch(repo, 'hello');
     branch(other, 'hey');
-    gh = stubGh();
+    const found = { number: 12, title: 'feat: Retry calls', url: 'https://github.com/acme/app/pull/12', updatedAt: '2026-10-21T10:00:00Z', isDraft: false, repository: { nameWithOwner: 'acme/app' }, author: { login: 'ada' } };
+    gh = stubGh([{ match: ['search', 'prs', '--review-requested=@me'], stdout: [found] }, { match: ['search', 'prs', '--author=@me'], stdout: [] }]);
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     bin = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-bin-'));
     opened = path.join(bin, 'opened.log');
@@ -148,8 +149,56 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     + 'then only the paused review is listed, with its chat-less agent cell and what it holds on disk.',
     async () => {
       await page.click('.nr[data-key="paused"]');
-      await page.until(`document.querySelectorAll('.row').length === 1 && document.querySelector('.memc small').textContent === 'on disk' && document.querySelector('.memc b').textContent !== '—'`);
+      await page.until(`document.querySelectorAll('.row').length === 1 && document.querySelector('.memc button').textContent === 'Resume' && document.querySelector('.memc small').textContent.endsWith(' on disk')`);
       assert.equal(await page.eval(`document.querySelector('.head h1').textContent + ' | ' + document.querySelector('.row .l2').textContent`), `Paused | Stopped a moment ago · ${path.basename(other.dir)}`);
+    },
+  );
+
+  it(
+    'when Ctrl K is pressed, '
+    + 'then the palette opens on the pull requests asked of you, and the paused review to resume; typing narrows it.',
+    async () => {
+      await page.click('.nr[data-key="all"]');
+      await page.key('k', { ctrl: true });
+      await page.until(`!!document.querySelector('.pal') && document.querySelectorAll('.pal-r').length === 2`);
+      assert.deepEqual(await page.eval(`[...document.querySelectorAll('.pal-g, .pal-r')].map((e) => e.className === 'pal-g' ? '[' + e.textContent + ']' : [...e.children].map((c) => c.textContent).join(' | '))`), [
+        '[Asked to review you1]', '#12 | feat: Retry calls | ada · app',
+        '[Paused]', `${path.basename(other.dir)} | feature against main | Resume`,
+      ]);
+      await page.type('retry');
+      await page.until(`document.querySelectorAll('.pal-r').length === 1`);
+      await page.key('Escape');
+      await page.until(`!document.querySelector('.pal')`);
+    },
+  );
+
+  it(
+    'when the paused review is chosen in the palette, '
+    + 'then it starts again, and is listed running.',
+    async () => {
+      await page.key('k', { ctrl: true });
+      await page.until(`document.querySelectorAll('.pal-r').length === 2`);
+      await page.key('ArrowDown');
+      await page.key('Enter');
+      await page.until(`!document.querySelector('.pal') && [...document.querySelectorAll('.row.running')].length === 2 && !document.querySelector('.st.build')`, 120_000);
+    },
+  );
+
+  it(
+    'when the other review’s Reviews menu is opened, '
+    + 'then it counts the review that needs you, lists it with what came, and brings it to the front on a click.',
+    async () => {
+      const runs = fs.readdirSync(path.join(cache, 'run')).filter((f) => /^\d+\.json$/.test(f)).map((f) => JSON.parse(fs.readFileSync(path.join(cache, 'run', f), 'utf8')) as { url: string; dir: string });
+      const url = runs.find((x) => x.dir === fs.realpathSync(other.dir))!.url;
+      await page.goto(url);
+      await page.until(`!!document.getElementById('vw-revs') && !document.getElementById('vw-revs').hidden && !document.getElementById('vw-revs-n').hidden`, 60_000);
+      assert.equal(await page.eval(`document.getElementById('vw-revs').textContent`), 'Reviews1');
+      await page.click('#vw-revs');
+      await page.until(`!!document.querySelector('.menu.revs-pop .rv-it')`);
+      assert.deepEqual(await page.eval(`[...document.querySelectorAll('.rv-it')].map((i) => [...i.children].map((c) => c.textContent).join(' | '))`), [` | ${path.basename(repo.dir)} | feature against main | Claude answered N1`]);
+      const before = fs.readFileSync(opened, 'utf8');
+      await page.click('.rv-it');
+      await until('the other review to open', () => fs.readFileSync(opened, 'utf8').length > before.length && fs.readFileSync(opened, 'utf8').trim().split('\n').at(-1) === run.url);
     },
   );
 });

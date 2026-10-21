@@ -154,6 +154,11 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .memc b { font: 600 12.5px/1 var(--code); font-variant-numeric: tabular-nums; }
 .memc small { font-size: 11.5px; color: var(--text-3); }
 
+.jump { display: flex; align-items: center; gap: 8px; width: 420px; max-width: 40vw; height: 30px; margin-left: 30px; padding: 0 8px 0 10px; border-radius: 8px; background: var(--sheet); color: var(--text-3); font-size: 12.5px; }
+.jump span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jump:hover { color: var(--text-2); }
+.jump kbd { margin-left: auto; }
+
 /* An open row: a peek, as the reviewer opens a definition under its line. */
 .peek { position: relative; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 256px; border-radius: 0 0 10px 10px; background: var(--raised); box-shadow: inset 0 1px 0 var(--hair); animation: open 220ms var(--ease) 1; }
 .pk { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 11px 14px 14px; }
@@ -204,7 +209,29 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .mi:hover { background: var(--hover); }
 .mi svg { width: 13px; height: 13px; color: var(--text-3); }
 
+/* The palette: New review, as the reviewer's jump palette. */
+.scrim { position: fixed; inset: 0; z-index: 40; background: rgba(5, 5, 7, .55); animation: fade 160ms var(--ease) 1; }
+.pal { position: fixed; left: 50%; top: 64px; z-index: 41; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 96px); display: flex; flex-direction: column; transform: translateX(-50%); border-radius: 14px; background: var(--raised); box-shadow: 0 0 0 1px var(--hair), 0 24px 64px rgba(0, 0, 0, .7); overflow: hidden; animation: pal 180ms var(--ease) 1; }
+.pal-in { flex: none; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--hair); color: var(--text-3); }
+.pal-in svg { width: 14px; height: 14px; }
+.pal-in input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; color: var(--text); font: 400 14px/1 var(--ui); caret-color: var(--accent); }
+.pal-in input::placeholder { color: var(--text-3); }
+.pal-list { min-height: 0; overflow-y: auto; padding-bottom: 6px; scrollbar-width: thin; scrollbar-color: var(--hair-2) transparent; }
+.pal-g { display: flex; align-items: baseline; gap: 8px; padding: 10px 16px 4px; font-size: 11.5px; color: var(--text-3); }
+.pal-g span { margin-left: auto; }
+.pal-r { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: calc(100% - 12px); height: 36px; margin: 0 6px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+.pal-r:hover, .pal-r.on { background: var(--hover); }
+.pal-r .num { font: 500 12px/1 var(--code); color: var(--text-3); }
+.pal-r .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-r .h { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.pal-r .h.res { color: var(--local-ink); }
+.pal-note { padding: 14px 16px; font-size: 12.5px; color: var(--text-3); }
+.pal-f { flex: none; display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; border-top: 1px solid var(--hair); font-size: 11.5px; color: var(--text-3); }
+.pal-f kbd { margin-right: 3px; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pal { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(224, 138, 216, .5); } 50% { box-shadow: 0 0 0 5px rgba(224, 138, 216, 0); } }
 @keyframes open { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
@@ -230,8 +257,10 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 <div class="app" id="app">
   <header class="top">
     <div class="brand"><b>Reviews</b><span id="counts"></span></div>
+    <button type="button" class="jump" data-act="new" aria-keyshortcuts="Control+K"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11 L15 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Start a review: paste a link, or search pull requests</span><kbd>Ctrl K</kbd></button>
     <span class="sp"></span>
     <button type="button" class="mem none" id="mem" data-act="mem" aria-haspopup="dialog" aria-expanded="false" title="Memory: the reviews running and their language servers"><i></i><span id="mem-total">—</span></button>
+    <button type="button" class="btn primary" data-act="new"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>New review</button>
   </header>
   <div class="body">
     <aside class="side" id="side" aria-label="Filters and disk"></aside>

@@ -287,12 +287,22 @@ progress, what waits for you (an agent's answer, a note it wrote), where its age
 the memory it holds with its language server. Open a row and it shows the chat's last lines, read
 from the agent's own transcript, the notes waiting for you, and what the review holds on disk.
 
-| Key           |                                         |
-| ------------- | --------------------------------------- |
-| `↑` `↓`       | the previous or next review             |
-| `Enter`       | bring the review's page to the front    |
-| `C`           | bring its chat's terminal to the front  |
-| `Space`       | open the next review that needs you     |
+| Key           |                                                  |
+| ------------- | ------------------------------------------------ |
+| `Ctrl K`      | start a review: New review, as below             |
+| `↑` `↓`       | the previous or next review                      |
+| `Enter`       | bring the review's page to the front             |
+| `C`           | bring its chat's terminal to the front           |
+| `Space`       | open the next review that needs you              |
+
+New review lists the pull requests GitHub asks you to review and your own (through `gh`), with the
+paused reviews to resume. Pick one, or paste any pull request's link, and the review starts on its
+own and opens its page. A review started there runs until you close it, with or without its tab.
+A row's menu closes it, a paused review's Resume starts it again, and a closed one reopens.
+
+Inside a review, Reviews, left of its title, lists the others with what's new in each. Its count is
+the ones that need you, a toast says when one comes, and a click brings that review's page to the
+front. It also opens this page, or starts a review from it.
 
 A small process serves the page, at `http://127.0.0.1:7777/` unless something else has that port.
 `untangle reviews` starts it the first time, and it stops once the page has been closed for a

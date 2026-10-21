@@ -6,15 +6,17 @@ import path from 'node:path';
 import '../viewer/core.js';
 import { cloneDir } from './cache.js';
 import { call, failed, Gone } from './client.js';
+import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
 import { orcaCli, showTab, showTerminal } from './orca.js';
 import { fonts, managerPage } from './page.js';
-import { dirSizeAsync, listRecords, recordDirs, type Listed } from './records.js';
+import { dirSizeAsync, listRecords, readRecord, recordDirs, recordFile, writeRecord, type Listed } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
-import { listRuns, pidAlive, runDir, type RunInfo } from './runs.js';
+import { findRun, listRuns, pidAlive, prKey, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
 import { ReviewServer } from './server.js';
+import { isPrUrl } from './target.js';
 import { chatTail } from './transcripts.js';
 import { VERSION } from './version.js';
 
@@ -47,6 +49,13 @@ export async function findManager(): Promise<ManagerRun | null> {
   } catch {
     return null;
   }
+}
+
+/** The manager running now, or one started for this: its page opened, with the palette when asked. */
+export async function openManager(o: { palette: boolean }): Promise<{ where: 'orca' | 'browser' | null; url: string }> {
+  const m = (await findManager()) ?? (await startManager(null));
+  const p = await openPage(m.url + (o.palette ? '#new' : ''));
+  return { where: p?.where ?? null, url: m.url };
 }
 
 /** Starts the manager in the background, and waits until it answers. */
@@ -104,6 +113,34 @@ export interface Row {
 }
 
 const idOf = (r: Listed) => `${r.repoKey}/${r.key}`;
+
+/** A review that's starting: its process runs, and it has no record until it's built. */
+function starting(run: RunInfo, s: Summary | undefined): Row {
+  const m = run.pr ? /^([^/]+)\/([^#]+)#(\d+)$/.exec(run.pr) : null;
+  const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || (m ? `#${m[3]}` : 'Starting'));
+  return {
+    id: `run:${run.pid}`,
+    name: m ? `${m[2]}#${m[3]}` : (run.dir || '').split(/[\\/]/).pop() || 'review',
+    title, kind,
+    repo: m ? `${m[1]}/${m[2]}` : (run.repoKey || '').replace(/^github\.com\//, ''),
+    author: null, url: null, size: { add: 0, del: 0, files: 0 },
+    status: 'running', stopped: null, closed: null, opened: run.started, head: run.head || '',
+    progress: { done: 0, total: 0 }, notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null,
+    memory: s?.memory ?? null,
+    build: { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
+    pages: s?.pages ?? 0, need: null, needAt: null, active: s?.active ?? null, disk: null,
+  };
+}
+
+/** What a review's target stands for, to find it running: a pull request, or a directory's repository and branch. */
+function wanted(target: string): Wanted | null {
+  const m = /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(target);
+  if (m) return { pr: prKey(m[1], m[2], Number(m[3])), dir: null, repoKey: `github.com/${m[1]}/${m[2]}`, branch: null };
+  return fs.existsSync(target) ? wantedDir(target) : null;
+}
+
+/** A pull request the palette offers: its repository, number, title and author, and when it last moved. */
+export interface Pull { repo: string; number: number; title: string; author: string; url: string; updated: string; draft: boolean }
 
 /** What waits for you, in words: Claude answered N3 and N4, Codex wrote N5. */
 function need(waiting: Summary['waiting']): string | null {
@@ -179,25 +216,108 @@ class Sizes {
 }
 
 /** The manager: what the page asks of it. */
+/** The summary of each of these running reviews, by process. */
+async function summariesOf(runs: RunInfo[]): Promise<Map<number, Summary>> {
+  const out = new Map<number, Summary>();
+  await Promise.all(runs.map(async (run) => {
+    try {
+      const a = await call(run, 'GET', 'summary', { timeout: 5000 });
+      if (a.status === 200) out.set(run.pid, a.data as unknown as Summary);
+    } catch {
+      // Stopping as we asked.
+    }
+  }));
+  return out;
+}
+
 export class Manager {
   private readonly sizes = new Sizes();
+  // GitHub's pull requests for the palette, asked at most once a minute.
+  private pullsKept: { at: number; value: { asked: Pull[]; yours: Pull[]; error: string | null } } | null = null;
+
+  /** The pull requests GitHub asks you to review, and your own, through gh. */
+  async pulls(): Promise<{ asked: Pull[]; yours: Pull[]; error: string | null }> {
+    if (this.pullsKept && Date.now() - this.pullsKept.at < 60_000) return this.pullsKept.value;
+    if (!has('gh')) return { asked: [], yours: [], error: 'gh isn’t installed: paste a pull request’s link' };
+    type Found = { number: number; title: string; url: string; updatedAt: string; isDraft: boolean; repository: { nameWithOwner: string }; author: { login: string } };
+    const search = async (who: string): Promise<Pull[]> => {
+      const out = await runAsync('gh', ['search', 'prs', who, '--state=open', '--sort=updated', '--limit', '30', '--json', 'number,title,url,updatedAt,isDraft,repository,author'], { timeout: 30_000 });
+      return (JSON.parse(out) as Found[]).map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, title: p.title, author: p.author.login, url: p.url, updated: p.updatedAt, draft: p.isDraft }));
+    };
+    let value: { asked: Pull[]; yours: Pull[]; error: string | null };
+    try {
+      const [asked, yours] = await Promise.all([search('--review-requested=@me'), search('--author=@me')]);
+      value = { asked, yours, error: null };
+    } catch (e) {
+      value = { asked: [], yours: [], error: `gh couldn’t search GitHub: ${(e as Error).message.split('\n').pop()}` };
+    }
+    this.pullsKept = { at: Date.now(), value };
+    return value;
+  }
+
+  /**
+   * Starts a review of a pull request's link or a directory, through the launcher, so it's no one's
+   * child; it opens its own page. It runs until it's paused or closed, its tab or not. A review of
+   * it already running isn't started again.
+   */
+  async start(target: string): Promise<{ status?: number; data: unknown }> {
+    if (!isPrUrl(target) && !(path.isAbsolute(target) && fs.existsSync(target))) return { status: 400, data: { error: `${target} is not a pull request’s link` } };
+    const w = wanted(target);
+    const running = w && findRun(w);
+    if (running) return { data: { already: true, pid: running.pid } };
+    const { pid, log } = launch(['-autoclose=false', '--', target]);
+    for (let i = 0; pid > 0 && i < 300; i++) {
+      if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid } };
+      if (!pidAlive(pid)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { status: 502, data: { error: `the review didn’t start${logTail(log) ? ': ' + logTail(log).split('\n').pop() : ''}` } };
+  }
+
+  /** Closes a review: a running one stops, saying it's closed; a paused one's record says so. */
+  async close(f: { record: Listed; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
+    if (f.run) {
+      try {
+        const r = await call(f.run, 'POST', 'stop', { body: { close: true } });
+        const err = failed(r);
+        if (err) return { status: r.status, data: { error: err } };
+      } catch (e) {
+        if (!(e instanceof Gone)) throw e;
+      }
+      return { data: { closed: true } };
+    }
+    const file = recordFile(f.record.repoKey, f.record.key);
+    const r = readRecord(file);
+    if (!r) return { status: 404, data: { error: 'no such review' } };
+    const at = new Date().toISOString();
+    writeRecord({ ...r, closed: at, stopped: r.stopped ?? { at, why: 'stop' }, updated: at });
+    return { data: { closed: true } };
+  }
   // The tabs the manager opened for reviews whose own tab it couldn't bring back.
   private readonly pages = new Map<string, string>();
 
-  /** The reviews, as the page shows them, with memory and disk. */
-  async view() {
+  /** The reviews, as the page shows them, with memory and disk (a review's Reviews menu skips disk). */
+  async view(o: { disk: boolean } = { disk: true }) {
     const list = listRecords();
     const live = await summaries(list);
     const sizeOf = (dirs: string[]) => {
+      if (!o.disk) return null;
       const known = dirs.map((d) => this.sizes.of(d));
       return known.some((b) => b == null) ? null : known.reduce((a: number, b) => a + b!, 0);
     };
     const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, sizeOf(recordDirs(r))));
+    // Reviews whose process runs and which have no record yet: they're being built.
+    const recorded = new Set(list.filter((r) => r.status === 'running').map((r) => r.pid));
+    const fresh = listRuns().filter((run) => !recorded.has(run.pid));
+    if (fresh.length) {
+      const asked = await summariesOf(fresh);
+      rows.unshift(...fresh.map((run) => starting(run, asked.get(run.pid))));
+    }
     // Disk, each folder once: open reviews' folders, closed ones' that no open review uses, and clones.
     const openDirs = new Set(list.filter((r) => r.status !== 'closed').flatMap(recordDirs));
     const closedDirs = new Set(list.filter((r) => r.status === 'closed').flatMap(recordDirs).filter((d) => !openDirs.has(d)));
     const clones = new Set(list.filter((r) => r.repo === cloneDir(r.repoKey)).map((r) => r.repo));
-    const total = (dirs: Set<string>) => [...dirs].reduce((a, d) => a + (this.sizes.of(d) ?? 0), 0);
+    const total = (dirs: Set<string>) => (o.disk ? [...dirs].reduce((a, d) => a + (this.sizes.of(d) ?? 0), 0) : 0);
     return {
       version: VERSION,
       reviews: rows,
@@ -218,6 +338,8 @@ export class Manager {
     const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown };
     if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid } };
     if (route === 'reviews' && method === 'GET') return { data: await this.view() };
+    if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
+    if (route === 'start' && method === 'POST' && typeof (b as { target?: unknown }).target === 'string') return this.start((b as { target: string }).target.trim());
     if (route === 'tail' && method === 'GET') {
       const f = this.find(query.get('id'));
       const c = f?.record.chats[0];
@@ -234,6 +356,8 @@ export class Manager {
       if (p?.page) this.pages.set(id, p.page);
       return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
     }
+    if (route === 'start' && method === 'POST') return this.start(f.record.target);
+    if (route === 'close' && method === 'POST') return this.close(f);
     if (route === 'chat' && method === 'POST') {
       const c = f.record.chats[0];
       if (!c?.orca) return { status: 409, data: { error: c ? `${c.agent}’s chat isn’t in an Orca terminal` : 'no chat holds this review' } };

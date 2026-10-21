@@ -29,11 +29,17 @@
     term: svg(`<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" ${LN}/><path d="M4.5 6.2 6.6 8 4.5 9.8M8.4 10.2h3" ${LN}/>`),
     open: svg(`<path d="M6.5 3.5h6v6M12.5 3.5 4 12" ${LN}/>`),
     done: svg(`<path d="M3.5 8.5l3 3 6-7" ${LN}/>`),
+    plus: svg('<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
+    play: svg('<path d="M5 3.3v9.4L12.6 8z" fill="currentColor"/>'),
+    more: svg('<circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/>'),
+    stop: svg(`<rect x="3.5" y="3.5" width="9" height="9" rx="1.5" ${LN}/>`),
   };
   // Each agent prints its chat its own way.
   const GLYPH = { claude: { tool: '●', out: '└', say: '●', you: '>' }, codex: { tool: '•', out: '└', say: '•', you: '›' } };
 
-  const S = { data: null, tab: 'open', filter: 'all', sel: null, menu: null, tail: null, tailFor: null, toast: null };
+  const S = { data: null, tab: 'open', filter: 'all', sel: null, menu: null, tail: null, tailFor: null, toast: null, starting: new Set() };
+  // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come.
+  const P = { open: false, q: '', hl: 0, pulls: null, loading: false };
   let toastTimer = 0;
 
   function api(path, init) {
@@ -145,7 +151,8 @@
   function memCell(r) {
     const up = Date.now() - Date.parse(r.opened);
     if (r.status === 'running') return `<span class="memc"><b>${r.memory ? bytes(memOf(r)) : '—'}</b><small>${up < 60000 ? 'just now' : span(up)}</small></span>`;
-    return `<span class="memc"><b>${r.disk != null ? bytes(r.disk) : '—'}</b><small>on disk</small></span>`;
+    const again = `<button type="button" class="btn sm" data-act="start" data-id="${esc(r.id)}">${ICON.play}${r.status === 'closed' ? 'Reopen' : 'Resume'}</button>`;
+    return `<span class="memc">${S.starting.has(r.id) ? '<small>starting…</small>' : again}<small>${r.disk != null ? bytes(r.disk) + ' on disk' : ''}</small></span>`;
   }
 
   function row(r) {
@@ -186,7 +193,8 @@
     const w = r.waiting;
     const notes = `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
     const running = r.status === 'running';
-    const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}</div>
+    const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${r.status !== 'closed' && !r.id.startsWith('run:') ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
+      ${S.menu === 'more:' + r.id ? `<div class="pop" style="right:8px;top:40px;width:220px"><button type="button" class="mi" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close review</button></div>` : ''}
       ${running ? `<div class="kv"><span>untangle</span><b>${r.memory ? bytes(r.memory.untangle) : '—'}</b><span></span></div>
       <div class="kv"><span>Language server</span><b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b>${r.memory && r.memory.lsp ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}</div>` : ''}
       <div class="kv"><span>On disk</span><b>${r.disk != null ? bytes(r.disk) : 'measuring…'}</b><span></span></div>
@@ -239,6 +247,89 @@
     $('#layer').innerHTML = h;
   }
 
+  // ---- The palette: New review
+
+  const PR_URL = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)(?:[/?#].*)?$/;
+  // A review of this pull request, open or paused: the palette resumes or brings it, rather than starting it again.
+  const reviewOf = (url) => rows().find((r) => r.url && r.url === url && r.status !== 'closed');
+
+  // What the palette offers, in its groups: a link you pasted, what's asked of you, what you paused, your own.
+  function choices() {
+    const q = P.q.trim().toLowerCase();
+    const hit = (...texts) => !q || texts.some((t) => String(t).toLowerCase().includes(q));
+    const out = [];
+    const link = PR_URL.exec(P.q.trim());
+    if (link) out.push({ group: 'Link', num: '#' + link[3], title: `Start the review of ${link[1]}/${link[2]}#${link[3]}`, hint: '', target: `https://github.com/${link[1]}/${link[2]}/pull/${link[3]}` });
+    const pull = (group) => (p) => {
+      const open = reviewOf(p.url);
+      return { group, num: '#' + p.number, title: p.title, hint: open ? (open.status === 'paused' ? 'paused · Resume' : 'running · Open') : `${p.author} · ${p.repo.split('/').pop()}${p.draft ? ' · draft' : ''}`, target: open ? null : p.url, id: open ? open.id : null, again: open && open.status === 'paused' };
+    };
+    if (P.pulls) out.push(...P.pulls.asked.filter((p) => hit(p.number, p.title, p.repo, p.author)).map(pull('Asked to review you')));
+    out.push(...open().filter((r) => r.status === 'paused' && hit(r.name, r.title, r.repo)).map((r) => ({ group: 'Paused', num: r.name.replace(/^[^#]*#/, '#'), title: r.title, hint: r.chat ? `Resume · ${r.chat.agent}’s chat kept` : 'Resume', id: r.id, again: true })));
+    if (P.pulls) out.push(...P.pulls.yours.filter((p) => hit(p.number, p.title, p.repo)).map(pull('Yours')));
+    return out;
+  }
+
+  function palette() {
+    const box = $('#palette');
+    if (!P.open) { if (box) box.remove(); return; }
+    const list = choices();
+    P.hl = Math.max(0, Math.min(P.hl, list.length - 1));
+    let h = '', group = '';
+    list.forEach((c, i) => {
+      if (c.group !== group) {
+        group = c.group;
+        h += `<div class="pal-g">${esc(group)}${group === 'Asked to review you' && P.pulls ? `<span>${P.pulls.asked.length}</span>` : ''}</div>`;
+      }
+      h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}" data-act="choose" data-i="${i}"><span class="num">${esc(c.num)}</span><span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
+    });
+    const note = P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link to start its review.' : 'Nothing waits for you on GitHub.') : '';
+    const body = `<div class="scrim" data-act="close-pal"></div><div class="pal" role="dialog" aria-label="Start a review">
+      <div class="pal-in">${ICON.plus}<input id="pal-in" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a pull request’s link, or search" value="${esc(P.q)}"><kbd>Esc</kbd></div>
+      <div class="pal-list">${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}</div>
+      <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>⏎</kbd>choose</span><span>A link to any pull request works too</span></div>
+    </div>`;
+    if (box) {
+      // Typing stays where it is: only the list is drawn again.
+      box.querySelector('.pal-list').innerHTML = `${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}`;
+      return;
+    }
+    const div = document.createElement('div');
+    div.id = 'palette';
+    div.innerHTML = body;
+    document.body.appendChild(div);
+    $('#pal-in').focus();
+  }
+
+  function openPalette() {
+    P.open = true;
+    P.q = '';
+    P.hl = 0;
+    S.menu = null;
+    palette();
+    if (!P.pulls && !P.loading) {
+      P.loading = true;
+      api('pulls').then((d) => { P.pulls = d; }, (e) => { P.pulls = { asked: [], yours: [], error: e.message }; }).finally(() => { P.loading = false; palette(); });
+    }
+  }
+
+  function closePalette() {
+    P.open = false;
+    palette();
+  }
+
+  function choose(c) {
+    if (!c) return;
+    closePalette();
+    if (c.id && !c.again) return act('open', c.id);
+    const body = c.target ? { target: c.target } : { id: c.id };
+    const key = c.id || c.target;
+    S.starting.add(key);
+    toast(c.again ? `Resuming ${c.num}…` : `Starting the review of ${c.num}…`);
+    post('start', body).then((d) => { toast(d.already ? `${c.num} is running already` : c.again ? `${c.num} is starting again` : `The review of ${c.num} is starting`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(key); render(); });
+    render();
+  }
+
   function render() {
     top();
     side();
@@ -281,6 +372,15 @@
     if (name === 'open') post('open', { id }).then((d) => toast(d.where === 'orca' ? `${short(r)} is in front, in Orca` : `Opened ${short(r)} in the browser`), (e) => toast(e.message, true));
     if (name === 'chat') post('chat', { id }).then(() => toast(`${r.chat.agent}’s chat is in front, in Orca`), (e) => toast(e.message, true));
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
+    if (name === 'close') {
+      S.menu = null;
+      post('close', { id }).then(() => { toast(`Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; poll(); }, (e) => toast(e.message, true));
+    }
+    if (name === 'start') {
+      S.starting.add(id);
+      render();
+      post('start', { id }).then(() => { toast(`${short(r)} is starting again`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(id); render(); });
+    }
   }
 
   // ---- Clicks and keys
@@ -288,7 +388,7 @@
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
     const was = S.menu;
-    if (S.menu && !(b && b.dataset.act === 'mem') && !e.target.closest('.pop')) S.menu = null;
+    if (S.menu && !(b && (b.dataset.act === 'mem' || b.dataset.act === 'more')) && !e.target.closest('.pop')) S.menu = null;
     if (!b) {
       if (was) { top(); layer(); }
       return;
@@ -321,14 +421,45 @@
       case 'open':
       case 'chat':
       case 'lsp':
+      case 'close':
+      case 'start':
         act(b.dataset.act === 'next' ? 'open' : b.dataset.act, id);
+        break;
+      case 'more':
+        S.menu = S.menu === 'more:' + id ? null : 'more:' + id;
+        sheet();
+        break;
+      case 'new':
+        openPalette();
+        break;
+      case 'close-pal':
+        closePalette();
+        break;
+      case 'choose':
+        choose(choices()[Number(b.dataset.i)]);
         break;
       default:
         break;
     }
   });
 
+  document.addEventListener('input', (e) => {
+    if (e.target.id !== 'pal-in') return;
+    P.q = e.target.value;
+    P.hl = 0;
+    palette();
+  });
+
   document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); return P.open ? closePalette() : openPalette(); }
+    if (P.open) {
+      const list = choices();
+      if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); P.hl = Math.min(list.length - 1, P.hl + 1); palette(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); P.hl = Math.max(0, P.hl - 1); palette(); }
+      else if (e.key === 'Enter') { e.preventDefault(); choose(list[P.hl]); }
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     const list = shown();
     const at = list.findIndex((r) => r.id === S.sel);
@@ -360,4 +491,6 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
   addEventListener('resize', () => { if (S.menu) layer(); });
   poll();
+  // From a review's Start a review: the palette opens with the page.
+  if (location.hash === '#new') { history.replaceState(null, '', location.pathname); openPalette(); }
 })();
