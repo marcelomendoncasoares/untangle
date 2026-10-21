@@ -112,7 +112,10 @@ describe('Given a tiny Dart package reviewed in a terminal, ', { skip }, () => {
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_COUNT: '0',
       GIT_TERMINAL_PROMPT: '0',
+      // Nothing reaches the person's Orca, these tests run in it: see helpers/run.ts.
+      UNTANGLE_NO_ORCA: '1',
     };
+    for (const key of Object.keys(next)) if (key.startsWith('ORCA_')) delete next[key];
     delete next.NO_COLOR;
     if (color === 'variable') next.NO_COLOR = '1';
     return next;

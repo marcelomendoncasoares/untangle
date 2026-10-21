@@ -26,6 +26,7 @@ function cliEnv(cacheDir: string, gh: GhStub): NodeJS.ProcessEnv {
   for (const key of Object.keys(env)) {
     if (key.startsWith('ORCA_')) delete env[key];
   }
+  env.UNTANGLE_NO_ORCA = '1';
   env.GIT_CONFIG_GLOBAL = '/dev/null';
   env.GIT_CONFIG_NOSYSTEM = '1';
   env.GIT_CONFIG_COUNT = '0';

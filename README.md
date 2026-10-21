@@ -317,7 +317,8 @@ running without an agent gets one the same way, from its row.
 
 Inside Orca, the reviews' chats and pages live in one workspace, Reviews: a folder of untangle's
 cache (`chats/Reviews`), which the manager adds to Orca the first time. Outside Orca, the chat's
-command is copied for you to run in a terminal.
+command is copied for you to run in a terminal. Started outside Orca's terminals, the manager still
+finds Orca's command on PATH; `UNTANGLE_NO_ORCA=1` keeps it away.
 
 A review started there runs until you close it, with or without its tab. Pause gives its memory
 back and keeps the rest: its notes, its marks, and the chat that held it. It waits for the agent's

@@ -7,10 +7,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { has } from './exec.js';
 
-/** Orca's command, when there is one to run. */
+/**
+ * Orca's command, when there is one to run: the one Orca's terminals export, or Orca's own on
+ * PATH. UNTANGLE_NO_ORCA keeps untangle off the one on PATH (its tests set it), so only a
+ * terminal Orca runs leads it to Orca.
+ */
 export function orcaCli(env: NodeJS.ProcessEnv = process.env): string | null {
-  const cli = env.ORCA_CLI_COMMAND || (process.platform === 'linux' ? 'orca-ide' : 'orca');
-  return has(cli) ? cli : null;
+  const cli = env.ORCA_CLI_COMMAND || (env.UNTANGLE_NO_ORCA ? null : process.platform === 'linux' ? 'orca-ide' : 'orca');
+  return cli && has(cli) ? cli : null;
 }
 
 /** What Orca answered: its result, or its error's code. */

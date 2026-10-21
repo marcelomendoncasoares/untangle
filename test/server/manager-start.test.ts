@@ -56,6 +56,8 @@ describe('Given the manager, and GitHub asking you to review a pull request, ', 
     bin = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-bin-'));
     opened = path.join(bin, 'opened.log');
     fs.writeFileSync(path.join(bin, 'browser.sh'), `#!/bin/sh\necho "$1" >> ${JSON.stringify(opened)}\n`, { mode: 0o755 });
+    // Orca's own command on PATH, as on a machine with Orca: a test must never run it.
+    for (const name of ['orca-ide', 'orca']) fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(path.join(bin, 'orca.log'))}\necho '{"ok":false}'\n`, { mode: 0o755 });
     const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd: repo.dir, env: env() });
     assert.equal(started.code, 0, started.err);
     manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
@@ -131,7 +133,17 @@ describe('Given the manager, and GitHub asking you to review a pull request, ', 
       const before = fs.readFileSync(opened, 'utf8').trim().split('\n').length;
       const shown = await review.call('reviews/open', { method: 'POST', body: { id: others[0].id } });
       assert.deepEqual([shown.status, shown.data], [200, { where: 'browser' }]);
-      assert.equal(fs.readFileSync(opened, 'utf8').trim().split('\n').length, before + 1);
+      // The browser starts on its own, after the answer: its line comes when it does.
+      await until('its page to open', () => fs.readFileSync(opened, 'utf8').trim().split('\n').length === before + 1, 10_000);
+    },
+  );
+
+  it(
+    'when reviews have been started, closed and reopened, '
+    + 'then untangle never ran the Orca on PATH: a test leaves the person’s Orca alone.',
+    () => {
+      const log = path.join(bin, 'orca.log');
+      assert.equal(fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '', '');
     },
   );
 });
