@@ -54,6 +54,20 @@
   const sh = (t) => (/^[\w./:@%+=,-]+$/.test(t) ? t : `'${t.replace(/'/g, `'\\''`)}'`);
   let toastTimer = 0, toastN = 0;
 
+  // Motion, unless you asked for less: the palette comes down into place as the page dims behind
+  // it, and goes back up as it closes.
+  const REDUCE = matchMedia('(prefers-reduced-motion: reduce)');
+  const moving = () => !REDUCE.matches && typeof Element.prototype.animate === 'function';
+  const PAL_FRAMES = [{ opacity: 0, transform: 'translate(-50%, -10px) scale(.97)' }, { opacity: 1, transform: 'translate(-50%, 0) scale(1)' }];
+  function palMotion(box, open, done) {
+    const pal = box.querySelector('.pal'), scrim = box.querySelector('.scrim');
+    if (!moving() || !pal) return done && done();
+    const opts = open ? { duration: 200, easing: 'cubic-bezier(.2, 0, 0, 1)' } : { duration: 140, easing: 'cubic-bezier(.4, 0, 1, 1)', direction: 'reverse', fill: 'forwards' };
+    const a = pal.animate(PAL_FRAMES, opts);
+    if (scrim) scrim.animate([{ opacity: 0 }, { opacity: 1 }], opts);
+    if (done) a.onfinish = done;
+  }
+
   // The page is drawn again every two seconds. What didn't change keeps its elements, so an open
   // row doesn't open again, a spinner doesn't start over, and the row under the pointer stays lit.
   // Elements with a data-id are matched by it (and their data-act), the rest by place and tag.
@@ -447,6 +461,7 @@
       const at = document.activeElement && document.activeElement.selectionStart;
       div.innerHTML = html;
       if (!box) document.body.appendChild(div);
+      if (P.enter) { P.enter = false; palMotion(div, true); }
       const again = was && document.getElementById(was);
       if (again) { again.focus(); if (at != null && again.setSelectionRange) again.setSelectionRange(at, at); }
       return;
@@ -476,10 +491,12 @@
     div.id = 'palette';
     div.innerHTML = body;
     document.body.appendChild(div);
+    if (P.enter) { P.enter = false; palMotion(div, true); }
     $('#pal-in').focus();
   }
 
   function openPalette(addFor) {
+    P.enter = !P.open;
     P.open = true;
     P.q = '';
     P.hl = 0;
@@ -502,7 +519,12 @@
     P.open = false;
     P.stage = 'pick';
     P.addFor = null;
-    palette();
+    // It goes as it came; one opened meanwhile is a new one.
+    const box = $('#palette');
+    if (!box) return;
+    box.removeAttribute('id');
+    box.style.pointerEvents = 'none';
+    palMotion(box, false, () => box.remove());
   }
 
   // The form, for a review picked or a running one an agent joins: the agent you last started.
