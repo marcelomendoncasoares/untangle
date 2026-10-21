@@ -139,7 +139,7 @@ describe('Given a review Claude holds from a chat the manager started, ', { time
   );
 });
 
-describe('Given a paused review whose pull request merged on GitHub, ', { timeout: 120_000 }, () => {
+describe('Given a paused review whose pull request merged on GitHub, and a closed one’s that merged too, ', { timeout: 120_000 }, () => {
   let gh: GhStub;
   let cache = '', cwd = '';
   let manager: ReviewClient;
@@ -147,18 +147,23 @@ describe('Given a paused review whose pull request merged on GitHub, ', { timeou
   before(async () => {
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cwd-'));
-    gh = stubGh([{ match: ['pr', 'view', '12', '--repo', 'acme/app'], stdout: { state: 'MERGED', mergedAt: '2026-10-14T12:00:00Z', closedAt: '2026-10-14T12:00:00Z' } }]);
+    gh = stubGh([
+      { match: ['pr', 'view', '12', '--repo', 'acme/app'], stdout: { state: 'MERGED', mergedAt: '2026-10-14T12:00:00Z', closedAt: '2026-10-14T12:00:00Z' } },
+      { match: ['pr', 'view', '13', '--repo', 'acme/app'], stdout: { state: 'MERGED', mergedAt: '2026-10-15T12:00:00Z', closedAt: '2026-10-15T12:00:00Z' } },
+    ]);
     // Its record, as a review that paused left it: its process gone.
     const gone = spawnSync(process.execPath, ['-e', '0']).pid!;
     const dir = path.join(cache, 'sessions', 'github.com', 'acme', 'app');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'pr-12.json'), JSON.stringify({
-      version: 1, target: 'https://github.com/acme/app/pull/12', pr: 'acme/app#12', dir: null, repoKey: 'github.com/acme/app', key: 'pr-12', repo: path.join(cache, 'repos', 'github.com', 'acme', 'app.git'),
-      title: '#12 feat: Retry calls', author: 'ada', url: 'https://github.com/acme/app/pull/12', size: { add: 10, del: 2, files: 1 }, base: 'b'.repeat(40), head: 'h'.repeat(40),
+    const write = (n: number, o: Record<string, unknown>) => fs.writeFileSync(path.join(dir, `pr-${n}.json`), JSON.stringify({
+      version: 1, target: `https://github.com/acme/app/pull/${n}`, pr: `acme/app#${n}`, dir: null, repoKey: 'github.com/acme/app', key: `pr-${n}`, repo: path.join(cache, 'repos', 'github.com', 'acme', 'app.git'),
+      title: `#${n} feat: Retry calls`, author: 'ada', url: `https://github.com/acme/app/pull/${n}`, size: { add: 10, del: 2, files: 1 }, base: 'b'.repeat(40), head: 'h'.repeat(40),
       progress: { done: 3, total: 5 }, notes: { open: 0, waiting: 0 }, chats: [], pid: gone,
       started: '2026-10-10T10:00:00.000Z', opened: '2026-10-10T10:00:00.000Z', updated: '2026-10-10T12:00:00.000Z',
-      stopped: { at: '2026-10-10T12:00:00.000Z', why: 'paused' }, closed: null, checkouts: [], analyses: [],
+      stopped: { at: '2026-10-10T12:00:00.000Z', why: 'paused' }, closed: null, checkouts: [], analyses: [], ...o,
     }));
+    write(12, {});
+    write(13, { stopped: { at: '2026-10-11T12:00:00.000Z', why: 'stop' }, closed: '2026-10-11T12:00:00.000Z' });
     const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd, env: {} });
     assert.equal(started.code, 0, started.err);
     manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
@@ -174,10 +179,12 @@ describe('Given a paused review whose pull request merged on GitHub, ', { timeou
 
   it(
     'when the manager’s page opens, '
-    + 'then it asks GitHub, and the review is closed, as merged when it merged.',
+    + 'then it asks GitHub: the paused review is closed, as merged when it merged, and the closed one says it merged, still closed when you closed it.',
     async () => {
-      const r = await until('the review closed', async () => ((await manager.call('reviews')).data as { reviews: Row[] }).reviews.find((x) => x.status === 'closed'));
-      assert.deepEqual(r.github, { state: 'merged', at: '2026-10-14T12:00:00Z' });
+      const rows = await until('both merged', async () => { const x = ((await manager.call('reviews')).data as { reviews: Array<Row & { closed: string }> }).reviews; return x.every((r) => r.github) ? x : null; });
+      const by = (n: number) => rows.find((x) => x.id === `github.com/acme/app/pr-${n}`)!;
+      assert.deepEqual([by(12).status, by(12).github, by(12).closed], ['closed', { state: 'merged', at: '2026-10-14T12:00:00Z' }, '2026-10-14T12:00:00Z']);
+      assert.deepEqual([by(13).status, by(13).github, by(13).closed], ['closed', { state: 'merged', at: '2026-10-15T12:00:00Z' }, '2026-10-11T12:00:00.000Z']);
     },
   );
 });

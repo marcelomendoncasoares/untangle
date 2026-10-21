@@ -6,7 +6,8 @@ import { call } from './client.js';
 import { openPage } from './open.js';
 import type { Status, StepStatus } from './narrate.js';
 import type { AgentView } from './notes.js';
-import { listRecords, recordSize, type Listed } from './records.js';
+import { dirSize, listRecords, type Listed } from './records.js';
+import { keptDirs } from './space.js';
 import { listRuns } from './runs.js';
 
 /** What a running review says of itself, through its summary route. */
@@ -111,7 +112,7 @@ async function printReviews(): Promise<number> {
       clip(titleOf(r), 44),
       building ? 'building' : `${fmt(p.done)}/${fmt(p.total)}`,
       agentOf(r, s),
-      r.status === 'running' ? (s ? bytes(s.memory.untangle + (s.memory.lsp ?? 0)) : '') : `${bytes(recordSize(r))} on disk`,
+      r.status === 'running' ? (s ? bytes(s.memory.untangle + (s.memory.lsp ?? 0)) : '') : r.freed ? 'space freed' : `${bytes(keptDirs(r).reduce((n, d) => n + dirSize(d), 0))} on disk`,
     ];
   });
   const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].length)));

@@ -67,12 +67,17 @@ export interface ReviewRecord {
   /** The commits checked out for it, and the pairs of commits it was analysed at (base, head). */
   checkouts: string[];
   analyses: Array<[string, string]>;
+  /** When its space was freed: its checkouts and analyses went, and opening it again builds them. */
+  freed?: string | null;
 }
 
 /** A record as it's listed: running, paused (stopped, kept to resume), or closed. */
 export type Listed = ReviewRecord & { status: 'running' | 'paused' | 'closed' };
 
 export const recordsDir = () => path.join(cacheRoot(), 'sessions');
+
+/** A review's id where untangle lists it: its repository and its name there. */
+export const recordId = (r: ReviewRecord) => `${r.repoKey}/${r.key}`;
 /** A review's record: per repository, named like the review's notes. */
 export const recordFile = (repoKey: string, key: string) => path.join(recordsDir(), repoKey, encodeURIComponent(key) + '.json');
 
@@ -183,6 +188,3 @@ export async function dirSizeAsync(dir: string): Promise<number> {
   await walk(dir);
   return total;
 }
-
-/** What a review holds on disk: its checkouts and analyses, in bytes. */
-export const recordSize = (r: ReviewRecord) => recordDirs(r).reduce((n, d) => n + dirSize(d), 0);

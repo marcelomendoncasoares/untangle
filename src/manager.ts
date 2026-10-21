@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import '../viewer/core.js';
 import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
-import { cacheRoot, cloneDir } from './cache.js';
+import { cacheRoot, worktreeDir } from './cache.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
@@ -13,10 +13,12 @@ import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
 import { newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTerminal } from './orca.js';
 import { fonts, managerPage } from './page.js';
-import { dirSizeAsync, listRecords, readRecord, recordDirs, recordFile, writeRecord, type Listed } from './records.js';
+import { notesFile } from './notes.js';
+import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, writeRecord, type Listed } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
 import { findRun, listRuns, pidAlive, prKey, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
 import { ReviewServer } from './server.js';
+import { Building, forget, free, freeOld, holdings, keptDirs, removeOld, type Holdings } from './space.js';
 import { isPrUrl } from './target.js';
 import { chatTail } from './transcripts.js';
 import { VERSION } from './version.js';
@@ -115,11 +117,15 @@ export interface Row {
   needAt: number | null;
   /** When it was last in use: a page in front, its notes changing, an agent at work. */
   active: number | null;
-  /** What it holds on disk, in bytes, once measured. */
+  /** What it holds on disk, in bytes, once measured: a closed one, what only it holds. */
   disk: number | null;
+  /** When its space was freed: only its notes, marks and record are left. */
+  freed: string | null;
+  /** A closed one's checkouts and analyses, and how many of them other closed reviews hold too. */
+  parts: { checkouts: number; analyses: number; shared: number } | null;
 }
 
-const idOf = (r: Listed) => `${r.repoKey}/${r.key}`;
+const idOf = recordId;
 
 /** A review that's starting: its process runs, and it has no record until it's built. */
 function starting(run: RunInfo, s: Summary | undefined): Row {
@@ -136,7 +142,7 @@ function starting(run: RunInfo, s: Summary | undefined): Row {
     progress: { done: 0, total: 0 }, notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null,
     memory: s?.memory ?? null,
     build: { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, github: null, need: null, needAt: null, active: s?.active ?? null, disk: null,
+    pages: s?.pages ?? 0, pausing: false, github: null, need: null, needAt: null, active: s?.active ?? null, disk: null, freed: null, parts: null,
   };
 }
 
@@ -175,7 +181,7 @@ function need(waiting: Summary['waiting']): string | null {
   return [...by].map(([k, ns]) => `${k.replace('\n', ' ')} ${globalThis.ReviewCore.nList(ns)}`).join(', ') || null;
 }
 
-function row(r: Listed, s: Summary | undefined, disk: number | null): Row {
+function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings): Row {
   const { kind, title } = kindOf(titleOf(r));
   const c = r.chats[0];
   const waiting = s?.waiting ?? [];
@@ -209,7 +215,27 @@ function row(r: Listed, s: Summary | undefined, disk: number | null): Row {
     needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null,
     active: s?.active ?? null,
     disk,
+    freed: r.freed ?? null,
+    parts: r.status === 'closed' && !r.freed ? partsOf(r, h) : null,
   };
+}
+
+/** The checkouts and analyses only a closed review holds, as its size counts them, and how many it shares. */
+function partsOf(r: Listed, h: Holdings): Row['parts'] {
+  const dirs = keptDirs(r).filter((d) => fs.existsSync(d));
+  const own = dirs.filter((d) => !h.shared.has(d)), checkouts = path.join(cacheRoot(), 'worktrees') + path.sep;
+  return { checkouts: own.filter((d) => d.startsWith(checkouts)).length, analyses: own.filter((d) => !d.startsWith(checkouts)).length, shared: dirs.length - own.length };
+}
+
+/** What a freed review still holds: its notes and its record. */
+function leftOf(r: Listed): number {
+  return [notesFile(r.repoKey, r.key), recordFile(r.repoKey, r.key)].reduce((n, f) => {
+    try {
+      return n + fs.statSync(f).size;
+    } catch {
+      return n;
+    }
+  }, 0);
 }
 
 /** Sizes of folders on disk, measured one at a time in the background and kept a while. */
@@ -227,6 +253,11 @@ class Sizes {
 
   get busy(): boolean {
     return this.running || this.queue.length > 0;
+  }
+
+  /** Folders just removed: they hold nothing now. */
+  gone(dirs: string[]) {
+    for (const d of dirs) this.known.set(d, { bytes: 0, at: Date.now() });
   }
 
   private want(dir: string) {
@@ -262,8 +293,8 @@ export class Manager {
   // Reviews pausing once their agent's turn ends: Pause waits for it, Pause now doesn't.
   private readonly pausing = new Set<string>();
   private pauseTimer: NodeJS.Timeout | null = null;
-  // GitHub, asked about paused reviews' pull requests: when the page opens, then hourly.
-  private githubAt = 0;
+  // When the page opens, then hourly: GitHub, about paused reviews' pull requests, and closed reviews' space.
+  private hourlyAt = 0;
   // Reviews started again from their row, by process: their row shows them starting.
   private readonly launched = new Map<number, string>();
   // GitHub's pull requests for the palette, asked at most once a minute.
@@ -403,11 +434,20 @@ export class Manager {
     return { data: { ...(started.data as object), chat: { id: c.id, handle }, command: handle ? null : command } };
   }
 
-  /** Paused reviews whose pull request merged or closed on GitHub are closed too. */
+  /** Once an hour while the page is open: GitHub's word on paused reviews, then the space of reviews closed fourteen days ago. */
+  private async hourly() {
+    if (Date.now() - this.hourlyAt < 3600_000) return;
+    this.hourlyAt = Date.now();
+    if (has('gh')) await this.github();
+    this.sizes.gone(freeOld().removed);
+  }
+
+  /**
+   * Paused reviews whose pull request merged or closed on GitHub are closed too; closed ones learn
+   * it, for their space to be freed fourteen days on.
+   */
   private async github() {
-    if (Date.now() - this.githubAt < 3600_000 || !has('gh')) return;
-    this.githubAt = Date.now();
-    for (const r of listRecords().filter((x) => x.status === 'paused' && x.pr)) {
+    for (const r of listRecords().filter((x) => x.pr && !x.github && (x.status === 'paused' || (x.status === 'closed' && !x.freed)))) {
       const m = /^([^/]+)\/([^#]+)#(\d+)$/.exec(r.pr!);
       if (!m) continue;
       try {
@@ -415,10 +455,10 @@ export class Manager {
         if (j.state !== 'MERGED' && j.state !== 'CLOSED') continue;
         const file = recordFile(r.repoKey, r.key);
         const now = readRecord(file);
-        // Started again since: it isn't paused any more.
-        if (!now || now.pid !== r.pid || !now.stopped) continue;
+        // Started again since: it's no longer what was asked about.
+        if (!now || now.pid !== r.pid) continue;
         const at = (j.state === 'MERGED' ? j.mergedAt : j.closedAt) || new Date().toISOString();
-        writeRecord({ ...now, closed: at, github: { state: j.state === 'MERGED' ? 'merged' : 'closed', at }, updated: new Date().toISOString() });
+        writeRecord({ ...now, closed: now.closed ?? at, github: { state: j.state === 'MERGED' ? 'merged' : 'closed', at }, updated: new Date().toISOString() });
       } catch {
         // GitHub didn't answer: next time.
       }
@@ -468,12 +508,14 @@ export class Manager {
       const known = dirs.map((d) => this.sizes.of(d));
       return known.some((b) => b == null) ? null : known.reduce((a: number, b) => a + b!, 0);
     };
-    void this.github();
-    const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, sizeOf(recordDirs(r))));
+    // The manager's own page: the reviews' Reviews menus leave GitHub and the cache to it.
+    if (o.disk) void this.hourly();
+    const runs = listRuns();
+    const h = holdings(list, runs);
+    const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, r.freed ? leftOf(r) : sizeOf(r.status === 'closed' ? h.own.get(idOf(r)) ?? [] : keptDirs(r)), h));
     rows.forEach((x) => { x.pausing = this.pausing.has(x.id); });
     // Reviews whose process runs and which have no record yet: they're being built.
     const recorded = new Set(list.filter((r) => r.status === 'running').map((r) => r.pid));
-    const runs = listRuns();
     for (const pid of this.launched.keys()) if (recorded.has(pid) || !runs.some((run) => run.pid === pid)) this.launched.delete(pid);
     const fresh = runs.filter((run) => !recorded.has(run.pid));
     if (fresh.length) {
@@ -483,20 +525,47 @@ export class Manager {
         // A paused or closed review starting again keeps its row: what it knows, and how far the build is.
         const at = rows.findIndex((x) => x.status !== 'running' && (x.id === this.launched.get(run.pid) || (!!run.pr && list.find((r) => idOf(r) === x.id)?.pr === run.pr)));
         if (at < 0) rows.unshift(s);
-        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, opened: s.opened, memory: s.memory, build: s.build, pages: s.pages, active: s.active, agents: [], waiting: [], need: null, needAt: null };
+        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, freed: null, parts: null, opened: s.opened, memory: s.memory, build: s.build, pages: s.pages, active: s.active, agents: [], waiting: [], need: null, needAt: null };
       }
     }
-    // Disk, each folder once: open reviews' folders, closed ones' that no open review uses, and clones.
-    const openDirs = new Set(list.filter((r) => r.status !== 'closed').flatMap(recordDirs));
-    const closedDirs = new Set(list.filter((r) => r.status === 'closed').flatMap(recordDirs).filter((d) => !openDirs.has(d)));
-    const clones = new Set(list.filter((r) => r.repo === cloneDir(r.repoKey)).map((r) => r.repo));
-    const total = (dirs: Set<string>) => (o.disk ? [...dirs].reduce((a, d) => a + (this.sizes.of(d) ?? 0), 0) : 0);
     return {
       version: VERSION,
       reviews: rows,
       memory: { manager: process.memoryUsage().rss },
-      disk: { open: total(openDirs), closed: total(closedDirs), clones: total(clones), measuring: this.sizes.busy },
+      disk: o.disk ? this.disk(list, h) : null,
       orca: !!orcaCli(),
+    };
+  }
+
+  /**
+   * The cache's space, each folder once: what open reviews keep, what only one closed review
+   * holds, the old checkouts, and the clones with what closed reviews share.
+   */
+  private disk(list: Listed[], h: Holdings) {
+    const size = (d: string) => this.sizes.of(d);
+    const total = (dirs: Iterable<string>) => [...dirs].reduce((a, d) => a + (size(d) ?? 0), 0);
+    const all = (dirs: string[]) => (dirs.some((d) => size(d) == null) ? null : total(dirs));
+    const byId = new Map(list.map((r) => [idOf(r), r]));
+    // Reviews of a branch share their repository's name: their branch tells them apart.
+    const label = (r: Listed) => (r.pr ? shortName(r) : r.key);
+    const shares = [...h.shared].map(([dir, ids]) => {
+      const rs = ids.map((id) => byId.get(id)!);
+      const analysis = dir.startsWith(path.join(cacheRoot(), 'reviews') + path.sep);
+      return { dir, what: analysis ? 'analysis' : rs.every((r) => worktreeDir(r.repoKey, r.base) === dir) ? 'base' : 'checkout', by: ids, names: rs.map(label), bytes: size(dir) };
+    });
+    // The open reviews that moved past an old checkout's commit; the others no review names.
+    const movedBy = (d: string) => list.filter((r) => r.status !== 'closed' && r.checkouts.some((sha) => worktreeDir(r.repoKey, sha) === d));
+    const moved = h.old.filter((d) => movedBy(d).length);
+    const past = new Set(moved.flatMap((d) => movedBy(d).map(label)));
+    return {
+      open: total(h.open),
+      closed: total([...h.own.values()].flat()),
+      old: total(h.old),
+      shared: total(h.shared.keys()) + total(h.clones),
+      measuring: this.sizes.busy,
+      clones: h.clones.map((c) => ({ repo: path.relative(path.join(cacheRoot(), 'repos'), c).replace(/^github\.com\//, '').replace(/\.git$/, ''), bytes: size(c) })),
+      shares,
+      oldCheckouts: { count: h.old.length, bytes: all(h.old), moved: moved.length, past: [...past] },
     };
   }
 
@@ -521,6 +590,28 @@ export class Manager {
       const f = this.find(query.get('id'));
       const c = f?.record.chats[0];
       return { data: { lines: c ? chatTail(c) : null } };
+    }
+    if ((route === 'free' || route === 'forget') && method === 'POST') {
+      const ids = (b as { ids?: unknown }).ids;
+      if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) return { status: 400, data: { error: 'which reviews?' } };
+      try {
+        if (route === 'free') {
+          const r = free(new Set(ids));
+          this.sizes.gone(r.removed);
+          return { data: { freed: r.freed.length } };
+        }
+        const r = forget(new Set(ids));
+        this.sizes.gone(r.removed);
+        return { data: { forgot: r.forgot.length } };
+      } catch (e) {
+        if (e instanceof Building) return { status: 409, data: { error: e.message } };
+        throw e;
+      }
+    }
+    if (route === 'free-old' && method === 'POST') {
+      const removed = removeOld();
+      this.sizes.gone(removed);
+      return { data: { removed: removed.length } };
     }
     // A review being built, with no record yet: its process, to open or to close.
     const building = typeof b.id === 'string' ? /^run:(\d+)$/.exec(b.id) : null;

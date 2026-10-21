@@ -324,6 +324,7 @@ async function review(opts: Options): Promise<number> {
       github: was?.github ?? null,
       checkouts: was?.checkouts ?? [],
       analyses: [...(was?.analyses ?? []).filter(([b, h]) => b !== pair[0] || h !== pair[1]), pair],
+      freed: null,
     };
     recordNow();
   };

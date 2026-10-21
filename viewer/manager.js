@@ -35,11 +35,16 @@
     chev: svg(`<path d="M6 3.5 10.5 8 6 12.5" ${LN}/>`),
     more: svg('<circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/>'),
     stop: svg(`<rect x="3.5" y="3.5" width="9" height="9" rx="1.5" ${LN}/>`),
+    free: svg(`<path d="M8 2.5v7M5 6.5l3 3 3-3M3 12.5h10" ${LN}/>`),
+    trash: svg(`<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" ${LN}/>`),
+    old: svg(`<path d="M12.5 8a4.5 4.5 0 1 1-1.3-3.2M12.5 3v2.5H10" ${LN}/>`),
+    disk: svg(`<rect x="2" y="3" width="12" height="10" rx="2" ${LN}/><path d="M5 10h.01M8 10h3" ${LN}/>`),
   };
   // Each agent prints its chat its own way.
   const GLYPH = { claude: { tool: '●', out: '└', say: '●', you: '>' }, codex: { tool: '•', out: '└', say: '•', you: '›' } };
 
-  const S = { data: null, tab: 'open', filter: 'all', sel: null, menu: null, tail: null, tailFor: null, toast: null, starting: new Set() };
+  // Closed reviews picked to free or forget, and whether Forget is asking first.
+  const S = { data: null, tab: 'open', filter: 'all', sel: null, menu: null, tail: null, tailFor: null, toast: null, starting: new Set(), picked: new Set(), confirm: false };
   // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
   // then the review picked, and how its agent starts (the form), or the review an agent joins.
   const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null };
@@ -59,12 +64,13 @@
 
   const rows = () => (S.data ? S.data.reviews : []);
   const open = () => rows().filter((r) => r.status !== 'closed');
+  const closedRows = () => rows().filter((r) => r.status === 'closed');
   const needs = (r) => r.status === 'running' && !!r.need;
   const working = (r) => r.agents.some((a) => a.state === 'working');
   const idleFor = (r) => (r.status === 'running' && r.active && !r.build ? Date.now() - r.active : 0);
   const memOf = (r) => (r.memory ? r.memory.untangle + (r.memory.lsp || 0) : 0);
   const shown = () => {
-    if (S.tab === 'closed') return rows().filter((r) => r.status === 'closed' && (!S.filter.startsWith('repo:') || r.repo === S.filter.slice(5)));
+    if (S.tab === 'closed') return closedRows().filter((r) => S.filter === 'all' || (S.filter === 'freed' && r.freed) || (S.filter.startsWith('repo:') && r.repo === S.filter.slice(5)));
     return open().filter((r) => S.filter === 'all' || (S.filter === 'need' && needs(r)) || (S.filter === 'work' && working(r)) || (S.filter === 'paused' && r.status === 'paused') || (S.filter.startsWith('repo:') && r.repo === S.filter.slice(5)));
   };
 
@@ -101,17 +107,18 @@
     if (S.tab === 'open') {
       const need = list.filter(needs).length;
       nav = nr('all', ICON.list, 'All open', list.length) + nr('need', '<i></i>', 'Need you', need, need > 0) + nr('work', ICON.spark, 'Agents at work', list.filter(working).length) + nr('paused', ICON.pause, 'Paused', list.filter((r) => r.status === 'paused').length);
-    } else nav = nr('all', ICON.list, 'All closed', rows().filter((r) => r.status === 'closed').length);
+    } else nav = nr('all', ICON.list, 'All closed', closedRows().length) + nr('freed', ICON.free, 'Space freed', closedRows().filter((r) => r.freed).length);
     const d = S.data ? S.data.disk : null;
-    const sum = d ? d.open + d.closed + d.clones : 0;
+    const sum = d ? d.open + d.closed + d.old + d.shared : 0;
     const seg = (v, c) => (v > 0 ? `<i style="flex:${v} 1 0;background:${c}"></i>` : '');
     $('#side').innerHTML = `<div class="big"><b>${fmt(left)}</b><span>change${left === 1 ? '' : 's'} left to review</span><span class="bar"><i style="width:${total ? ((100 * done) / total).toFixed(1) : 0}%"></i></span><small>${fmt(done)} of ${fmt(total)} reviewed, in ${list.length} open review${list.length === 1 ? '' : 's'}</small></div>
       <div class="tabs" role="tablist"><button type="button" role="tab" data-act="tab" data-key="open" aria-selected="${S.tab === 'open'}">Open<i>${list.length}</i></button><button type="button" role="tab" data-act="tab" data-key="closed" aria-selected="${S.tab === 'closed'}">Closed<i>${rows().length - list.length}</i></button></div>
       <div class="nav">${nav}</div>
       ${repos.size ? `<div class="grp">Repositories</div><div class="nav">${[...repos].sort((a, b) => b[1] - a[1]).map(([name, n]) => nr('repo:' + name, ICON.repo, name, n)).join('')}</div>` : ''}
       <div class="disk"><div class="disk-h"><b>${d ? bytes(sum) : '—'}</b><span>in untangle’s cache${d && d.measuring ? ', measuring…' : ''}</span></div>
-        <div class="disk-bar">${d ? seg(d.open, 'var(--d-open)') + seg(d.closed, 'var(--d-closed)') + seg(d.clones, 'var(--d-shared)') : ''}</div>
-        <div class="legend"><span><i style="background:var(--d-open)"></i>Open reviews<b>${d ? bytes(d.open) : '—'}</b></span><span><i style="background:var(--d-closed)"></i>Closed reviews<b>${d ? bytes(d.closed) : '—'}</b></span><span><i style="background:var(--d-shared)"></i>Clones<b>${d ? bytes(d.clones) : '—'}</b></span></div>
+        <div class="disk-bar">${d ? seg(d.open, 'var(--d-open)') + seg(d.closed, 'var(--d-closed)') + seg(d.old, 'var(--d-old)') + seg(d.shared, 'var(--d-shared)') : ''}</div>
+        <div class="legend"><span><i style="background:var(--d-open)"></i>Open reviews<b>${d ? bytes(d.open) : '—'}</b></span><span><i style="background:var(--d-closed)"></i>Closed, can be freed<b>${d ? bytes(d.closed) : '—'}</b></span><span><i style="background:var(--d-old)"></i>Old checkouts<b>${d ? bytes(d.old) : '—'}</b></span><span><i style="background:var(--d-shared)"></i>Clones and shared<b>${d ? bytes(d.shared) : '—'}</b></span></div>
+        ${S.tab === 'open' && d && d.closed + d.old > 0 ? '<button type="button" class="link" data-act="tab" data-key="closed">Clean up</button>' : ''}
       </div>`;
   }
 
@@ -221,13 +228,13 @@
   }
 
   function sheet() {
+    if (S.tab === 'closed') return closedSheet(shown());
     const list = shown();
-    const title = S.tab === 'closed' ? 'Closed reviews' : { all: 'Open reviews', need: 'Need you', work: 'Agents at work', paused: 'Paused' }[S.filter] || S.filter.slice(5);
+    const title = { all: 'Open reviews', need: 'Need you', work: 'Agents at work', paused: 'Paused' }[S.filter] || S.filter.slice(5);
     let body;
     if (!S.data) body = '<p class="empty">Loading your reviews…</p>';
     else if (!rows().length) body = '<p class="empty">No reviews yet. <code>untangle &lt;pr-url&gt;</code> starts one, or <code>untangle</code> in a branch, and asking an agent to review in untangle does too. They show here as they run, and stay once they stop.</p>';
     else if (!list.length) body = '<p class="empty">Nothing here now.</p>';
-    else if (S.tab === 'closed') body = list.map(row).join('');
     else {
       const run = list.filter((r) => r.status === 'running'), paused = list.filter((r) => r.status === 'paused');
       body = (run.length ? `<div class="gh"><b>Running</b>${run.length}</div>${run.map(row).join('')}` : '') + (paused.length ? `<div class="gh"><b>Paused</b>${paused.length}</div>${paused.map(row).join('')}` : '');
@@ -237,6 +244,70 @@
     const idle = S.tab === 'open' && S.filter === 'all' ? open().find((r) => idleFor(r) > 3600000 && !r.pausing && r.memory) : null;
     const hint = idle ? `<span class="hint">${esc(idle.name.replace(/^[^#]*#/, '#'))} sat idle ${span(idleFor(idle))} · pausing frees <b>${bytes(memOf(idle))}</b><button type="button" class="btn" data-act="pause" data-id="${esc(idle.id)}">Pause</button></span>` : '';
     $('#sheet').innerHTML = `<div class="head"><h1>${esc(title)}</h1><span class="sub">${S.data ? `${list.length} · newest first` : ''}</span><span class="sp"></span>${hint}</div><div class="list">${body}</div>${pill()}`;
+    $('#sheet .list').scrollTop = scroll;
+  }
+
+  // ---- Closed reviews: what each holds on disk, and freeing it
+
+  const day = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const and = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+  const num = (r) => r.name.replace(/^[^#]*#/, '#');
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  // The ones the head's button frees: those merged or closed on GitHub, or else every closed one.
+  const merged = () => { const left = closedRows().filter((r) => !r.freed); const m = left.filter((r) => r.github); return m.length ? m : left; };
+  // What freeing these gives back: what only they hold, and what they share once all its holders go.
+  function freeable(ids) {
+    const own = closedRows().filter((r) => ids.has(r.id) && !r.freed).reduce((a, r) => a + (r.disk || 0), 0);
+    return own + (S.data.disk ? S.data.disk.shares.filter((x) => x.by.every((id) => ids.has(id))).reduce((a, x) => a + (x.bytes || 0), 0) : 0);
+  }
+
+  function crow(r) {
+    const on = S.picked.has(r.id), p = r.parts;
+    // What its size counts: what only it holds. What it shares is listed under Shared.
+    const parts = r.freed ? 'notes and marks' : p && p.checkouts + p.analyses ? [p.checkouts ? plural(p.checkouts, 'checkout', 'checkouts') : '', p.analyses ? plural(p.analyses, 'analysis', 'analyses') : ''].filter(Boolean).join(' · ') : p && p.shared ? 'all of it shared' : 'nothing on disk';
+    const when = r.github ? `${r.github.state === 'merged' ? 'merged' : 'closed on GitHub'} ${day(r.github.at)}` : `closed ${day(r.closed)}`;
+    return `<div class="crow${on ? ' picked' : ''}${r.freed ? ' freed' : ''}" data-act="pick" data-id="${esc(r.id)}">
+      <button type="button" class="cb${on ? ' on' : ''}" data-act="pick" data-id="${esc(r.id)}" aria-pressed="${on}" aria-label="Pick ${esc(r.name)}"></button>
+      <span class="main"><span class="l1"><span class="num">${esc(num(r))}</span>${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span><span class="l2">${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · ${when}${r.freed ? ` · space freed ${day(r.freed)}` : ''}</span></span>
+      ${progCell(r)}
+      <span class="cnotes">${r.notes.open ? `<b>${r.notes.open}</b> open note${r.notes.open === 1 ? '' : 's'}` : 'no open notes'}</span>
+      <span class="sz"><b>${r.disk != null ? bytes(r.disk) : '…'}</b><small>${parts}</small></span>
+      <span class="cact">${S.starting.has(r.id) ? '<small>starting…</small>' : `<button type="button" class="btn sm" data-act="start" data-id="${esc(r.id)}">Reopen</button>`}</span>
+    </div>`;
+  }
+
+  // What no one review holds: clones, checkouts closed reviews share, and the old checkouts.
+  function sharedRows() {
+    const d = S.data.disk;
+    if (!d) return '';
+    const fixed = (icon, title, l2, b, small, act) => `<div class="crow fixed"><span class="ic">${icon}</span><span class="main"><span class="l1"><span class="ttl">${title}</span></span><span class="l2">${l2}</span></span><span></span><span></span><span class="sz"><b>${b != null ? bytes(b) : '…'}</b><small>${small}</small></span><span class="cact">${act || ''}</span></div>`;
+    const out = [];
+    if (d.clones.length) out.push(fixed(ICON.repo, `${d.clones.length === 1 ? 'Clone' : 'Clones'} of ${esc(and(d.clones.map((c) => c.repo)))}`, 'A clone goes once no review of its repository is left.', d.clones.some((c) => c.bytes == null) ? null : d.clones.reduce((a, c) => a + c.bytes, 0), d.clones.length > 1 ? and(d.clones.map((c) => (c.bytes != null ? bytes(c.bytes) : '…'))) : ''));
+    for (const x of d.shares) out.push(fixed(ICON.disk, `${{ base: 'Base checkout', analysis: 'Analysis', checkout: 'Checkout' }[x.what]} of ${esc(and(x.names.map((n) => n.replace(/^[^#]*#/, '#'))))}`, `It goes with the ${x.by.length === 2 ? 'second' : 'last'} of them to be freed.`, x.bytes, `used by ${x.by.length} reviews`));
+    const o = d.oldCheckouts;
+    const past = `${plural(o.moved, 'head', 'heads')} that ${esc(and(o.past.map((n) => n.replace(/^[^#]*#/, '#'))))} moved past`, none = (n) => `${plural(n, 'checkout', 'checkouts')} no review names`;
+    if (o.count) out.push(fixed(ICON.old, 'Old checkouts', `${o.moved === o.count ? past : !o.moved ? none(o.count) : `${past}, and ${none(o.count - o.moved)}`}. No review shows them.`, o.bytes, plural(o.count, 'checkout', 'checkouts'), '<button type="button" class="btn sm" data-act="free-old">Remove</button>'));
+    return out.length ? `<div class="gh"><b>Shared</b>no one review holds these</div>${out.join('')}` : '';
+  }
+
+  function closedSheet(list) {
+    const picked = closedRows().filter((r) => S.picked.has(r.id));
+    const total = closedRows().reduce((a, r) => a + (r.disk || 0), 0);
+    let act;
+    if (picked.length) {
+      const b = freeable(new Set(picked.map((r) => r.id)));
+      act = `<button type="button" class="btn sm" data-act="free-picked"${picked.every((r) => r.freed) ? ' disabled' : ''}>${ICON.free}Free the space of ${picked.length} · ${bytes(b)}</button><button type="button" class="btn sm ghost" data-act="forget-ask">${ICON.trash}Forget ${picked.length}…</button>`;
+    } else {
+      const m = merged();
+      act = m.length ? `<button type="button" class="btn sm primary" data-act="free-merged">${ICON.free}Free the space of ${m.every((r) => r.github && r.github.state === 'merged') ? 'merged reviews' : plural(m.length, 'closed review', 'closed reviews')} · ${bytes(freeable(new Set(m.map((r) => r.id))))}</button>` : closedRows().length ? '<span class="sub">Only notes and marks are left</span>' : '';
+    }
+    const confirm = S.confirm && picked.length ? `<div class="confirm"><span>Forget ${plural(picked.length, 'review', 'reviews')}? Their notes, marks and records go too, and that can’t be undone.</span><span class="sp"></span><button type="button" class="btn sm" data-act="forget-cancel">Cancel</button><button type="button" class="btn sm warn" data-act="forget">Forget ${picked.length}</button></div>` : '';
+    const body = !S.data ? '<p class="empty">Loading your reviews…</p>'
+      : !closedRows().length ? '<p class="empty">No closed reviews. A review you close, or whose pull request merges while it’s paused, is listed here with what it holds on disk.</p>'
+      : `${confirm}<div class="cols"><span></span><span>Review</span><span>Reviewed</span><span>Notes</span><span>Space</span><span></span></div>${list.map(crow).join('') || '<p class="empty">Nothing here now.</p>'}${S.filter === 'all' ? sharedRows() : ''}`;
+    const list0 = $('#sheet .list');
+    const scroll = list0 ? list0.scrollTop : 0;
+    $('#sheet').innerHTML = `<div class="head"><h1>${S.filter === 'freed' ? 'Space freed' : S.filter.startsWith('repo:') ? esc(S.filter.slice(5)) : 'Closed reviews'}</h1><span class="sub">${S.data ? `${closedRows().length} · ${bytes(total)}` : ''}</span><span class="sp"></span>${act}</div><div class="list closed">${body}</div>`;
     $('#sheet .list').scrollTop = scroll;
   }
 
@@ -530,8 +601,39 @@
         S.tab = key;
         S.filter = 'all';
         S.sel = null;
+        S.picked.clear();
+        S.confirm = false;
         render();
         break;
+      case 'pick':
+        if (S.picked.has(id)) S.picked.delete(id);
+        else S.picked.add(id);
+        S.confirm = false;
+        sheet();
+        break;
+      case 'free-picked':
+      case 'free-merged': {
+        const ids = b.dataset.act === 'free-picked' ? [...S.picked] : merged().map((r) => r.id);
+        const back = freeable(new Set(ids));
+        post('free', { ids }).then((d) => { toast(`Freed the space of ${plural(d.freed, 'review', 'reviews')}: ${bytes(back)} back. Their notes and marks stay`); S.picked.clear(); poll(); }, (e) => toast(e.message, true));
+        break;
+      }
+      case 'forget-ask':
+        S.confirm = true;
+        sheet();
+        break;
+      case 'forget-cancel':
+        S.confirm = false;
+        sheet();
+        break;
+      case 'forget':
+        post('forget', { ids: [...S.picked] }).then((d) => { toast(`Forgot ${plural(d.forgot, 'review', 'reviews')}`); S.picked.clear(); S.confirm = false; poll(); }, (e) => toast(e.message, true));
+        break;
+      case 'free-old': {
+        const back = S.data.disk ? S.data.disk.oldCheckouts.bytes : null;
+        post('free-old', {}).then((d) => { toast(`Removed ${plural(d.removed, 'old checkout', 'old checkouts')}${back ? `: ${bytes(back)} back` : ''}`); poll(); }, (e) => toast(e.message, true));
+        break;
+      }
       case 'filter':
         S.filter = key;
         render();
@@ -640,6 +742,9 @@
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    // Closed reviews are picked with clicks: Escape lets go of them.
+    if (S.tab === 'closed' && e.key === 'Escape') { S.confirm = false; S.picked.clear(); sheet(); return; }
+    if (S.tab === 'closed' && e.key !== ' ') return;
     const list = shown();
     const at = list.findIndex((r) => r.id === S.sel);
     const go = (i) => {
