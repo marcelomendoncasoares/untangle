@@ -462,7 +462,7 @@
       h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}" data-act="choose" data-i="${i}"><span class="num">${esc(c.num)}</span><span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
     });
     const note = P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link to start its review.' : 'Nothing waits for you on GitHub.') : '';
-    const body = `<div class="scrim" data-act="close-pal"></div><div class="pal" role="dialog" aria-label="Start a review">
+    const body = `<div class="scrim" data-act="close-pal"></div><div class="pal pick" role="dialog" aria-label="Start a review">
       <div class="pal-in">${ICON.plus}<input id="pal-in" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a pull request’s link, or search" value="${esc(P.q)}"><kbd>Esc</kbd></div>
       <div class="pal-list">${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}</div>
       <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>⏎</kbd>choose</span><span>A link to any pull request works too</span></div>

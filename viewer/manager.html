@@ -249,6 +249,7 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 /* The palette: New review, as the reviewer's jump palette. */
 .scrim { position: fixed; inset: 0; z-index: 40; background: rgba(5, 5, 7, .55); animation: fade 160ms var(--ease) 1; }
 .pal { position: fixed; left: 50%; top: 64px; z-index: 41; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 96px); display: flex; flex-direction: column; transform: translateX(-50%); border-radius: 14px; background: var(--raised); box-shadow: 0 0 0 1px var(--hair), 0 24px 64px rgba(0, 0, 0, .7); overflow: hidden; animation: pal 180ms var(--ease) 1; }
+.pal.pick { width: min(800px, calc(100vw - 32px)); }
 .pal-in { flex: none; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--hair); color: var(--text-3); }
 .pal-in svg { width: 14px; height: 14px; }
 .pal-in input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; color: var(--text); font: 400 14px/1 var(--ui); caret-color: var(--accent); }
