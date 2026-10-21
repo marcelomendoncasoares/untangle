@@ -113,7 +113,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
         '2 | changes left to review |  | 0 of 2 reviewed, in 2 open reviews',
         'Running1 / Paused1',
         'Need you1',
-        '1 needs youGo to ' + path.basename(repo.dir) + ' · Claude answered N1Space',
+        '1 needs youGo to ' + path.basename(repo.dir) + 'Space',
         '(1) Reviews · untangle',
       ]);
     },

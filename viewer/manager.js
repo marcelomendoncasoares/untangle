@@ -291,7 +291,7 @@
     const need = open().filter(needs), run = open().filter((r) => r.status === 'running').length;
     if (!need.length) return run ? `<div class="pill quiet"><span>Nothing waits for you</span><span class="sep"></span><span><b>${run}</b> running</span></div>` : '';
     const r = need[0];
-    return `<div class="pill"><span><b>${need.length}</b> ${need.length > 1 ? 'need' : 'needs'} you</span><span class="sep"></span><button type="button" class="act" data-act="next" data-id="${esc(r.id)}">Go to ${esc(r.name.replace(/^[^#]*#/, '#'))} · ${esc(r.need)}<kbd>Space</kbd></button></div>`;
+    return `<div class="pill"><span><b>${need.length}</b> ${need.length > 1 ? 'need' : 'needs'} you</span><span class="sep"></span><button type="button" class="act" data-act="next" data-id="${esc(r.id)}">Go to ${esc(r.name.replace(/^[^#]*#/, '#'))}<kbd>Space</kbd></button></div>`;
   }
 
   function sheet() {
