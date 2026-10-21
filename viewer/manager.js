@@ -158,7 +158,7 @@
       ${repos.size ? `<div class="grp">Repositories</div><div class="nav">${[...repos].sort((a, b) => b[1] - a[1]).map(([name, n]) => nr('repo:' + name, ICON.repo, name, n)).join('')}</div>` : ''}
       <div class="disk"><div class="disk-h"><b>${d ? bytes(sum) : '—'}</b><span>in untangle’s cache${d && d.measuring ? ', measuring…' : ''}</span></div>
         <div class="disk-bar">${d ? seg(d.open, 'var(--d-open)') + seg(d.closed, 'var(--d-closed)') + seg(d.old, 'var(--d-old)') + seg(d.shared, 'var(--d-shared)') : ''}</div>
-        <div class="legend"><span><i style="background:var(--d-open)"></i>Open reviews<b>${d ? bytes(d.open) : '—'}</b></span><span><i style="background:var(--d-closed)"></i>Closed, can be freed<b>${d ? bytes(d.closed) : '—'}</b></span><span><i style="background:var(--d-old)"></i>Old checkouts<b>${d ? bytes(d.old) : '—'}</b></span><span><i style="background:var(--d-shared)"></i>Clones and shared<b>${d ? bytes(d.shared) : '—'}</b></span></div>
+        <div class="legend"><span><i style="background:var(--d-open)"></i>Open reviews<b>${d ? bytes(d.open) : '—'}</b></span><span><i style="background:var(--d-closed)"></i>Closed, can be freed<b>${d ? bytes(d.closed) : '—'}</b></span><span><i style="background:var(--d-old)"></i>Old checkouts and analyses<b>${d ? bytes(d.old) : '—'}</b></span><span><i style="background:var(--d-shared)"></i>Clones and shared<b>${d ? bytes(d.shared) : '—'}</b></span></div>
         ${S.tab === 'open' && d && d.closed + d.old > 0 ? '<button type="button" class="link" data-act="tab" data-key="closed">Clean up</button>' : ''}
       </div>`);
   }
@@ -319,19 +319,27 @@
     </div>`;
   }
 
-  // What no one review holds: clones, checkouts closed reviews share, and the old checkouts.
+  // What no one review holds: clones, checkouts closed reviews share, and what no review keeps.
   function sharedRows() {
     const d = S.data.disk;
     if (!d) return '';
-    const fixed = (icon, title, l2, b, small, act) => `<div class="crow fixed"><span class="ic">${icon}</span><span class="main"><span class="l1"><span class="ttl">${title}</span></span><span class="l2">${l2}</span></span><span></span><span></span><span class="sz"><b>${b != null ? bytes(b) : '…'}</b><small>${small}</small></span><span class="cact">${act || ''}</span></div>`;
+    const fixed = (icon, title, l2, b, small, act, more) => `<div class="crow fixed"><span class="ic">${icon}</span><span class="main"><span class="l1"><span class="ttl">${title}</span></span><span class="l2"${more ? ` title="${more}"` : ''}>${l2}</span></span><span></span><span></span><span class="sz"><b>${b != null ? bytes(b) : '…'}</b><small>${small}</small></span><span class="cact">${act || ''}</span></div>`;
     const out = [];
     if (d.clones.length) out.push(fixed(ICON.repo, `${d.clones.length === 1 ? 'Clone' : 'Clones'} of ${esc(and(d.clones.map((c) => c.repo)))}`, 'A clone goes once no review of its repository is left.', d.clones.some((c) => c.bytes == null) ? null : d.clones.reduce((a, c) => a + c.bytes, 0), d.clones.length > 1 ? and(d.clones.map((c) => (c.bytes != null ? bytes(c.bytes) : '…'))) : ''));
     for (const x of d.shares) out.push(fixed(ICON.disk, `${{ base: 'Base checkout', analysis: 'Analysis', checkout: 'Checkout' }[x.what]} of ${esc(and(x.names.map((n) => n.replace(/^[^#]*#/, '#'))))}`, `It goes with the ${x.by.length === 2 ? 'second' : 'last'} of them to be freed.`, x.bytes, `used by ${x.by.length} reviews`));
-    const o = d.oldCheckouts;
-    const past = `${plural(o.moved, 'head', 'heads')} that ${esc(and(o.past.map((n) => n.replace(/^[^#]*#/, '#'))))} moved past`, none = (n) => `${plural(n, 'checkout', 'checkouts')} no review names`;
-    if (o.count) out.push(fixed(ICON.old, 'Old checkouts', `${o.moved === o.count ? past : !o.moved ? none(o.count) : `${past}, and ${none(o.count - o.moved)}`}. No review shows them.`, o.bytes, plural(o.count, 'checkout', 'checkouts'), '<button type="button" class="btn sm" data-act="free-old">Remove</button>'));
+    const o = d.leftover;
+    if (o.checkouts + o.analyses) {
+      const title = o.checkouts && o.analyses ? 'Old checkouts and analyses' : o.checkouts ? 'Old checkouts' : 'Old analyses';
+      // Where they come from, on hover: heads open reviews moved past, and reviews from before this page.
+      const past = o.moved ? `${plural(o.moved, 'head', 'heads')} that ${esc(and(o.past.map((n) => n.replace(/^[^#]*#/, '#'))))} moved past` : '';
+      const before = o.checkouts + o.analyses - o.moved;
+      const more = [past, before ? `${before} from reviews no longer listed, or from before this page` : ''].filter(Boolean).join('; ');
+      out.push(fixed(ICON.old, title, `${leftover(o)} no review keeps. Your notes and marks stay.`, o.bytes, 'removable at once', '<button type="button" class="btn sm" data-act="free-old">Remove</button>', more));
+    }
     return out.length ? `<div class="gh"><b>Shared</b>no one review holds these</div>${out.join('')}` : '';
   }
+
+  const leftover = (o) => [o.checkouts ? plural(o.checkouts, 'checkout', 'checkouts') : '', o.analyses ? plural(o.analyses, 'analysis', 'analyses') : ''].filter(Boolean).join(' and ');
 
   function closedSheet(list) {
     const picked = closedRows().filter((r) => S.picked.has(r.id));
@@ -346,8 +354,8 @@
     }
     const confirm = S.confirm && picked.length ? `<div class="confirm"><span>Forget ${plural(picked.length, 'review', 'reviews')}? Their notes, marks and records go too, and that can’t be undone.</span><span class="sp"></span><button type="button" class="btn sm" data-act="forget-cancel">Cancel</button><button type="button" class="btn sm warn" data-act="forget">Forget ${picked.length}</button></div>` : '';
     const body = !S.data ? '<p class="empty">Loading your reviews…</p>'
-      : !closedRows().length ? '<p class="empty">No closed reviews. A review you close, or whose pull request merges while it’s paused, is listed here with what it holds on disk.</p>'
-      : `${confirm}<div class="cols"><span></span><span>Review</span><span>Reviewed</span><span>Notes</span><span>Space</span><span></span></div>${list.map(crow).join('') || '<p class="empty">Nothing here now.</p>'}${S.filter === 'all' ? sharedRows() : ''}`;
+      : (closedRows().length ? `${confirm}<div class="cols"><span></span><span>Review</span><span>Reviewed</span><span>Notes</span><span>Space</span><span></span></div>${list.map(crow).join('') || '<p class="empty">Nothing here now.</p>'}` : '<p class="empty">No closed reviews. A review you close, or whose pull request merges while it’s paused, is listed here with what it holds on disk.</p>')
+        + (S.filter === 'all' ? sharedRows() : '');
     patch($('#sheet'), `<div class="head"><h1>${S.filter === 'freed' ? 'Space freed' : S.filter.startsWith('repo:') ? esc(S.filter.slice(5)) : 'Closed reviews'}</h1><span class="sub">${S.data ? `${closedRows().length} · ${bytes(total)}` : ''}</span><span class="sp"></span>${act}</div><div class="list closed">${body}</div>`);
   }
 
@@ -671,8 +679,8 @@
         post('forget', { ids: [...S.picked] }).then((d) => { toast(`Forgot ${plural(d.forgot, 'review', 'reviews')}`); S.picked.clear(); S.confirm = false; poll(); }, (e) => toast(e.message, true));
         break;
       case 'free-old': {
-        const back = S.data.disk ? S.data.disk.oldCheckouts.bytes : null;
-        post('free-old', {}).then((d) => { toast(`Removed ${plural(d.removed, 'old checkout', 'old checkouts')}${back ? `: ${bytes(back)} back` : ''}`); poll(); }, (e) => toast(e.message, true));
+        const back = S.data.disk ? S.data.disk.leftover.bytes : null;
+        post('free-old', {}).then((d) => { toast(`Removed ${leftover({ checkouts: d.checkouts, analyses: d.removed - d.checkouts }) || 'nothing'}${back ? `: ${bytes(back)} back` : ''}. Your notes and marks stay`); poll(); }, (e) => toast(e.message, true));
         break;
       }
       case 'filter':

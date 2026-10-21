@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
 import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
-import { cacheRoot, worktreeDir } from './cache.js';
+import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
@@ -18,9 +18,9 @@ import { fonts, managerPage } from './page.js';
 import { notesFile } from './notes.js';
 import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, writeRecord, type Listed } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
-import { findRun, listRuns, pidAlive, prKey, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
+import { findRun, listRuns, olderRuns, pidAlive, prKey, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
 import { ReviewServer } from './server.js';
-import { Building, forget, free, freeOld, holdings, keptDirs, removeOld, type Holdings } from './space.js';
+import { Building, forget, free, freeOld, holdings, isCheckout, keptDirs, olderDirs, removeOld, type Holdings } from './space.js';
 import { isPrUrl } from './target.js';
 import { chatTail } from './transcripts.js';
 import { VERSION } from './version.js';
@@ -160,7 +160,7 @@ const idOf = recordId;
  * older untangle runs, which never has one: its memory is read from its processes.
  */
 function starting(run: RunInfo, s: Summary | undefined): Row {
-  const old = older.has(run.pid);
+  const old = olderRuns.has(run.pid);
   const m = run.pr ? /^([^/]+)\/([^#]+)#(\d+)$/.exec(run.pr) : null;
   const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || (m ? `#${m[3]}` : 'Starting'));
   return {
@@ -268,9 +268,9 @@ function partsOf(r: Listed, h: Holdings): Row['parts'] {
   return { checkouts: own.filter((d) => d.startsWith(checkouts)).length, analyses: own.filter((d) => !d.startsWith(checkouts)).length, shared: dirs.length - own.length };
 }
 
-/** What a freed review still holds: its notes and its record. */
+/** What a freed review still holds: its notes, its record, and the marks its analyses keep. */
 function leftOf(r: Listed): number {
-  return [notesFile(r.repoKey, r.key), recordFile(r.repoKey, r.key)].reduce((n, f) => {
+  return [notesFile(r.repoKey, r.key), recordFile(r.repoKey, r.key), ...r.analyses.map(([b, h]) => path.join(reviewDir(r.repoKey, b, h), 'state.json'))].reduce((n, f) => {
     try {
       return n + fs.statSync(f).size;
     } catch {
@@ -316,16 +316,14 @@ class Sizes {
 
 /** The manager: what the page asks of it. */
 /** The summary of each of these running reviews, by process. */
-// Reviews an older untangle runs: they don't know the summary call, so they aren't asked again.
-const older = new Set<number>();
-
 async function summariesOf(runs: RunInfo[]): Promise<Map<number, Summary>> {
   const out = new Map<number, Summary>();
-  await Promise.all(runs.filter((run) => !older.has(run.pid)).map(async (run) => {
+  // An older untangle doesn't know the summary call: it isn't asked again.
+  await Promise.all(runs.filter((run) => !olderRuns.has(run.pid)).map(async (run) => {
     try {
       const a = await call(run, 'GET', 'summary', { timeout: 5000 });
       if (a.status === 200) out.set(run.pid, a.data as unknown as Summary);
-      else if (a.status === 404) older.add(run.pid);
+      else if (a.status === 404) olderRuns.add(run.pid);
     } catch {
       // Stopping as we asked.
     }
@@ -556,18 +554,19 @@ export class Manager {
     // The manager's own page: the reviews' Reviews menus leave GitHub and the cache to it.
     if (o.disk) void this.hourly();
     const runs = listRuns();
+    // Reviews whose process runs and which have no record: being built, or an older untangle's.
+    const recorded = new Set(list.filter((r) => r.status === 'running').map((r) => r.pid));
+    for (const pid of this.launched.keys()) if (recorded.has(pid) || !runs.some((run) => run.pid === pid)) this.launched.delete(pid);
+    for (const pid of olderRuns) if (!runs.some((run) => run.pid === pid)) olderRuns.delete(pid);
+    const fresh = runs.filter((run) => !recorded.has(run.pid));
+    const asked = fresh.length ? await summariesOf(fresh) : new Map<number, Summary>();
     const h = holdings(list, runs);
     const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, r.freed ? leftOf(r) : sizeOf(r.status === 'closed' ? h.own.get(idOf(r)) ?? [] : keptDirs(r)), h));
     rows.forEach((x) => { x.pausing = this.pausing.has(x.id); });
-    // Reviews whose process runs and which have no record yet: they're being built.
-    const recorded = new Set(list.filter((r) => r.status === 'running').map((r) => r.pid));
-    for (const pid of this.launched.keys()) if (recorded.has(pid) || !runs.some((run) => run.pid === pid)) this.launched.delete(pid);
-    for (const pid of older) if (!runs.some((run) => run.pid === pid)) older.delete(pid);
-    const fresh = runs.filter((run) => !recorded.has(run.pid));
     if (fresh.length) {
-      const asked = await summariesOf(fresh);
       for (const run of fresh) {
         const s = starting(run, asked.get(run.pid));
+        if (s.older) s.disk = sizeOf(olderDirs(run) ?? []);
         // A paused or closed review starting again keeps its row: what it knows, and how far the build is.
         const at = rows.findIndex((x) => x.status !== 'running' && (x.id === this.launched.get(run.pid) || (!!run.pr && list.find((r) => idOf(r) === x.id)?.pr === run.pr)));
         if (at < 0) rows.unshift(s);
@@ -611,7 +610,8 @@ export class Manager {
       measuring: this.sizes.busy,
       clones: h.clones.map((c) => ({ repo: path.relative(path.join(cacheRoot(), 'repos'), c).replace(/^github\.com\//, '').replace(/\.git$/, ''), bytes: size(c) })),
       shares,
-      oldCheckouts: { count: h.old.length, bytes: all(h.old), moved: moved.length, past: [...past] },
+      // What no review keeps: checkouts (heads open reviews moved past among them) and analyses.
+      leftover: { checkouts: h.old.filter(isCheckout).length, analyses: h.old.filter((d) => !isCheckout(d)).length, bytes: all(h.old), moved: moved.length, past: [...past] },
     };
   }
 
@@ -657,7 +657,7 @@ export class Manager {
     if (route === 'free-old' && method === 'POST') {
       const removed = removeOld();
       this.sizes.gone(removed);
-      return { data: { removed: removed.length } };
+      return { data: { removed: removed.length, checkouts: removed.filter(isCheckout).length } };
     }
     // A review being built, with no record yet: its process, to open or to close.
     const building = typeof b.id === 'string' ? /^run:(\d+)$/.exec(b.id) : null;

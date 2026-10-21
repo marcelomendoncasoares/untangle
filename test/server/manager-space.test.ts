@@ -25,9 +25,9 @@ async function until<T>(what: string, fn: () => T | Promise<T>, ms = 60_000): Pr
 }
 
 interface Row { id: string; status: string; disk: number | null; freed: string | null; parts: { checkouts: number; analyses: number; shared: number } | null }
-interface Disk { open: number; closed: number; old: number; shared: number; measuring: boolean; shares: Array<{ what: string; by: string[]; names: string[] }>; oldCheckouts: { count: number; moved: number; past: string[] }; clones: Array<{ repo: string }> }
+interface Disk { open: number; closed: number; old: number; shared: number; measuring: boolean; shares: Array<{ what: string; by: string[]; names: string[] }>; leftover: { checkouts: number; analyses: number; moved: number; past: string[] }; clones: Array<{ repo: string }> }
 
-describe('Given reviews in the cache: two closed that share a base, one paused that moved past a head, a checkout no review names, and a cloned repository’s, ', { timeout: 300_000 }, () => {
+describe('Given reviews in the cache: two closed that share a base, one paused that moved past a head, a checkout and an analysis no review names, and a cloned repository’s, ', { timeout: 300_000 }, () => {
   let repo: TempRepo;
   let gh: GhStub;
   let cache = '', cwd = '';
@@ -54,14 +54,17 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
     for (const sha of shas) git(repo.dir, 'worktree', 'add', '--quiet', '--detach', checkout(local, sha), sha);
     git(cwd, 'clone', '--quiet', '--bare', repo.dir, clone());
     git(clone(), 'worktree', 'add', '--quiet', '--detach', checkout('github.com/acme/app', c1), c1);
-    const pairs: Array<[string, string, string]> = [[local, c0, c1], [local, c0, c2], [local, c3, c4], [local, c3, c5], [local, c0, c6]];
+    const pairs: Array<[string, string, string]> = [[local, c0, c1], [local, c0, c2], [local, c3, c4], [local, c3, c5], [local, c0, c6], [local, c5, c6]];
     for (const [key, b, h] of pairs) {
       fs.mkdirSync(analysis(key, b, h), { recursive: true });
       fs.writeFileSync(path.join(analysis(key, b, h), 'model.json'), 'x'.repeat(64 * 1024));
     }
-    // Made a while ago: none is a review's checkout in the making.
+    // Marks on parts of a change: the review's, and one from before records.
+    for (const [b, h] of [[c0, c1], [c5, c6]]) fs.writeFileSync(path.join(analysis(local, b, h), 'state.json'), '{"partial":[3]}');
+    // Made a while ago: none is a review's checkout or analysis in the making.
     const then = new Date(Date.now() - 3600_000);
     for (const sha of shas) fs.utimesSync(checkout(local, sha), then, then);
+    for (const [key, b, h] of pairs) fs.utimesSync(analysis(key, b, h), then, then);
     const gone = spawnSync(process.execPath, ['-e', '0']).pid!;
     const now = new Date().toISOString(), weeks = new Date(Date.now() - 20 * 86_400_000).toISOString();
     const write = (repoKey: string, key: string, o: Record<string, unknown>) => {
@@ -106,7 +109,7 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
       assert.ok(!fs.existsSync(analysis(local, shas[0], shas[6])));
       assert.deepEqual([by('a').parts, by('b').parts, by('c').status, by('e').parts], [{ checkouts: 1, analyses: 1, shared: 1 }, { checkouts: 1, analyses: 1, shared: 1 }, 'paused', null]);
       assert.deepEqual(v.disk.shares.map((x) => [x.what, x.by, x.names]), [['base', [id('a'), id('b')], ['a', 'b']]]);
-      assert.deepEqual([v.disk.oldCheckouts.count, v.disk.oldCheckouts.moved, v.disk.oldCheckouts.past], [2, 1, ['c']]);
+      assert.deepEqual([v.disk.leftover.checkouts, v.disk.leftover.analyses, v.disk.leftover.moved, v.disk.leftover.past], [2, 1, 1, ['c']]);
       assert.deepEqual(v.disk.clones.map((c) => c.repo), ['acme/app']);
       assert.ok(v.disk.open > 0 && v.disk.closed > 0 && v.disk.old > 0 && v.disk.shared > 0);
     },
@@ -114,14 +117,14 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
 
   it(
     'when one of the two is freed, '
-    + 'then its head and its analysis go, the base stays for the other, and its record says so; its notes and its marks stay.',
+    + 'then its head and its analysis go, but for the marks on parts of a change; the base stays for the other, and its record says so; its notes and its marks stay.',
     async () => {
       const r = await manager.call('free', { method: 'POST', body: { ids: [id('a')] } });
       assert.deepEqual([r.status, r.data], [200, { freed: 1 }]);
-      assert.deepEqual([fs.existsSync(checkout(local, shas[1])), fs.existsSync(analysis(local, shas[0], shas[1])), fs.existsSync(checkout(local, shas[0]))], [false, false, true]);
+      assert.deepEqual([fs.existsSync(checkout(local, shas[1])), fs.readdirSync(analysis(local, shas[0], shas[1])), fs.existsSync(checkout(local, shas[0]))], [false, ['state.json'], true]);
       assert.ok(!git(repo.dir, 'worktree', 'list').includes(shas[1].slice(0, 12)));
       const a = record('a');
-      assert.deepEqual([a.checkouts, a.analyses, typeof a.freed], [[], [], 'string']);
+      assert.deepEqual([a.checkouts, a.analyses, typeof a.freed], [[], [[shas[0], shas[1]]], 'string']);
       assert.ok(fs.existsSync(path.join(cache, 'notes', local, 'a.json')));
       assert.equal(git(repo.dir, 'rev-parse', 'untangle/a'), shas[1]);
     },
@@ -138,21 +141,24 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
 
   it(
     'when the old checkouts are removed, '
-    + 'then the head the paused review moved past goes, and the one no review names, and the paused one keeps its own.',
+    + 'then the head the paused review moved past goes, and the checkout and the analysis no review names, but for its marks; the paused one keeps its own.',
     async () => {
       const r = await manager.call('free-old', { method: 'POST', body: {} });
-      assert.deepEqual(r.data, { removed: 2 });
+      assert.deepEqual(r.data, { removed: 3, checkouts: 2 });
       assert.deepEqual(shas.slice(3).map((sha) => fs.existsSync(checkout(local, sha))), [true, false, true, false]);
+      assert.deepEqual(fs.readdirSync(analysis(local, shas[5], shas[6])), ['state.json']);
+      // Only marks are left of it: it isn't old any more.
+      assert.equal((await view()).disk.leftover.analyses, 0);
     },
   );
 
   it(
     'when a freed review is forgotten, '
-    + 'then its notes, the branch that holds its marks and its record go.',
+    + 'then its notes, the branch that holds its marks, the marks on parts of a change and its record go.',
     async () => {
       const r = await manager.call('forget', { method: 'POST', body: { ids: [id('a')] } });
       assert.deepEqual(r.data, { forgot: 1 });
-      assert.deepEqual([fs.existsSync(path.join(cache, 'notes', local, 'a.json')), fs.existsSync(path.join(cache, 'sessions', local, 'a.json'))], [false, false]);
+      assert.deepEqual([fs.existsSync(path.join(cache, 'notes', local, 'a.json')), fs.existsSync(path.join(cache, 'sessions', local, 'a.json')), fs.existsSync(analysis(local, shas[0], shas[1]))], [false, false, false]);
       assert.equal(git(repo.dir, 'branch', '--list', 'untangle/a'), '');
     },
   );

@@ -24,6 +24,12 @@ export interface RunInfo {
   page?: string | null;
 }
 
+/**
+ * Reviews an untangle from before records runs, by process: they don't know the summary call,
+ * and their run file is all there is of them. The manager learns them as it asks.
+ */
+export const olderRuns = new Set<number>();
+
 /** What a command looks for: a pull request, or a directory's repository and branch. */
 export interface Wanted { pr: string | null; dir: string | null; repoKey: string | null; branch: string | null }
 

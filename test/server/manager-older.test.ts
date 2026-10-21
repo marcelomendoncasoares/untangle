@@ -25,7 +25,8 @@ async function until<T>(what: string, fn: () => T | Promise<T>, ms = 30_000): Pr
   }
 }
 
-interface Row { id: string; title: string; kind: string | null; status: string; build: unknown; older: boolean; memory: { untangle: number } | null }
+interface Row { id: string; title: string; kind: string | null; status: string; build: unknown; older: boolean; memory: { untangle: number } | null; disk: number | null }
+interface Disk { open: number; measuring: boolean; leftover: { checkouts: number; analyses: number } }
 
 describe('Given a review an untangle from before the manager runs, which doesn’t know the summary call, ', { timeout: 120_000 }, () => {
   let gh: GhStub;
@@ -33,12 +34,21 @@ describe('Given a review an untangle from before the manager runs, which doesn�
   let review: ChildProcess;
   let server: http.Server;
   let manager: ReviewClient;
-  const rows = async () => ((await manager.call('reviews')).data as { reviews: Row[] }).reviews;
+  const view = async () => (await manager.call('reviews')).data as { reviews: Row[]; disk: Disk };
+  const dir = (...p: string[]) => path.join(cache, ...p);
+  const [head, base, gone, other] = ['a', 'b', 'c', 'd'].map((x) => x.repeat(12));
 
   before(async () => {
     gh = stubGh();
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cwd-'));
+    // Its checkouts and its analysis, and a checkout and an analysis no review keeps.
+    const then = new Date(Date.now() - 3600_000);
+    for (const d of [dir('worktrees', 'github.com', 'acme', 'app', head), dir('worktrees', 'github.com', 'acme', 'app', base), dir('reviews', 'github.com', 'acme', 'app', `${base}-${head}`), dir('worktrees', 'github.com', 'acme', 'app', gone), dir('reviews', 'github.com', 'acme', 'app', `${gone}-${other}`)]) {
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, 'file'), 'x'.repeat(8192));
+      fs.utimesSync(d, then, then);
+    }
     review = standIn();
     // It answers what it knew: stop, and nothing of the summary.
     server = http.createServer((req, res) => {
@@ -69,11 +79,23 @@ describe('Given a review an untangle from before the manager runs, which doesn�
 
   it(
     'when the page lists it, '
-    + 'then it’s running, from an older untangle: not a review being built, and its memory is read from its process.',
+    + 'then it’s running, from an older untangle: not a review being built, its memory read from its process, and what it uses on disk kept, as an open review’s.',
     async () => {
-      const r = await until('it listed', async () => (await rows()).find((x) => x.older));
+      const v = await until('it listed and measured', async () => { const x = await view(); const r = x.reviews.find((y) => y.older); return r && r.disk != null && !x.disk.measuring ? x : null; });
+      const r = v.reviews.find((x) => x.older)!;
       assert.deepEqual([r.id, r.status, r.build, r.kind, r.title], [`run:${review.pid}`, 'running', null, 'feat', 'Retry calls']);
-      assert.ok(r.memory && r.memory.untangle > 0);
+      assert.ok(r.memory && r.memory.untangle > 0 && r.disk! > 0);
+      assert.deepEqual([v.disk.open > 0, v.disk.leftover.checkouts, v.disk.leftover.analyses], [true, 1, 1]);
+    },
+  );
+
+  it(
+    'when the old checkouts and analyses are removed, '
+    + 'then the ones no review keeps go, and the older review keeps its own.',
+    async () => {
+      assert.deepEqual((await manager.call('free-old', { method: 'POST', body: {} })).data, { removed: 2, checkouts: 1 });
+      assert.deepEqual([head, base, gone].map((x) => fs.existsSync(dir('worktrees', 'github.com', 'acme', 'app', x))), [true, true, false]);
+      assert.deepEqual([fs.existsSync(dir('reviews', 'github.com', 'acme', 'app', `${base}-${head}`)), fs.existsSync(dir('reviews', 'github.com', 'acme', 'app', `${gone}-${other}`))], [true, false]);
     },
   );
 

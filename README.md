@@ -348,10 +348,12 @@ review stopped and kept its notes, marks and the chat that held it. A closed one
 Closed lists it with the space it still holds: a checkout of its base and of each head it showed,
 and an analysis per pair of commits. Free the space removes them (the checkouts with
 `git worktree remove`) and keeps its notes, its marks and its record, so Reopen builds them again,
-as the first time did. A checkout two closed reviews share goes with the last of them to be freed.
-The heads open reviews moved past are old checkouts, which go at once. Forget asks first, then
-removes a closed review's notes, its review branch and its record too, and a clone once no review
-of its repository is left. Fourteen days after a closed review's pull request merged or closed, or
+as the first time did. Marks on parts of a change live in the analysis's `state.json`, which
+stays. A checkout two closed reviews share goes with the last of them to be freed. What no review
+keeps goes at once: the heads open reviews moved past, and the checkouts and analyses of reviews
+from before this page, but for their notes and marks. Forget asks first, then removes a closed
+review's notes, its review branch, its marks and its record too, and a clone once no review of its
+repository is left, recorded or not. Fourteen days after a closed review's pull request merged or closed, or
 after you closed it, its space is freed on its own; a paused review's never is. Nothing is removed
 while a review is being built.
 

@@ -79,7 +79,7 @@ describe('Given two closed reviews that share a base, a paused one that moved pa
       assert.deepEqual(await page.eval(`[[...document.querySelectorAll('.crow:not(.fixed) .ttl')].map((e) => e.textContent), [...document.querySelectorAll('.crow:not(.fixed) .sz small')].map((e) => e.textContent), [...document.querySelectorAll('.crow.fixed')].map((e) => e.querySelector('.ttl').textContent + ': ' + e.querySelector('.l2').textContent), document.querySelector('.head .btn').textContent.replace(/·.*/, '')]`), [
         ['Review b', 'Review a'],
         ['1 checkout', '1 checkout'],
-        ['Base checkout of b and a: It goes with the second of them to be freed.', 'Old checkouts: 1 head that c moved past, and 1 checkout no review names. No review shows them.'],
+        ['Base checkout of b and a: It goes with the second of them to be freed.', 'Old checkouts: 2 checkouts no review keeps. Your notes and marks stay.'],
         'Free the space of 2 closed reviews ',
       ]);
     },
