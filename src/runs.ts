@@ -22,6 +22,13 @@ export interface RunInfo {
   started: string;
   /** The page's tab in Orca, when the review opened it there. */
   page?: string | null;
+  /**
+   * Once its target is known: the review's key, which with its repository names its record and its
+   * notes, and when this process took it. One untangle serves a review: of two that start it at
+   * once, the later one gives way.
+   */
+  key?: string;
+  claimed?: string;
 }
 
 /**
@@ -30,8 +37,8 @@ export interface RunInfo {
  */
 export const olderRuns = new Set<number>();
 
-/** What a command looks for: a pull request, or a directory's repository and branch. */
-export interface Wanted { pr: string | null; dir: string | null; repoKey: string | null; branch: string | null }
+/** What a command looks for: a pull request (and its review's key), or a directory's repository and branch. */
+export interface Wanted { pr: string | null; dir: string | null; repoKey: string | null; branch: string | null; key: string | null }
 
 export const runDir = () => path.join(cacheRoot(), 'run');
 const runFile = (pid: number) => path.join(runDir(), `${pid}.json`);
@@ -98,18 +105,40 @@ export function wantedDir(dir: string): Wanted | null {
     const m = /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(gitMaybe(top, 'remote', 'get-url', r)?.trim() || '');
     if (m) { repoKey = `github.com/${m[1]}/${m[2]}`; break; }
   }
-  return { pr: null, dir: fs.realpathSync(top), repoKey, branch: branch && branch !== 'HEAD' ? branch : null };
+  return { pr: null, dir: fs.realpathSync(top), repoKey, branch: branch && branch !== 'HEAD' ? branch : null, key: null };
 }
 
+/** What a pull request's link stands for: its review is keyed by its number. */
+export function wantedUrl(url: string): Wanted | null {
+  const m = /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(url);
+  return m ? { pr: prKey(m[1], m[2], Number(m[3])), dir: null, repoKey: `github.com/${m[1]}/${m[2]}`, branch: null, key: `pr-${Number(m[3])}` } : null;
+}
+
+const same = (a?: string | null, b?: string | null) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
 /**
- * The review running for what's wanted: of that pull request, of that directory, or of a pull
- * request on that directory's branch (reviewed from its URL, in the cache's clone).
+ * The review running for what's wanted: of that pull request (from its link, or from a directory
+ * on its branch), of that directory, or of a pull request on that directory's branch (reviewed
+ * from its URL, in the cache's clone).
  */
 export function findRun(w: Wanted): RunInfo | null {
   const runs = listRuns();
-  const same = (a?: string | null, b?: string | null) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
   return runs.find((r) => w.pr && r.pr === w.pr)
+    || runs.find((r) => w.key && r.key === w.key && same(r.repoKey, w.repoKey))
     || runs.find((r) => w.dir && r.dir === w.dir)
     || runs.find((r) => w.branch && same(r.repoKey, w.repoKey) && r.branch === w.branch)
     || null;
+}
+
+/**
+ * The untangle that serves the review this process took, when another one does: one that took it
+ * first, or one built by an untangle from before run files said which review they serve, of the
+ * same pull request or directory. Null when it's this process's to serve.
+ */
+export function holder(me: RunInfo, pr: string | null, runs = listRuns()): RunInfo | null {
+  const at = (r: RunInfo) => r.claimed ?? r.started;
+  const first = (r: RunInfo) => at(r) < at(me) || (at(r) === at(me) && r.pid < me.pid);
+  return runs.find((r) => r.pid !== me.pid && (r.key
+    ? r.key === me.key && same(r.repoKey, me.repoKey) && first(r)
+    : !!r.head && ((!!pr && r.pr === pr) || (!!me.dir && r.dir === me.dir)))) ?? null;
 }

@@ -18,11 +18,12 @@ import { rss } from './metrics.js';
 import { Narrator, type Status } from './narrate.js';
 import { NoteError, Notes, notesFile, type NoteAction, type Scope } from './notes.js';
 import { openPage } from './open.js';
+import { showTab } from './orca.js';
 import { fonts, highlighter, progressPage, reviewPage, type PageConfig } from './page.js';
-import { readRecord, recordFile, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
+import { readRecord, recordFile, serves, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
 import { Manager, openManager } from './manager.js';
 import { reviews, type Summary } from './reviews.js';
-import { prKey, removeRun, wantedDir, writeRun, type RunInfo } from './runs.js';
+import { findRun, holder, listRuns, prKey, removeRun, wantedDir, wantedUrl, writeRun, type RunInfo } from './runs.js';
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
 import { skill } from './skill.js';
@@ -101,8 +102,29 @@ async function review(opts: Options): Promise<number> {
   // An agent's session started this review (its untangle watch, or untangle run in its chat).
   const byAgent = process.env.UNTANGLE_FROM_AGENT === '1' || !!(process.env.CLAUDECODE || process.env.CODEX_THREAD_ID || process.env.GEMINI_CLI);
   let opened: 'orca' | 'browser' | null = null;
+  let opening: Promise<unknown> | null = null;
   let run: RunInfo | null = null;
+  // Another untangle serves this review: the page that waits here goes to its page, or its own
+  // comes to the front, and this untangle ends.
+  const giveWay = async (other: RunInfo, title: string): Promise<number> => {
+    await opening;
+    let where = opened;
+    if (!where && opts.open) where = other.page && (await showTab(other.page)) ? 'orca' : (await openPage(other.url))?.where ?? null;
+    say.already(title, other.url, where);
+    if (opts.quiet) process.stdout.write(other.url + '\n');
+    // The page that waits here hears where to go, once it's there to ask.
+    if (opened) {
+      for (let i = 0; i < 30 && !server?.pageCount; i++) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    await server?.close();
+    return 0;
+  };
   if (!exporting) {
+    // One untangle serves a review: when it's open already, its page comes to the front instead.
+    const asked = byUrl ? wantedUrl(opts.target) : wantedDir(dir);
+    const other = asked && findRun(asked);
+    if (asked && other && (await serves(other))) return giveWay(other, other.title || `The review of ${asked.pr ?? path.basename(asked.dir ?? dir)}`);
     const idle = { after: AUTOCLOSE_AFTER, then: () => { say.stopping('The review’s page closed, so untangle stops (-autoclose=false keeps it serving).'); void stop('tab'); } };
     server = new ReviewServer(
       { host: opts.host, port: opts.port, portExplicit: opts.portExplicit, basePath: opts.basePath, idle: opts.autoclose ? idle : undefined },
@@ -142,18 +164,17 @@ async function review(opts: Options): Promise<number> {
     say.serving(url);
     if (opts.quiet) process.stdout.write(url + '\n');
     if (opts.open) {
-      void openPage(url).then((p) => {
+      opening = openPage(url).then((p) => {
         opened = p?.where ?? null;
         if (!p) return say.note('no browser to open: open the link above');
         say.verbose(p.where === 'orca' ? 'opened in Orca’s browser' : 'opened in the browser');
         // The tab, for untangle reviews to bring back.
         if (p.page && run) writeRun(run = { ...run, page: p.page });
-      });
+      }, () => {});
     }
     // The run file: how untangle's commands (watch, reply, notes, stop) reach this review.
-    const m = byUrl ? /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(opts.target) : null;
-    const w = byUrl ? null : wantedDir(dir);
-    run = { pid: process.pid, url, token: server.token, dir: w ? w.dir : null, pr: m ? prKey(m[1], m[2], Number(m[3])) : null, repoKey: w?.repoKey ?? undefined, branch: w?.branch ?? null, started: new Date().toISOString() };
+    const w = byUrl ? null : asked;
+    run = { pid: process.pid, url, token: server.token, dir: w ? w.dir : null, pr: byUrl ? asked?.pr ?? null : null, repoKey: w?.repoKey ?? undefined, branch: w?.branch ?? null, started: new Date().toISOString() };
     writeRun(run);
     process.on('exit', () => {
       removeRun(process.pid);
@@ -242,6 +263,9 @@ async function review(opts: Options): Promise<number> {
       for (const sha of [target.baseSha, target.headSha]) if (!record.checkouts.includes(sha) && fs.existsSync(worktreeDir(target.repoKey, sha))) record.checkouts.push(sha);
     }
     record.updated = now;
+    // Another untangle that runs holds this review's record: it's that one's to write.
+    const held = readRecord(recordFile(record.repoKey, record.key));
+    if (held && held.pid !== process.pid && !held.stopped && listRuns().some((r) => r.pid === held.pid)) return;
     try {
       writeRecord(record);
     } catch (e) {
@@ -292,7 +316,7 @@ async function review(opts: Options): Promise<number> {
       notes = book;
     }
     notes.attach(s.notesContext(t.pr ? `${t.pr.owner}/${t.pr.repo}#${t.pr.number}` : t.repoKey.startsWith('local/') ? path.basename(t.repo) : n.repoName, t.pr ? t.pr.headRefName : n.branch, byUrl ? worktreeDir(t.repoKey, t.headSha) : null));
-    if (run) writeRun(run = { ...run, repoKey: t.repoKey, branch: t.pr ? t.pr.headRefName : n.branch, title: n.title, head: t.headSha });
+    if (run) writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: run.key === n.snapshotKey ? run.claimed : new Date().toISOString(), branch: t.pr ? t.pr.headRefName : n.branch, title: n.title, head: t.headSha });
     // The record carries over what an earlier run of the review kept: when it started, its chats,
     // its checkouts and analyses. Opening a closed review opens it again.
     const now = new Date().toISOString();
@@ -435,6 +459,12 @@ async function review(opts: Options): Promise<number> {
     const n = names(t);
     say.finish();
     say.title(n.title, n.where);
+    // One untangle serves a review: this one takes it, unless another took it first.
+    if (run) {
+      writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: new Date().toISOString() });
+      const other = holder(run, t.pr ? prKey(t.pr.owner, t.pr.repo, t.pr.number) : null);
+      if (other && (await serves(other))) return giveWay(other, n.title);
+    }
     t.notes.forEach((x) => say.note(x));
     if (exporting) {
       const built = await buildReview(t, { noCache: opts.noCache, label: n.base.replace(' ', ' · '), title: n.title, chains: opts.chains }, say);

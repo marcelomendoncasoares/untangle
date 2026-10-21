@@ -16,9 +16,9 @@ import { newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTerminal } f
 import { childPids, rss } from './metrics.js';
 import { fonts, managerPage } from './page.js';
 import { notesFile } from './notes.js';
-import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, writeRecord, type Listed } from './records.js';
+import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, serves, writeRecord, type Listed, type ReviewRecord } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
-import { findRun, listRuns, olderRuns, pidAlive, prKey, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
+import { findRun, listRuns, olderRuns, pidAlive, runDir, wantedDir, wantedUrl, type RunInfo, type Wanted } from './runs.js';
 import { ReviewServer } from './server.js';
 import { Building, forget, free, freeOld, holdings, isCheckout, keptDirs, olderDirs, removeOld, type Holdings } from './space.js';
 import { isPrUrl } from './target.js';
@@ -151,9 +151,20 @@ export interface Row {
   parts: { checkouts: number; analyses: number; shared: number } | null;
   /** Run by an untangle from before records: it can't say how it's doing, only that it runs. */
   older: boolean;
+  /**
+   * A second untangle of a review that runs, from before untangle checked for one: the other one
+   * holds its record, and this one is to close.
+   */
+  twin: boolean;
 }
 
 const idOf = recordId;
+
+/** Whether a run serves a record's review: the same pull request, or the same key in the same repository. */
+const servesRecord = (run: RunInfo, r: ReviewRecord) => (!!run.pr && run.pr === r.pr) || (!!run.key && run.key === r.key && run.repoKey?.toLowerCase() === r.repoKey.toLowerCase());
+
+/** The agents of a review at work, as its row says them. */
+const agentsOf = (s: Summary | undefined): Row['agents'] => (s?.agents ?? []).map((a) => ({ name: a.name, kind: a.kind, state: a.state, on: a.on, label: globalThis.ReviewCore.agentLabel(a) }));
 
 /**
  * A review that's starting: its process runs, and it has no record until it's built. Or one an
@@ -163,6 +174,7 @@ function starting(run: RunInfo, s: Summary | undefined): Row {
   const old = olderRuns.has(run.pid);
   const m = run.pr ? /^([^/]+)\/([^#]+)#(\d+)$/.exec(run.pr) : null;
   const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || (m ? `#${m[3]}` : 'Starting'));
+  const waiting = s?.waiting ?? [];
   return {
     id: `run:${run.pid}`,
     target: run.pr && m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : run.dir || '',
@@ -171,10 +183,11 @@ function starting(run: RunInfo, s: Summary | undefined): Row {
     repo: m ? `${m[1]}/${m[2]}` : (run.repoKey || '').replace(/^github\.com\//, ''),
     author: null, url: null, size: { add: 0, del: 0, files: 0 },
     status: 'running', stopped: null, closed: null, opened: run.started, head: run.head || '',
-    progress: { done: 0, total: 0 }, notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null,
+    // Once it's built, what it says of itself: how far, the notes, its agents.
+    progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
     memory: old ? memoryOf(run.pid) : s?.memory ?? null,
-    build: old ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, github: null, need: null, needAt: null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old,
+    build: old || s?.phase === 'ready' ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
+    pages: s?.pages ?? 0, pausing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false,
   };
 }
 
@@ -188,9 +201,7 @@ function memoryOf(pid: number): Summary['memory'] | null {
 
 /** What a review's target stands for, to find it running: a pull request, or a directory's repository and branch. */
 function wanted(target: string): Wanted | null {
-  const m = /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(target);
-  if (m) return { pr: prKey(m[1], m[2], Number(m[3])), dir: null, repoKey: `github.com/${m[1]}/${m[2]}`, branch: null };
-  return fs.existsSync(target) ? wantedDir(target) : null;
+  return wantedUrl(target) ?? (fs.existsSync(target) ? wantedDir(target) : null);
 }
 
 /** What New review sent for the agent, checked: which, a chat to resume or a new one, flags, a first message. */
@@ -243,7 +254,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     progress: s?.progress ?? r.progress,
     notes: s?.notes ?? r.notes,
     waiting,
-    agents: (s?.agents ?? []).map((a) => ({ name: a.name, kind: a.kind, state: a.state, on: a.on, label: globalThis.ReviewCore.agentLabel(a) })),
+    agents: agentsOf(s),
     // Pause closes the terminals of the chats the manager started.
     chat: c ? { agent: c.agent, kind: c.kind, id: c.id, orca: !!c.orca && (r.status === 'running' || !startedHere(c)) } : null,
     memory: s?.memory ?? null,
@@ -258,6 +269,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     freed: r.freed ?? null,
     parts: r.status === 'closed' && !r.freed ? partsOf(r, h) : null,
     older: false,
+    twin: false,
   };
 }
 
@@ -340,6 +352,8 @@ export class Manager {
   private hourlyAt = 0;
   // Reviews started again from their row, by process: their row shows them starting.
   private readonly launched = new Map<number, string>();
+  // Starts on their way, by what they review: one asked again meanwhile waits for it, and finds it running.
+  private readonly underway = new Set<string>();
   // GitHub's pull requests for the palette, asked at most once a minute.
   private pullsKept: { at: number; value: { asked: Pull[]; yours: Pull[]; error: string | null } } | null = null;
 
@@ -371,25 +385,31 @@ export class Manager {
   async start(target: string, agent: AgentChoice | null = null, id: string | null = null): Promise<{ status?: number; data: unknown }> {
     if (!isPrUrl(target) && !(path.isAbsolute(target) && fs.existsSync(target))) return { status: 400, data: { error: `${target} is not a pull request’s link` } };
     const w = wanted(target);
-    let running = w && findRun(w);
-    // One that's stopping (paused or closed a moment ago) is let go first.
-    if (running && listRecords().some((r) => r.pid === running!.pid && r.stopped)) {
-      for (let i = 0; i < 100 && pidAlive(running.pid); i++) await new Promise((r) => setTimeout(r, 50));
-      running = w && findRun(w);
+    const key = w?.pr ?? w?.dir ?? target;
+    while (this.underway.has(key)) await new Promise((r) => setTimeout(r, 100));
+    this.underway.add(key);
+    try {
+      // One of it that runs is the one; one that's stopping (paused or closed a moment ago) is let go first.
+      const running = w && findRun(w);
+      if (running && (await serves(running))) return { data: { already: true, pid: running.pid } };
+      // In Orca, its page opens as a tab of the Reviews workspace, and its chat runs there.
+      const cli = orcaCli();
+      const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
+      const env = ws && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: ws.worktree } : process.env;
+      const { pid, log } = launch(['-autoclose=false', '--', target], env);
+      if (id && pid > 0) this.launched.set(pid, id);
+      for (let i = 0; pid > 0 && i < 300; i++) {
+        if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid, ...(agent ? await this.chat(target, agent, ws) : {}) } };
+        if (!pidAlive(pid)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      // Another untangle started it meanwhile, and this one gave way to it.
+      const other = w && findRun(w);
+      if (other && (await serves(other))) return { data: { already: true, pid: other.pid } };
+      return { status: 502, data: { error: `the review didn’t start${logTail(log) ? ': ' + logTail(log).split('\n').pop() : ''}` } };
+    } finally {
+      this.underway.delete(key);
     }
-    if (running) return { data: { already: true, pid: running.pid } };
-    // In Orca, its page opens as a tab of the Reviews workspace, and its chat runs there.
-    const cli = orcaCli();
-    const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
-    const env = ws && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: ws.worktree } : process.env;
-    const { pid, log } = launch(['-autoclose=false', '--', target], env);
-    if (id && pid > 0) this.launched.set(pid, id);
-    for (let i = 0; pid > 0 && i < 300; i++) {
-      if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid, ...(agent ? await this.chat(target, agent, ws) : {}) } };
-      if (!pidAlive(pid)) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    return { status: 502, data: { error: `the review didn’t start${logTail(log) ? ': ' + logTail(log).split('\n').pop() : ''}` } };
   }
 
   /**
@@ -511,12 +531,20 @@ export class Manager {
   /** Closes a review: a running one stops, saying it's closed; a paused one's record says so. */
   async close(f: { record: Listed | null; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
     if (f.run) {
+      // A second untangle of a review that runs writes its record as it stops: the one that holds it gets it back.
+      const run = f.run;
+      const twin = f.record ? null : listRecords().find((r) => r.status === 'running' && r.pid !== run.pid && servesRecord(run, r));
+      const held = twin ? readRecord(recordFile(twin.repoKey, twin.key)) : null;
       try {
         const r = await call(f.run, 'POST', 'stop', { body: { close: true } });
         const err = failed(r);
         if (err) return { status: r.status, data: { error: err } };
       } catch (e) {
         if (!(e instanceof Gone)) throw e;
+      }
+      if (held) {
+        for (let i = 0; i < 100 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
+        if (readRecord(recordFile(held.repoKey, held.key))?.pid === run.pid) writeRecord(held);
       }
       // It says so in its record, unless it was being built again: the old record does then.
       if (!f.record || f.record.pid === f.run.pid) return { data: { closed: true } };
@@ -565,12 +593,17 @@ export class Manager {
     rows.forEach((x) => { x.pausing = this.pausing.has(x.id); });
     if (fresh.length) {
       for (const run of fresh) {
-        const s = starting(run, asked.get(run.pid));
+        const said = asked.get(run.pid);
+        const s = starting(run, said);
         if (s.older) s.disk = sizeOf(olderDirs(run) ?? []);
+        // A second untangle of a review that runs, built by an untangle from before one checked: listed as itself, to close.
+        const held = said?.head ? list.find((r) => r.status === 'running' && r.pid !== run.pid && servesRecord(run, r)) : undefined;
+        if (held) { rows.splice(rows.findIndex((x) => x.id === idOf(held)) + 1, 0, { ...row(held, said, null, h), id: s.id, opened: s.opened, chat: null, need: null, needAt: null, twin: true }); continue; }
         // A paused or closed review starting again keeps its row: what it knows, and how far the build is.
-        const at = rows.findIndex((x) => x.status !== 'running' && (x.id === this.launched.get(run.pid) || (!!run.pr && list.find((r) => idOf(r) === x.id)?.pr === run.pr)));
+        const of = (x: Row) => list.some((r) => idOf(r) === x.id && servesRecord(run, r));
+        const at = rows.findIndex((x) => x.status !== 'running' && (x.id === this.launched.get(run.pid) || of(x)));
         if (at < 0) rows.unshift(s);
-        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, freed: null, parts: null, opened: s.opened, memory: s.memory, build: s.build, older: s.older, pages: s.pages, active: s.active, agents: [], waiting: [], need: null, needAt: null };
+        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, freed: null, parts: null, opened: s.opened, memory: s.memory, build: s.build, older: s.older, pages: s.pages, active: s.active, agents: s.agents, waiting: s.waiting, need: s.need, needAt: s.needAt };
       }
     }
     return {
@@ -621,7 +654,7 @@ export class Manager {
     if (!record) return null;
     const runs = listRuns();
     if (record.status === 'running') return { record, run: runs.find((x) => x.pid === record.pid) ?? null };
-    return { record, run: runs.find((x) => this.launched.get(x.pid) === id || (!!x.pr && x.pr === record.pr)) ?? null };
+    return { record, run: runs.find((x) => this.launched.get(x.pid) === id || servesRecord(x, record)) ?? null };
   }
 
   /** The page's API. */

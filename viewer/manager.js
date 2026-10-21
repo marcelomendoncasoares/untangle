@@ -154,8 +154,10 @@
 
   function side() {
     const list = open();
-    const left = list.reduce((a, r) => a + (r.progress.total - r.progress.done), 0);
-    const total = list.reduce((a, r) => a + r.progress.total, 0), done = list.reduce((a, r) => a + r.progress.done, 0);
+    // A second untangle of a review counts once, as the review.
+    const own = list.filter((r) => !r.twin);
+    const left = own.reduce((a, r) => a + (r.progress.total - r.progress.done), 0);
+    const total = own.reduce((a, r) => a + r.progress.total, 0), done = own.reduce((a, r) => a + r.progress.done, 0);
     const nr = (key, icon, name, n, hot) => `<button type="button" class="nr" data-act="filter" data-key="${esc(key)}" aria-current="${S.filter === key}"><span class="ic">${icon}</span><span class="nm${key.startsWith('repo:') ? ' mono' : ''}">${esc(name)}</span><span class="n${hot ? ' hot' : ''}">${n}</span></button>`;
     const repos = new Map();
     (S.tab === 'open' ? list : rows().filter((r) => r.status === 'closed')).forEach((r) => repos.set(r.repo, (repos.get(r.repo) || 0) + 1));
@@ -167,7 +169,7 @@
     const d = S.data ? S.data.disk : null;
     const sum = d ? d.open + d.closed + d.old + d.shared : 0;
     const seg = (v, c) => (v > 0 ? `<i style="flex:${v} 1 0;background:${c}"></i>` : '');
-    patch($('#side'), `<div class="big"><b>${fmt(left)}</b><span>change${left === 1 ? '' : 's'} left to review</span><span class="bar"><i style="width:${total ? ((100 * done) / total).toFixed(1) : 0}%"></i></span><small>${fmt(done)} of ${fmt(total)} reviewed, in ${list.length} open review${list.length === 1 ? '' : 's'}</small></div>
+    patch($('#side'), `<div class="big"><b>${fmt(left)}</b><span>change${left === 1 ? '' : 's'} left to review</span><span class="bar"><i style="width:${total ? ((100 * done) / total).toFixed(1) : 0}%"></i></span><small>${fmt(done)} of ${fmt(total)} reviewed, in ${own.length} open review${own.length === 1 ? '' : 's'}</small></div>
       <div class="tabs" role="tablist"><button type="button" role="tab" data-act="tab" data-key="open" aria-selected="${S.tab === 'open'}">Open<i>${list.length}</i></button><button type="button" role="tab" data-act="tab" data-key="closed" aria-selected="${S.tab === 'closed'}">Closed<i>${rows().length - list.length}</i></button></div>
       <div class="nav">${nav}</div>
       ${repos.size ? `<div class="grp">Repositories</div><div class="nav">${[...repos].sort((a, b) => b[1] - a[1]).map(([name, n]) => nr('repo:' + name, ICON.repo, name, n)).join('')}</div>` : ''}
@@ -183,6 +185,7 @@
   const whyText = { paused: 'Paused', tab: 'Its tab closed', stop: 'Stopped', signal: 'Stopped', ended: 'Ended' };
 
   function events(r) {
+    if (r.twin) return '<span class="ev bad"><i></i>Open twice: close this one</span>';
     const ev = [];
     if (r.build && r.build.error) ev.push(`<span class="ev bad"><i></i>${esc(r.build.error)}</span>`);
     if (needs(r)) ev.push(`<span class="ev local"><i></i>${esc(r.need)}</span>`);
@@ -232,6 +235,7 @@
     const sel = S.sel === r.id, on = S.opened.has(r.id);
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
     const l2 = r.older ? `${esc(r.repo)} · started by an untangle from before this page`
+      : r.twin ? `${esc(r.repo)} · a second untangle of this review`
       : r.status === 'running'
       ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · <span class="a">+${fmt(r.size.add)}</span> <span class="d">−${fmt(r.size.del)}</span> in ${fmt(r.size.files)} file${r.size.files === 1 ? '' : 's'}`
       : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
@@ -263,19 +267,21 @@
     const c = r.chat, a = r.agents[0];
     const chat = r.older
       ? '<div class="pk-h"><b>An older untangle</b></div><p class="pk-text">This review runs an untangle from before this page, so it can’t say how far it is, which agent holds it, or what waits for you. Its own page works as always. Close it and start it again with New review, and it’s listed in full.</p>'
+      : r.twin
+      ? '<div class="pk-h"><b>Open twice</b></div><p class="pk-text">Two untangles serve this review: this one and the one above, which keeps its record. Close this one: its notes may be behind, and what it saves could undo the other’s. A review can’t be started twice any more.</p>'
       : c
       ? `<div class="pk-h"><b>${esc(c.agent)}</b><span>${esc(a ? a.label : `${c.agent}’s chat, kept`)}</span><span class="sp"></span>${c.orca ? `<button type="button" class="btn sm" data-act="chat" data-id="${esc(r.id)}">${ICON.term}Chat<kbd>C</kbd></button>` : ''}</div>${tail(r)}`
-      : `<div class="pk-h"><b>No agent</b></div><p class="pk-text">No chat holds this review. Add Claude or Codex, and its chat starts with the untangle skill${S.data && S.data.orca ? ', in Orca' : ''}.</p>${r.status === 'running' && !r.build ? `<div class="pk-act"><button type="button" class="btn sm" data-act="add-agent" data-id="${esc(r.id)}">${ICON.plus}Add an agent</button></div>` : ''}`;
+      : `<div class="pk-h"><b>No agent</b></div><p class="pk-text">No chat holds this review. Add Claude or Codex, and its chat starts with the untangle skill${S.data && S.data.orca ? ', in Orca' : ''}.</p>${r.status === 'running' && !r.build && !r.twin ? `<div class="pk-act"><button type="button" class="btn sm" data-act="add-agent" data-id="${esc(r.id)}">${ICON.plus}Add an agent</button></div>` : ''}`;
     const w = r.waiting;
     const notes = r.older ? '<div class="pk-h"><b>Notes</b></div><p class="pk-text">On its page.</p>' : `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
     const running = r.status === 'running';
     const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${r.status !== 'closed' ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
-      ${S.menu === 'more:' + r.id ? `<div class="pop" style="right:8px;top:40px;width:236px">${running && working(r) && !r.pausing ? `<button type="button" class="mi" data-act="pause-now" data-id="${esc(r.id)}">${ICON.pause}Pause now, mid-turn</button>` : ''}${r.status === 'paused' && r.chat ? `<button type="button" class="mi" data-act="resume-bare" data-id="${esc(r.id)}">${ICON.play}Resume without the agent</button>` : ''}<button type="button" class="mi" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close review</button></div>` : ''}
+      ${S.menu === 'more:' + r.id ? `<div class="pop" style="right:8px;top:40px;width:236px">${running && working(r) && !r.pausing && !r.twin ? `<button type="button" class="mi" data-act="pause-now" data-id="${esc(r.id)}">${ICON.pause}Pause now, mid-turn</button>` : ''}${r.status === 'paused' && r.chat ? `<button type="button" class="mi" data-act="resume-bare" data-id="${esc(r.id)}">${ICON.play}Resume without the agent</button>` : ''}<button type="button" class="mi" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close review</button></div>` : ''}
       ${running ? `<div class="kv"><span>untangle</span><b>${r.memory ? bytes(r.memory.untangle) : '—'}</b><span></span></div>
       <div class="kv"><span>Language server</span><b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b>${r.memory && r.memory.lsp && !r.id.startsWith('run:') ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}</div>` : ''}
       <div class="kv"><span>On disk</span><b>${r.disk != null ? bytes(r.disk) : r.id.startsWith('run:') ? '—' : 'measuring…'}</b><span></span></div>
       <div class="kv"><span>Head</span><b>${esc(r.head.slice(0, 7))}</b><span></span></div>
-      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.build || r.older ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}</div>` : ''}
+      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.twin ? `<button type="button" class="btn sm" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close this one</button>` : r.build || r.older ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}</div>` : ''}
       ${r.status === 'paused' ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="resume" data-id="${esc(r.id)}">${ICON.play}Resume<kbd>R</kbd></button></div>` : ''}`;
     return `<div class="peek"><div class="pk">${chat}</div><div class="pk">${notes}</div><div class="pk res">${res}</div></div>`;
   }
@@ -396,8 +402,10 @@
   // ---- The palette: New review
 
   const PR_URL = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)(?:[/?#].*)?$/;
-  // A review of this pull request, open or paused: the palette resumes or brings it, rather than starting it again.
-  const reviewOf = (url) => rows().find((r) => r.url && r.url === url && r.status !== 'closed');
+  // A review of this pull request, open (being built too) or paused: the palette resumes or brings it, rather than starting it again.
+  const sameUrl = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+  const reviewOf = (url) => rows().find((r) => r.status !== 'closed' && !r.twin && (sameUrl(r.url, url) || sameUrl(r.target, url)));
+  const openHint = (r) => (r.status === 'paused' ? 'paused · Resume' : r.build ? 'starting · Open' : 'running · Open');
 
   // What the palette offers, in its groups: a link you pasted, what's asked of you, what you paused, your own.
   function choices() {
@@ -405,10 +413,14 @@
     const hit = (...texts) => !q || texts.some((t) => String(t).toLowerCase().includes(q));
     const out = [];
     const link = PR_URL.exec(P.q.trim());
-    if (link) out.push({ group: 'Link', num: '#' + link[3], title: `Start the review of ${link[1]}/${link[2]}#${link[3]}`, hint: '', target: `https://github.com/${link[1]}/${link[2]}/pull/${link[3]}` });
+    if (link) {
+      const url = `https://github.com/${link[1]}/${link[2]}/pull/${link[3]}`;
+      const open = reviewOf(url);
+      out.push({ group: 'Link', num: '#' + link[3], title: open ? open.title : `Start the review of ${link[1]}/${link[2]}#${link[3]}`, hint: open ? openHint(open) : '', target: open ? null : url, id: open ? open.id : null, again: !!open && open.status === 'paused' });
+    }
     const pull = (group) => (p) => {
       const open = reviewOf(p.url);
-      return { group, num: '#' + p.number, title: p.title, hint: open ? (open.status === 'paused' ? 'paused · Resume' : 'running · Open') : `${p.author} · ${p.repo.split('/').pop()}${p.draft ? ' · draft' : ''}`, target: open ? null : p.url, id: open ? open.id : null, again: open && open.status === 'paused' };
+      return { group, num: '#' + p.number, title: p.title, hint: open ? openHint(open) : `${p.author} · ${p.repo.split('/').pop()}${p.draft ? ' · draft' : ''}`, target: open ? null : p.url, id: open ? open.id : null, again: !!open && open.status === 'paused' };
     };
     if (P.pulls) out.push(...P.pulls.asked.filter((p) => hit(p.number, p.title, p.repo, p.author)).map(pull('Asked to review you')));
     out.push(...open().filter((r) => r.status === 'paused' && hit(r.name, r.title, r.repo)).map((r) => ({ group: 'Paused', num: r.name.replace(/^[^#]*#/, '#'), title: r.title, hint: r.chat ? `Resume · ${r.chat.agent}’s chat kept` : 'Resume', id: r.id, again: true })));
@@ -545,12 +557,13 @@
     const addFor = P.addFor;
     closePalette();
     const said = (d) => {
-      if (d.command) {
+      if (d.already) toast(`${it.num} is open already, so it wasn’t started again`);
+      else if (d.command) {
         // No Orca to start it in: its command, for a terminal.
         const copy = navigator.clipboard ? navigator.clipboard.writeText(d.command) : Promise.reject(new Error('no clipboard'));
         copy.then(() => toast(`Copied ${AGENT[agent.kind]}’s command: paste it in a terminal to start the chat`), () => toast(`Run this in a terminal: ${d.command}`));
       } else if (agent) toast(addFor ? `${AGENT[agent.kind]} is starting, in Orca` : `The review of ${it.num} is starting, and ${AGENT[agent.kind]} with it, in Orca`);
-      else toast(d.already ? `${it.num} is running already` : `The review of ${it.num} is starting`);
+      else toast(`The review of ${it.num} is starting`);
       poll();
     };
     if (addFor) return post('agent', { id: addFor, agent }).then(said, (e) => toast(e.message, true));
@@ -574,7 +587,7 @@
     const key = c.id || c.target;
     S.starting.add(key);
     toast(c.again ? `Resuming ${c.num}…` : `Starting the review of ${c.num}…`);
-    post('start', body).then((d) => { toast(d.already ? `${c.num} is running already` : c.again ? `${c.num} is starting again` : `The review of ${c.num} is starting`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(key); render(); });
+    post('start', body).then((d) => { toast(d.already ? `${c.num} is open already` : c.again ? `${c.num} is starting again` : `The review of ${c.num} is starting`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(key); render(); });
     render();
   }
 
@@ -624,7 +637,7 @@
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
     if (name === 'close') {
       S.menu = null;
-      post('close', { id }).then(() => { toast(r.older ? `Closed ${short(r)}` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; S.opened.delete(id); poll(); }, (e) => toast(e.message, true));
+      post('close', { id }).then(() => { toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; S.opened.delete(id); poll(); }, (e) => toast(e.message, true));
     }
     if (name === 'pause' || name === 'pause-now') {
       S.menu = null;
@@ -838,7 +851,7 @@
     else if ((e.key === 'ArrowRight' || e.key === 'l') && S.sel && !S.opened.has(S.sel)) { e.preventDefault(); S.opened.add(S.sel); render(); loadTail(); }
     else if ((e.key === 'ArrowLeft' || e.key === 'h') && S.sel && S.opened.has(S.sel)) { e.preventDefault(); S.opened.delete(S.sel); S.tails.delete(S.sel); render(); }
     else if (e.key === 'c' && S.sel && byId(S.sel) && byId(S.sel).chat && byId(S.sel).chat.orca) act('chat', S.sel);
-    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build && !byId(S.sel).older) act('pause', S.sel);
+    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build && !byId(S.sel).older && !byId(S.sel).twin) act('pause', S.sel);
     else if (e.key === 'r' && S.sel && byId(S.sel) && byId(S.sel).status === 'paused') act('resume', S.sel);
     else if (e.key === ' ') {
       const r = open().find(needs);

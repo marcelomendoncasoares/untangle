@@ -319,6 +319,8 @@ main > :nth-child(n+3) { animation-delay: 100ms; }
       return setTimeout(poll, 1000);
     }
     rev = s.rev;
+    // Another untangle serves this review: its page.
+    if (s.moved) return location.replace(s.moved);
     render(s);
     booted = true;
     if (s.phase === 'ready') {

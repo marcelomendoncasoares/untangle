@@ -4,7 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
-import { pidAlive } from './runs.js';
+import { call, Gone } from './client.js';
+import { pidAlive, removeRun, type RunInfo } from './runs.js';
 
 /** A chat that held a review: what resumes it, and where it ran. */
 export interface ChatRecord {
@@ -132,6 +133,25 @@ export function listRecords(): Listed[] {
       return { ...r, stopped, status: s };
     })
     .sort((a, b) => order[a.status] - order[b.status] || (when(a) < when(b) ? 1 : when(a) > when(b) ? -1 : 0));
+}
+
+/**
+ * Whether a review's process is there to take what's asked of it: one that's stopping (paused or
+ * closed a moment ago) is waited for, up to five seconds, and one that doesn't answer (the run file
+ * of a review that was killed, whose process id another process has now) is let go.
+ */
+export async function serves(run: RunInfo): Promise<boolean> {
+  if (listRecords().some((r) => r.pid === run.pid && r.stopped)) {
+    for (let i = 0; i < 100 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
+  }
+  if (!pidAlive(run.pid)) return false;
+  try {
+    if ((await call(run, 'GET', 'summary')).status !== 403) return true;
+  } catch (e) {
+    if (!(e instanceof Gone)) throw e;
+  }
+  removeRun(run.pid);
+  return false;
 }
 
 /** The folders a record names: its checkouts and analyses. */

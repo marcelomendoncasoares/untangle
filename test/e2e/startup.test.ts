@@ -15,7 +15,7 @@ const head = 'head ~/.cache/untangle/worktrees/github.com/serverpod/serverpod_of
 const base = 'base ~/.cache/untangle/worktrees/github.com/serverpod/serverpod_offline_sync/e0598c1577db';
 
 interface Step { label: string; state: 'running' | 'done' | 'failed'; ms?: number; detail?: string; count?: [number, number]; notes: string[] }
-interface Status { phase: 'building' | 'ready' | 'failed'; title: string; where: string; plan: string[]; steps: Step[]; notes: string[]; error?: string; rev: number }
+interface Status { phase: 'building' | 'ready' | 'failed'; title: string; where: string; plan: string[]; steps: Step[]; notes: string[]; error?: string; moved?: string; rev: number }
 
 const done = (label: string, ms: number, notes: string[] = []): Step => ({ label, state: 'done', ms, notes });
 const before4 = [done('branch', 640), done('checkouts', 880, [head, base]), done('packages', 1790), done('diff', 380, ['87 files changed, 21 of them generated'])];
@@ -298,6 +298,47 @@ describe('Given the startup page of a review that cannot be built, ', { skip, ti
         'a red bar',
         'no step running',
       ].join('\n'));
+    });
+  });
+});
+
+describe('Given the startup page of a review another untangle turns out to serve, ', { skip, timeout: 120_000 }, () => {
+  let page: Browser | undefined;
+  let build: Awaited<ReturnType<typeof building>> | undefined;
+  let other: http.Server | undefined;
+  let there = '';
+
+  before(async () => {
+    other = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>review</title><div id="viewer">The review, served by the other untangle</div>');
+    });
+    await new Promise<void>((resolve) => other!.listen(0, '127.0.0.1', resolve));
+    there = `http://127.0.0.1:${(other.address() as AddressInfo).port}/?token=other`;
+    build = await building({ phase: 'building', title, where, plan, steps: [done('branch', 640)], notes: [] });
+    page = await launchBrowser(1400, 900);
+    await page.goto(build.url);
+    await page.until(`document.querySelectorAll('.st').length === ${plan.length}`);
+  });
+
+  after(async () => {
+    await page?.close();
+    await build?.close();
+    other?.closeAllConnections();
+    other?.close();
+  });
+
+  describe('when the untangle that builds it hears so, ', () => {
+    let shown = '';
+
+    before(async () => {
+      build!.set({ phase: 'building', title, where, plan, steps: [done('branch', 640)], notes: [], moved: there });
+      await page!.until(`document.getElementById('viewer')`);
+      shown = await read(page!, `location.href + ' | ' + document.getElementById('viewer').textContent`);
+    });
+
+    it('then the page goes to that review’s page.', () => {
+      assert.equal(shown, `${there} | The review, served by the other untangle`);
     });
   });
 });

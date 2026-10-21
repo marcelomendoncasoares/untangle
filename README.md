@@ -236,6 +236,10 @@ default browser. `BROWSER` overrides both. The link carries a token, as Jupyter'
 Closing the review's page stops `untangle` five seconds later, so you can launch, review, close
 and move on. A reload keeps it serving, and so does `-autoclose=false`.
 
+One `untangle` serves each review. Run it on a review that's open already (its pull request, its
+directory, or a directory on its branch) and it brings that review's page to the front, prints its
+link, and ends, rather than starting a second one.
+
 ### Generated code
 
 Generated files are set aside: listed and readable, never reviewed or counted. `untangle`'s
@@ -300,7 +304,8 @@ right, shows what each review holds as the pointer rests on it.
 | `Space`       | open the next review that needs you              |
 
 New review lists the pull requests GitHub asks you to review and your own (through `gh`), with the
-paused reviews to resume. Pick one, or paste any pull request's link, then choose its agent:
+paused reviews to resume. One whose review is open, or still being built, says so, and picking it
+brings that review to the front. Pick one, or paste any pull request's link, then choose its agent:
 Claude, Codex, or none. The review starts on its own and opens its page, and the agent's chat
 starts next to it with the untangle skill (`/untangle <link>` for Claude, `$untangle <link>` for
 Codex). A new Claude chat starts with a session id `untangle` chose, so the review knows it at once.
@@ -330,7 +335,8 @@ front. It also opens this page, or starts a review from it.
 
 A review an untangle from before this page runs is listed too, with its memory, but it can't say
 how far it is or which agent holds it: close it and start it again with New review to see it in
-full.
+full. A review two untangles serve, started before `untangle` checked for one, is listed twice: the
+second says Open twice, and Close this one stops it and leaves the review as it was.
 
 A small process serves the page, at `http://127.0.0.1:7777/` unless something else has that port.
 `untangle reviews` starts it the first time, and it stops once the page has been closed for a

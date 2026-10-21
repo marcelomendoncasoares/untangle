@@ -11,7 +11,7 @@ import { launch, logTail } from './launcher.js';
 import { call, failed, Gone } from './client.js';
 import { isPrUrl } from './target.js';
 import { openBrowser } from './open.js';
-import { findRun, listRuns, pidAlive, prKey, removeRun, wantedDir, type RunInfo, type Wanted } from './runs.js';
+import { findRun, listRuns, pidAlive, removeRun, wantedDir, wantedUrl, type RunInfo, type Wanted } from './runs.js';
 import { outdatedSkill } from './skill.js';
 
 // The server answers a wait at least this often, so no connection sits idle for long; the command
@@ -34,8 +34,8 @@ const sh = (s: string) => (/^[\w./:@%+=-]+$/.test(s) ? s : `'${s.replace(/'/g, `
 
 /** What a command's -review (or watch's argument) stands for. */
 function wanted(target: string): Wanted {
-  const m = /github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)/.exec(target);
-  if (isPrUrl(target) && m) return { pr: prKey(m[1], m[2], Number(m[3])), dir: null, repoKey: `github.com/${m[1]}/${m[2]}`, branch: null };
+  const byUrl = isPrUrl(target) ? wantedUrl(target) : null;
+  if (byUrl) return byUrl;
   if (!fs.existsSync(target)) throw new Error(`${target} does not exist`);
   const dir = fs.statSync(target).isDirectory() ? target : path.dirname(target);
   const w = wantedDir(dir);
@@ -78,7 +78,7 @@ async function running(review: string | null): Promise<RunInfo> {
  * The launcher starts it, so the review isn't this watch's child: an agent that stops the watch
  * ends everything under it.
  */
-async function start(target: string, flags: string[]): Promise<{ run: RunInfo; log: string }> {
+async function start(target: string, flags: string[]): Promise<{ run: RunInfo; log: string | null }> {
   const { pid, log } = launch([...flags, '--', target], { ...process.env, UNTANGLE_FROM_AGENT: '1' });
   for (let i = 0; pid > 0 && i < 600; i++) {
     const run = listRuns().find((r) => r.pid === pid);
@@ -86,23 +86,31 @@ async function start(target: string, flags: string[]): Promise<{ run: RunInfo; l
     if (!pidAlive(pid)) break;
     await sleep(100);
   }
+  // Another untangle started it meanwhile, and this one gave way: that one.
+  const other = await find(target);
+  if (other) return { run: other, log: null };
   throw new Error(`the review didn’t start${logTail(log) ? ':\n' + logTail(log) : ''}`);
 }
 
-/** Waits until the review is built: until then it answers 503. */
-async function ready(run: RunInfo, agent: string, log: string | null): Promise<Record<string, unknown>> {
+/**
+ * Waits until the review is built: until then it answers 503. One that gave way to another
+ * untangle of the review, started at the same moment, leads to that one.
+ */
+async function ready(run: RunInfo, agent: string, log: string | null, target: string): Promise<{ run: RunInfo; hello: Record<string, unknown>; log: string | null }> {
   for (;;) {
     let r;
     try {
       r = await call(run, 'GET', 'notes/hello', { query: { agent } });
     } catch (e) {
+      const other = e instanceof Gone && !alive(run.pid) ? await find(target) : null;
+      if (other && other.pid !== run.pid) { run = other; log = null; continue; }
       if (!(e instanceof Gone) || !alive(run.pid)) throw new Error(`the review stopped before it was ready${log && logTail(log) ? ':\n' + logTail(log) : ''}`);
       r = { status: 503, data: {} };
     }
     if (r.status !== 503) {
       const err = failed(r);
       if (err) throw new Error(err);
-      return r.data;
+      return { run, hello: r.data, log };
     }
     await sleep(400);
   }
@@ -120,7 +128,8 @@ export async function watch(o: { target: string; given: boolean; forward: string
     say(`starting the review of ${o.given ? o.target : 'this directory'}…`);
     ({ run, log } = await start(o.target, o.forward));
   }
-  const hello = await ready(run, agent, log);
+  let hello: Record<string, unknown>;
+  ({ run, hello, log } = await ready(run, agent, log, o.target));
   // Already running, with no page open: one opens, so the person can write the notes.
   let opened = log ? (hello.opened as string | null) : null;
   if (!log && !hello.pages) opened = await openBrowser(run.url);

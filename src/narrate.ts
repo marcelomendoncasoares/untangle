@@ -21,6 +21,8 @@ export interface Status {
   steps: StepStatus[];
   notes: string[];
   error?: string;
+  /** Another untangle serves this review: its link, for the page to go to. */
+  moved?: string;
   /** Counts the changes, so the page can wait for the next one. */
   rev: number;
 }
@@ -178,6 +180,16 @@ export class Narrator implements Progress {
     this.write('');
     this.write(`  Review at ${this.c('1', url)}`);
     this.write(this.c('2', autoclose ? '  Closing its page stops untangle, as Ctrl+C does.' : '  Ctrl+C to stop.'));
+  }
+
+  /** Another untangle serves this review: where its page is. The page that waits here goes there. */
+  already(title: string, url: string, where: 'orca' | 'browser' | null) {
+    this.end(false);
+    this.status.moved = url;
+    this.changed(true);
+    if (this.opts.quiet) return;
+    this.write(`  ${title} is open already${where === 'orca' ? ', in Orca’s browser' : where === 'browser' ? ', in the browser' : ''}.`);
+    this.write(`  Review at ${this.c('1', url)}`);
   }
 
   /** Says why untangle stops now, leaving a running step unfinished. */
