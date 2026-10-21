@@ -285,7 +285,8 @@ own, so a watch or a chat that ends never closes the page.
 running, the ones paused, and the closed ones. Each row is a pull request, or a branch, with its
 progress, what waits for you (an agent's answer, a note it wrote), where its agent's chat is, and
 the memory it holds with its language server. Open a row and it shows the chat's last lines, read
-from the agent's own transcript, the notes waiting for you, and what the review holds on disk.
+from the agent's own transcript, the notes waiting for you, and what the review holds on disk. The
+memory chip, top right, shows what each review holds as the pointer rests on it.
 
 | Key           |                                                  |
 | ------------- | ------------------------------------------------ |

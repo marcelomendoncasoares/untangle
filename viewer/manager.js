@@ -381,7 +381,7 @@
       const run = open().filter((r) => r.status === 'running');
       const total = run.reduce((a, r) => a + memOf(r), 0) + S.data.memory.manager;
       const m = $('#mem').getBoundingClientRect();
-      h += `<div class="pop" style="right:${Math.round(innerWidth - m.right)}px;top:${Math.round(m.bottom + 6)}px;width:400px" role="dialog" aria-label="Memory">
+      h += `<div class="pop mem-pop" style="right:${Math.round(innerWidth - m.right)}px;top:${Math.round(m.bottom + 6)}px;width:400px" role="dialog" aria-label="Memory">
         <div class="pop-h">Memory<span>${bytes(total)}</span></div>
         ${run.map((r) => `<div class="pop-r"><small><span class="who">${esc(r.name)}</span>untangle ${r.memory ? bytes(r.memory.untangle) : '—'} · language server ${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'off'}</small><b>${r.memory ? bytes(memOf(r)) : '—'}</b></div>`).join('')}
         ${run.filter((r) => idleFor(r) > 3600000 && !r.pausing).map((r) => `<div class="pop-r"><button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}">${ICON.pause}Pause ${esc(r.name)}, idle ${span(idleFor(r))} · frees ${bytes(memOf(r))}</button><span></span></div>`).join('')}
@@ -711,7 +711,9 @@
         $('#sheet .list').scrollTop = 0;
         break;
       case 'mem':
-        S.menu = S.menu === 'mem' ? null : 'mem';
+        // Open from the pointer resting on it, a click keeps it open; a second click closes it.
+        if (S.menu === 'mem' && S.memKept) { S.menu = null; S.memKept = false; }
+        else { S.menu = 'mem'; S.memKept = true; }
         top();
         layer();
         break;
@@ -844,6 +846,34 @@
       else S.sel = null;
       render();
     }
+  });
+
+  // The memory menu opens as the pointer rests on its chip, and closes once it has left the chip
+  // and the menu both, unless a click kept it open.
+  let memTimer = 0;
+  const memZone = (el) => !!(el && el.closest && el.closest('#mem, .mem-pop'));
+  document.addEventListener('mouseover', (e) => {
+    if (!memZone(e.target) || memZone(e.relatedTarget)) return;
+    clearTimeout(memTimer);
+    if (S.menu === 'mem' || !S.data) return;
+    memTimer = setTimeout(() => {
+      if (S.menu) return;
+      S.menu = 'mem';
+      S.memKept = false;
+      top();
+      layer();
+    }, 120);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (!memZone(e.target) || memZone(e.relatedTarget)) return;
+    clearTimeout(memTimer);
+    if (S.menu !== 'mem' || S.memKept) return;
+    memTimer = setTimeout(() => {
+      if (S.menu !== 'mem' || S.memKept) return;
+      S.menu = null;
+      top();
+      layer();
+    }, 240);
   });
 
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });

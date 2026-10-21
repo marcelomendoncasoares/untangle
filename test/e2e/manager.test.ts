@@ -156,6 +156,24 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when the pointer rests on the memory chip, '
+    + 'then its menu opens; it closes as the pointer leaves, unless a click kept it open.',
+    async () => {
+      await page.hover('#mem');
+      await page.until(`!!document.querySelector('.mem-pop')`);
+      await page.hover('.head h1');
+      await page.until(`!document.querySelector('.mem-pop')`);
+      await page.click('#mem');
+      await page.until(`!!document.querySelector('.mem-pop')`);
+      await page.hover('.head h1');
+      await page.eval(`new Promise((r) => setTimeout(r, 500))`);
+      assert.equal(await page.eval(`!!document.querySelector('.mem-pop')`), true);
+      await page.click('#mem');
+      await page.until(`!document.querySelector('.mem-pop')`);
+    },
+  );
+
+  it(
     'when Paused is chosen in the side, '
     + 'then only the paused review is listed, with its chat-less agent cell and what it holds on disk.',
     async () => {
