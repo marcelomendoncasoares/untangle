@@ -18,6 +18,8 @@ export interface PullRequest {
   baseRefOid: string;
   headRefName: string;
   headRefOid: string;
+  /** Who opened it: GitHub's login. */
+  author?: string | null;
 }
 
 export interface Target {
@@ -46,7 +48,9 @@ function githubRepo(url: string): { owner: string; repo: string } | null {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
-const GH_FIELDS = 'number,title,url,state,baseRefName,baseRefOid,headRefName,headRefOid';
+const GH_FIELDS = 'number,title,url,state,baseRefName,baseRefOid,headRefName,headRefOid,author';
+// gh says who opened it as { login }.
+const fromGh = (j: Omit<PullRequest, 'owner' | 'repo' | 'author'> & { author?: { login?: string } | null }) => ({ ...j, author: j.author?.login ?? null });
 
 async function prFromApi(owner: string, repo: string, number: number, ghError: string | null): Promise<PullRequest> {
   const headers: Record<string, string> = { accept: 'application/vnd.github+json', 'user-agent': 'untangle' };
@@ -55,8 +59,8 @@ async function prFromApi(owner: string, repo: string, number: number, ghError: s
   const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, { headers });
   if (res.status === 404) throw new Error(`cannot find ${owner}/${repo}#${number}${ghError ? `: ${ghError}` : ' (for a private repository, log in with gh or set GITHUB_TOKEN)'}`);
   if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${owner}/${repo}#${number}${ghError ? ` (gh: ${ghError})` : ''}`);
-  const j = (await res.json()) as { number: number; title: string; html_url: string; state: string; merged_at: string | null; base: { ref: string; sha: string }; head: { ref: string; sha: string } };
-  return { owner, repo, number: j.number, title: j.title, url: j.html_url, state: j.merged_at ? 'MERGED' : j.state.toUpperCase(), baseRefName: j.base.ref, baseRefOid: j.base.sha, headRefName: j.head.ref, headRefOid: j.head.sha };
+  const j = (await res.json()) as { number: number; title: string; html_url: string; state: string; merged_at: string | null; base: { ref: string; sha: string }; head: { ref: string; sha: string }; user?: { login?: string } | null };
+  return { owner, repo, number: j.number, title: j.title, url: j.html_url, state: j.merged_at ? 'MERGED' : j.state.toUpperCase(), baseRefName: j.base.ref, baseRefOid: j.base.sha, headRefName: j.head.ref, headRefOid: j.head.sha, author: j.user?.login ?? null };
 }
 
 /** A pull request by owner, name and number: through gh when it's there, else the REST API. */
@@ -65,7 +69,7 @@ async function fetchPr(owner: string, repo: string, number: number): Promise<Pul
   if (has('gh')) {
     try {
       const j = JSON.parse(run('gh', ['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', GH_FIELDS]));
-      return { owner, repo, ...j };
+      return { owner, repo, ...fromGh(j) };
     } catch (e) {
       // Not logged in, say: the public API may still answer.
       ghError = e instanceof CommandError ? e.stderr.trim().split('\n')[0] || null : null;
@@ -80,7 +84,7 @@ function branchPr(dir: string): PullRequest | null {
   try {
     const j = JSON.parse(run('gh', ['pr', 'view', '--json', GH_FIELDS], { cwd: dir }));
     const r = githubRepo(j.url.replace(/\/pull\/\d+$/, ''));
-    return r ? { ...r, ...j } : null;
+    return r ? { ...r, ...fromGh(j) } : null;
   } catch {
     return null;
   }

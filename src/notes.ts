@@ -529,6 +529,17 @@ export class Notes {
     });
   }
 
+  /** The chats holding the review in this run, with the name each one's agent answers as. */
+  chats(): Array<{ agent: string; chat: Chat }> {
+    return [...this.holders].flatMap(([agent, h]) => (h.chat ? [{ agent, chat: h.chat }] : []));
+  }
+
+  /** Open notes, and those an agent had the last word on: they wait for your answer. */
+  counts(): { open: number; waiting: number } {
+    const open = this.data.notes.filter((n) => !n.resolved);
+    return { open: open.length, waiting: open.filter((n) => n.comments[n.comments.length - 1].by !== null).length };
+  }
+
   /** Whether an agent holds the review now: untangle then looks for its commits more often. */
   watched(): boolean {
     return this.agents().some((a) => a.state === 'listening' || a.state === 'working' || a.state === 'queued');

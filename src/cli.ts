@@ -7,17 +7,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as agent from './agent.js';
-import { noteUsage, notesUsage, parseCommand, replyUsage, skillUsage, stopUsage, upgradeUsage, usage, UsageError, watchUsage, type Options } from './args.js';
+import { noteUsage, notesUsage, parseCommand, replyUsage, reviewsUsage, skillUsage, stopUsage, upgradeUsage, usage, UsageError, watchUsage, type Options } from './args.js';
 import { buildReview, buildSteps, type ReviewData } from './build.js';
 import { reviewDir, worktreeDir } from './cache.js';
-import { chatFrom } from './chats.js';
+import { chatFolder, chatFrom } from './chats.js';
 import { readHistory } from './history.js';
 import { gitMaybe } from './exec.js';
 import { LiveSession } from './live.js';
+import { rss } from './metrics.js';
 import { Narrator, type Status } from './narrate.js';
 import { NoteError, Notes, notesFile, type NoteAction, type Scope } from './notes.js';
 import { openBrowser } from './open.js';
 import { fonts, highlighter, progressPage, reviewPage, type PageConfig } from './page.js';
+import { readRecord, recordFile, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
+import { reviews, type Summary } from './reviews.js';
 import { prKey, removeRun, wantedDir, writeRun, type RunInfo } from './runs.js';
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
@@ -39,7 +42,7 @@ async function main(): Promise<number> {
     command = parseCommand(process.argv.slice(2));
   } catch (e) {
     if (!(e instanceof UsageError)) throw e;
-    const help = { watch: watchUsage, reply: replyUsage, note: noteUsage, notes: notesUsage, stop: stopUsage, skill: skillUsage, upgrade: upgradeUsage }[process.argv[2]];
+    const help = { watch: watchUsage, reply: replyUsage, note: noteUsage, notes: notesUsage, stop: stopUsage, skill: skillUsage, upgrade: upgradeUsage, reviews: reviewsUsage }[process.argv[2]];
     process.stderr.write(`${e.message}\n${help ? help() : usage(VERSION)}`);
     return 2;
   }
@@ -54,6 +57,7 @@ async function main(): Promise<number> {
   if (command.cmd === 'stop') return agent.stop(command);
   if (command.cmd === 'skill') return skill(command);
   if (command.cmd === 'upgrade') return upgrade();
+  if (command.cmd === 'reviews') return reviews();
   return review(command.opts);
 }
 
@@ -98,7 +102,7 @@ async function review(opts: Options): Promise<number> {
   let opened: 'orca' | 'browser' | null = null;
   let run: RunInfo | null = null;
   if (!exporting) {
-    const idle = { after: AUTOCLOSE_AFTER, then: () => { say.stopping('The review’s page closed, so untangle stops (-autoclose=false keeps it serving).'); void stop(); } };
+    const idle = { after: AUTOCLOSE_AFTER, then: () => { say.stopping('The review’s page closed, so untangle stops (-autoclose=false keeps it serving).'); void stop('tab'); } };
     server = new ReviewServer(
       { host: opts.host, port: opts.port, portExplicit: opts.portExplicit, basePath: opts.basePath, idle: opts.autoclose ? idle : undefined },
       say,
@@ -112,13 +116,19 @@ async function review(opts: Options): Promise<number> {
         call: (route, method, query, body, head, signal) => {
           if (route === 'refresh') return method === 'POST' ? refresh() : check(query.has('check'));
           if (route === 'stop' && method === 'POST') {
-            setTimeout(() => { say.stopping('untangle stop closed the review.'); void stop(); }, 50);
+            // Paused (kept to pick up again), closed (done with), or just stopped.
+            const b = (body && typeof body === 'object' ? body : {}) as { why?: unknown; close?: unknown };
+            const why: StopReason = b.why === 'paused' ? 'paused' : 'stop';
+            const close = b.close === true;
+            setTimeout(() => { say.stopping(close ? 'The review was closed.' : why === 'paused' ? 'The review was paused.' : 'untangle stop closed the review.'); void stop(why, close); }, 50);
             return Promise.resolve({ data: { stopping: true } });
           }
+          if (route === 'summary' && method === 'GET') return Promise.resolve({ data: summary() });
           if (!session || !target || !notes) return Promise.resolve({ status: 503, data: { error: 'the review is still being built' } });
           // A page from before a refresh shows other commits: what it sends would land on the wrong lines.
           if (head && head !== target.headSha && route !== 'metrics') return Promise.resolve({ status: 409, data: { error: `untangle now reviews ${target.headSha.slice(0, 7)}: reload the page.`, moved: target.headSha } });
           if (route === 'notes' || route.startsWith('notes/')) return notesCall(notes, route, method, query, body, signal);
+          if (route === 'state') recordSoon();
           return session.call(route, method, query, body);
         },
       },
@@ -134,18 +144,81 @@ async function review(opts: Options): Promise<number> {
     const w = byUrl ? null : wantedDir(dir);
     run = { pid: process.pid, url, token: server.token, dir: w ? w.dir : null, pr: m ? prKey(m[1], m[2], Number(m[3])) : null, repoKey: w?.repoKey ?? undefined, branch: w?.branch ?? null, started: new Date().toISOString() };
     writeRun(run);
-    process.on('exit', () => removeRun(process.pid));
+    process.on('exit', () => {
+      removeRun(process.pid);
+      // Ended without saying why: an error, say.
+      if (record && !record.stopped) {
+        record.stopped = { at: new Date().toISOString(), why: 'ended' };
+        recordNow();
+      }
+    });
   }
 
-  const stop = async () => {
+  const stop = async (why: StopReason, close = false) => {
+    if (record) {
+      const at = new Date().toISOString();
+      record.stopped = { at, why };
+      record.closed = close ? at : null;
+      recordNow();
+    }
     // A waiting untangle watch hears that the review closed before it does.
     if (notes) { notes.close(); await new Promise((r) => setTimeout(r, 100)); }
     await server?.close();
     await live?.stop();
     process.exit(0);
   };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
+  process.on('SIGINT', () => stop('signal'));
+  process.on('SIGTERM', () => stop('signal'));
+
+  // What untangle reviews shows of this review while it runs: the build, progress, notes, where
+  // its agents' chats are, and memory.
+  const summary = (): Summary => {
+    const lsp = live?.state();
+    const st = say.status;
+    return {
+      title: target ? names(target).title : st.title,
+      phase: st.phase,
+      step: st.steps.length ? st.steps[st.steps.length - 1] : null,
+      plan: st.plan ?? null,
+      error: st.error ?? null,
+      head: target?.headSha ?? null,
+      progress: session?.progress() ?? null,
+      notes: notes?.counts() ?? null,
+      agents: notes?.agents() ?? [],
+      memory: { untangle: process.memoryUsage().rss, lsp: lsp?.pid ? rss(lsp.pid) : null },
+      pages: server?.pageCount ?? 0,
+      refreshing: refreshing ? refreshView() : null,
+    };
+  };
+
+  // The review's record: what untangle remembers of it past this process, for untangle reviews.
+  // It's written as the review opens, a second after its marks, notes or chats change, and as it stops.
+  let record: ReviewRecord | null = null;
+  let recordTimer: NodeJS.Timeout | null = null;
+  const recordNow = () => {
+    if (recordTimer) clearTimeout(recordTimer);
+    recordTimer = null;
+    if (!record) return;
+    const now = new Date().toISOString();
+    if (session && notes && target) {
+      record.progress = session.progress();
+      record.notes = notes.counts();
+      for (const { agent: name, chat } of notes.chats()) {
+        const was = record.chats.find((c) => c.id === chat.id);
+        const c: ChatRecord = { agent: name, kind: chat.kind, id: chat.id, folder: chatFolder(chat) ?? was?.folder ?? null, orca: chat.orca ? { handle: chat.orca.handle, pane: chat.orca.pane } : was?.orca ?? null, at: now };
+        record.chats = [c, ...record.chats.filter((x) => x.id !== chat.id)];
+      }
+      // Its checkouts, once they're made.
+      for (const sha of [target.baseSha, target.headSha]) if (!record.checkouts.includes(sha) && fs.existsSync(worktreeDir(target.repoKey, sha))) record.checkouts.push(sha);
+    }
+    record.updated = now;
+    try {
+      writeRecord(record);
+    } catch (e) {
+      say.verbose(`couldn’t write the review’s record: ${(e as Error).message}`);
+    }
+  };
+  const recordSoon = () => { if (record && !recordTimer) recordTimer = setTimeout(recordNow, 1000); };
 
   // The notes' API: the page's (list, add, reply, resolve, copy, post, wake) and the agents' (hello,
   // watch, reply, note, export).
@@ -185,11 +258,43 @@ async function review(opts: Options): Promise<number> {
     const file = notesFile(t.repoKey, n.snapshotKey);
     if (!notes || notes.file !== file) {
       notes?.close();
-      const book: Notes = new Notes(file, () => server?.broadcast({ notes: book.revision }), undefined, byAgent);
+      const book: Notes = new Notes(file, () => { server?.broadcast({ notes: book.revision }); recordSoon(); }, undefined, byAgent);
       notes = book;
     }
     notes.attach(s.notesContext(t.pr ? `${t.pr.owner}/${t.pr.repo}#${t.pr.number}` : t.repoKey.startsWith('local/') ? path.basename(t.repo) : n.repoName, t.pr ? t.pr.headRefName : n.branch, byUrl ? worktreeDir(t.repoKey, t.headSha) : null));
     if (run) writeRun(run = { ...run, repoKey: t.repoKey, branch: t.pr ? t.pr.headRefName : n.branch, title: n.title, head: t.headSha });
+    // The record carries over what an earlier run of the review kept: when it started, its chats,
+    // its checkouts and analyses. Opening a closed review opens it again.
+    const now = new Date().toISOString();
+    const was = record && record.repoKey === t.repoKey && record.key === n.snapshotKey ? record : readRecord(recordFile(t.repoKey, n.snapshotKey));
+    const pair: [string, string] = [t.baseSha, t.headSha];
+    record = {
+      version: 1,
+      target: byUrl ? opts.target : run?.dir ?? path.resolve(dir),
+      pr: t.pr ? prKey(t.pr.owner, t.pr.repo, t.pr.number) : null,
+      dir: byUrl ? null : run?.dir ?? path.resolve(dir),
+      repoKey: t.repoKey,
+      key: n.snapshotKey,
+      repo: t.repo,
+      title: n.title,
+      author: t.pr?.author ?? null,
+      url: t.pr ? t.pr.url : null,
+      size: s.size(),
+      base: t.baseSha,
+      head: t.headSha,
+      progress: s.progress(),
+      notes: notes.counts(),
+      chats: was?.chats ?? [],
+      pid: process.pid,
+      started: was?.started ?? now,
+      opened: was && was.pid === process.pid ? was.opened : now,
+      updated: now,
+      stopped: null,
+      closed: null,
+      checkouts: was?.checkouts ?? [],
+      analyses: [...(was?.analyses ?? []).filter(([b, h]) => b !== pair[0] || h !== pair[1]), pair],
+    };
+    recordNow();
   };
 
   const resolve = (progress: Narrator) => (byUrl ? resolveUrl(opts.target, (l) => progress.detail(l)) : resolveDirectory(dir, opts.base, (l) => progress.detail(l)));

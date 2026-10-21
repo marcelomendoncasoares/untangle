@@ -325,5 +325,22 @@
     return new RegExp('^' + rx + '$');
   }
 
-  root.ReviewCore = { tokenize, langOf, lcsOps, analyzeFile, diffBlock, groupAtoms, atomKey, globToRegExp };
+  // Note numbers as words: N4, N2 and N4, N1–N3, N1, N3 and N5.
+  function nList(ns) {
+    const runs = [];
+    [...ns].sort((a, b) => a - b).forEach((n) => { const r = runs[runs.length - 1]; if (r && n === r[1] + 1) r[1] = n; else runs.push([n, n]); });
+    const parts = runs.flatMap(([a, b]) => (b - a >= 2 ? [`N${a}–N${b}`] : a === b ? [`N${a}`] : [`N${a}`, `N${b}`]));
+    return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] || '';
+  }
+
+  // Where an agent's chat is, as the page and untangle reviews say it.
+  function agentLabel(a) {
+    if (a.state === 'listening') return `${a.name} is listening`;
+    if (a.state === 'working') return `${a.name} is working${a.on.length ? ' on ' + nList(a.on) : ''}`;
+    if (a.state === 'queued') return a.on.length ? `${nList(a.on)} ${a.on.length === 1 ? 'waits' : 'wait'} for ${a.name}’s turn` : `untangle’s line waits for ${a.name}’s turn`;
+    if (a.state === 'deaf') return `${a.name} isn’t listening`;
+    return `${a.name} left`;
+  }
+
+  root.ReviewCore = { tokenize, langOf, lcsOps, analyzeFile, diffBlock, groupAtoms, atomKey, globToRegExp, nList, agentLabel };
 })(typeof window !== 'undefined' ? window : globalThis);

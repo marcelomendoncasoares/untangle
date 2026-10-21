@@ -212,6 +212,27 @@ export class ReviewSession {
     return [...out].sort((a, b) => a - b);
   }
 
+  /** Changes marked reviewed, of all, as the page counts them: a change in several places counts once. */
+  progress(): { done: number; total: number } {
+    const rev = new Set(this.rev());
+    const units = new Map<string, boolean>();
+    for (const f of this.data.model.compares.base.files as Array<{ blocks: Array<{ id: string; unit?: string; edits: number[] }> }>) {
+      for (const b of f.blocks) {
+        if (!b.edits.length) continue;
+        const key = b.unit || b.id;
+        units.set(key, (units.get(key) ?? true) && b.edits.every((e) => rev.has(e)));
+      }
+    }
+    return { done: [...units.values()].filter(Boolean).length, total: units.size };
+  }
+
+  /** Lines added and removed, and files, generated ones included. */
+  size(): { add: number; del: number; files: number } {
+    const c = this.data.model.compares.base;
+    const all = [...c.files, ...c.generated] as Array<{ a?: number; d?: number }>;
+    return { add: all.reduce((n, f) => n + Math.max(0, f.a || 0), 0), del: all.reduce((n, f) => n + Math.max(0, f.d || 0), 0), files: all.length };
+  }
+
   config(): PageConfig {
     const roots = this.live.roots;
     if (!this.lines) {

@@ -6,10 +6,10 @@
 // agent's own, `notes` prints the open notes, and `stop` closes the review.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chatOf, type Chat } from './chats.js';
+import { call, failed, Gone } from './client.js';
 import { isPrUrl } from './target.js';
 import { openBrowser } from './open.js';
 import { findRun, listRuns, pidAlive, prKey, removeRun, runDir, wantedDir, type RunInfo, type Wanted } from './runs.js';
@@ -44,36 +44,6 @@ function wanted(target: string): Wanted {
   return w;
 }
 
-class Gone extends Error {}
-
-/** A call to a running review, with its token. Rejects with Gone when the review isn't there. */
-function call(run: RunInfo, method: string, route: string, opts: { query?: Record<string, string>; body?: unknown; signal?: AbortSignal } = {}): Promise<{ status: number; data: Record<string, unknown> }> {
-  const url = new URL(run.url);
-  const base = url.pathname.endsWith('/') ? url.pathname : url.pathname + '/';
-  const query = opts.query ? '?' + new URLSearchParams(opts.query).toString() : '';
-  const body = opts.body === undefined ? undefined : JSON.stringify(opts.body);
-  return new Promise((resolve, reject) => {
-    const req = http.request({
-      host: url.hostname, port: url.port, method, path: `${base}api/${route}${query}`, signal: opts.signal,
-      headers: { 'x-untangle-token': run.token, ...(body !== undefined ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}) },
-    }, (res) => {
-      let text = '';
-      res.setEncoding('utf8').on('data', (d: string) => { text += d; }).on('end', () => {
-        let data: Record<string, unknown> = {};
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = { error: text.trim() || `untangle answered ${res.statusCode}` };
-        }
-        resolve({ status: res.statusCode || 0, data });
-      }).on('error', () => reject(new Gone()));
-    });
-    req.on('error', (e) => reject((e as Error).name === 'AbortError' ? e : new Gone()));
-    req.end(body);
-  });
-}
-
-const failed = (r: { status: number; data: Record<string, unknown> }) => (r.status >= 400 ? String(r.data.error || `untangle answered ${r.status}`) : null);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid: number) => listRuns().some((r) => r.pid === pid);
 // What a command run from a chat that no longer holds the review hears.

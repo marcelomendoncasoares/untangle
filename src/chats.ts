@@ -184,13 +184,48 @@ function codexBusy(file: string): { busy: boolean; since: number } | null {
   }
 }
 
-/** Claude's own word on a running session: its id, and whether it's busy and since when. */
-function claudeSession(chat: Chat): { sessionId?: string; status?: string; statusUpdatedAt?: number } | null {
+/** Claude's own word on a running session: its id, its folder, and whether it's busy and since when. */
+function claudeSession(chat: Chat): { sessionId?: string; cwd?: string; status?: string; statusUpdatedAt?: number } | null {
   if (!chat.pid) return null;
   try {
     return JSON.parse(fs.readFileSync(path.join(chat.home, 'sessions', `${chat.pid}.json`), 'utf8'));
   } catch {
     return null;
+  }
+}
+
+/**
+ * The folder a chat runs in: Claude's session says it while Claude runs, and a Codex thread's log
+ * opens with it. Claude finds a chat to resume by its folder.
+ */
+export function chatFolder(chat: Chat): string | null {
+  if (chat.kind === 'claude') {
+    const s = claudeSession(chat);
+    return s && s.sessionId === chat.id && typeof s.cwd === 'string' ? s.cwd : null;
+  }
+  const file = codexLog(chat);
+  if (!file) return null;
+  let fd: number;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    // The first line: it holds the thread's instructions too, so it can run long.
+    let text = '';
+    const buf = Buffer.alloc(256 << 10);
+    for (let at = 0; at < 4 << 20; at += buf.length) {
+      const n = fs.readSync(fd, buf, 0, buf.length, at);
+      text += buf.subarray(0, n).toString('utf8');
+      if (text.includes('\n') || n < buf.length) break;
+    }
+    const cwd = (JSON.parse(text.split('\n')[0]) as { payload?: { cwd?: unknown } }).payload?.cwd;
+    return typeof cwd === 'string' ? cwd : null;
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
   }
 }
 

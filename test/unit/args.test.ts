@@ -254,6 +254,30 @@ describe('Given the agent’s commands, ', () => {
   );
 
   it(
+    'when reviews is given, alone, with -list, with -h, or with an argument, '
+    + 'then it lists the reviews, shows its usage, or is refused.',
+    () => {
+      const help = parseCommand(['reviews', '-h']);
+      assert.deepEqual([parseCommand(['reviews']), parseCommand(['reviews', '-list']), help.cmd === 'help' && help.text.split('\n')], [{ cmd: 'reviews', list: false }, { cmd: 'reviews', list: true }, [
+        'untangle reviews - the reviews on this machine',
+        '',
+        'usage:',
+        '  untangle reviews [flags]',
+        '',
+        'Lists every review untangle remembers: the ones running, the ones paused (stopped, with their notes,',
+        'marks and chats kept, to pick up again), and the closed ones, with their progress, where each',
+        'one’s agent is, and what each holds in memory or on disk. A directory named reviews is ./reviews.',
+        '',
+        'flags:',
+        '  -list',
+        '    \tprint the reviews in the terminal',
+        '',
+      ]]);
+      assert.throws(() => parseCommand(['reviews', 'all']), (error: unknown) => error instanceof UsageError && error.message === 'untangle reviews takes no arguments (got all)');
+    },
+  );
+
+  it(
     'when skill is given an argument, '
     + 'then it is refused.',
     () => {

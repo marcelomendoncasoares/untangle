@@ -6,7 +6,7 @@ import fs from 'node:fs';
 const linux = process.platform === 'linux';
 
 /** Resident memory of a process, in bytes. */
-function rss(pid: number): number | null {
+export function rss(pid: number): number | null {
   try {
     if (linux) {
       const kb = /^VmRSS:\s+(\d+) kB/m.exec(fs.readFileSync(`/proc/${pid}/status`, 'utf8'));

@@ -279,6 +279,24 @@ Claude runs `watch` in the background, and its end wakes the chat. Codex's `watc
 once, and untangle puts a line in its chat when there's something new. The review runs on its
 own, so a watch or a chat that ends never closes the page.
 
+### Your reviews
+
+`untangle reviews` lists every review `untangle` remembers on this machine:
+
+```text
+$ untangle reviews
+untangle: 2 running, 1 paused, 0 closed.
+
+running  serverpod#5869  feat: Add passwordless OTP login to the email…  214/1,092  Claude is listening  1.4 GB
+running  serverpod#5871  feat: Retry mechanism for future calls             88/296  no agent             1.2 GB
+paused   serverpod#5787  feat: Unified account linking / merging flow       61/845  Claude’s chat, kept  239 MB on disk
+```
+
+Each review keeps a record in the cache, so it's listed while it runs and after it stops. A
+running review shows its progress, where its agent's chat is, and the memory it holds with its
+language server. A paused one stopped and kept its notes, marks and the chat that held it, and
+shows what it holds on disk. A closed one is done with.
+
 ### Upgrading
 
 `untangle upgrade` brings the latest `untangle` from GitHub. It keeps a clone of its own in the
@@ -384,6 +402,9 @@ versions kept marks on move to it when their review starts.
   change.
   - `notes/`: your notes, per review, named like its marks (`notes/github.com/<owner>/<repo>/pr-<number>.json`).
   - `run/`: the port and token of each review running now, for the agent's commands.
+  - `sessions/`: a record of each review, named like its notes, for `untangle reviews`: what it
+  reviews, its progress, the chats that held it, whether it runs, and the checkouts and analyses
+  it uses.
   - `untangle/`: `untangle`'s own clone, which `untangle upgrade` pulls, builds and links. Once
   upgraded, the `untangle` command runs from it, so keep it when you clear the cache.
   - `upgrade.json`: GitHub's `main` as last looked up, kept a day, to say when an upgrade brings a

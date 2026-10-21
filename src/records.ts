@@ -1,0 +1,163 @@
+// What untangle remembers of each review past the process that serves it: a record per review in
+// the cache, written by the review as it runs and as it stops. `untangle reviews` lists the reviews
+// from them, running, paused or closed, with what each one holds on disk.
+import fs from 'node:fs';
+import path from 'node:path';
+import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
+import { pidAlive } from './runs.js';
+
+/** A chat that held a review: what resumes it, and where it ran. */
+export interface ChatRecord {
+  /** The name it answered as: Claude, Codex, or the one it was given. */
+  agent: string;
+  kind: 'claude' | 'codex';
+  /** Claude's session, or Codex's thread. */
+  id: string;
+  /** The folder it ran in: Claude finds a chat by its folder. */
+  folder: string | null;
+  /** Its terminal in Orca, when it ran in one: the handle, and the pane that finds it again. */
+  orca: { handle: string; pane: string | null } | null;
+  /** When it last held the review. */
+  at: string;
+}
+
+/** Why a review stopped: paused, its last page closed, untangle stop, a signal, or it ended unseen. */
+export type StopReason = 'paused' | 'tab' | 'stop' | 'signal' | 'ended';
+
+export interface ReviewRecord {
+  version: 1;
+  /** What a review of it is started with again: the pull request's link, or the directory. */
+  target: string;
+  /** owner/repo#n, as run files name a pull request. */
+  pr: string | null;
+  /** The repository's top level, for a review of a directory. */
+  dir: string | null;
+  repoKey: string;
+  /** The review's name in its repository, as its notes and its marks' branch have it: pr-168, or the branch. */
+  key: string;
+  /** The repository its commits and checkouts belong to: the cache's clone, or the directory's. */
+  repo: string;
+  /** As the page's title says it: #168 fix: Own HLC clocks… */
+  title: string;
+  author: string | null;
+  /** The pull request's page on GitHub. */
+  url: string | null;
+  /** Lines added and removed, and files, generated ones included. */
+  size: { add: number; del: number; files: number };
+  base: string;
+  head: string;
+  /** Changes marked reviewed, of all, as the page counts them. */
+  progress: { done: number; total: number };
+  /** Open notes, and those an agent had the last word on: they wait for you. */
+  notes: { open: number; waiting: number };
+  /** The chats that held it, the latest first. */
+  chats: ChatRecord[];
+  /** The process serving it now, or last. */
+  pid: number | null;
+  /** When it was first opened, and when this run opened it. */
+  started: string;
+  opened: string;
+  updated: string;
+  stopped: { at: string; why: StopReason } | null;
+  closed: string | null;
+  /** The commits checked out for it, and the pairs of commits it was analysed at (base, head). */
+  checkouts: string[];
+  analyses: Array<[string, string]>;
+}
+
+/** A record as it's listed: running, paused (stopped, kept to resume), or closed. */
+export type Listed = ReviewRecord & { status: 'running' | 'paused' | 'closed' };
+
+export const recordsDir = () => path.join(cacheRoot(), 'sessions');
+/** A review's record: per repository, named like the review's notes. */
+export const recordFile = (repoKey: string, key: string) => path.join(recordsDir(), repoKey, encodeURIComponent(key) + '.json');
+
+export function readRecord(file: string): ReviewRecord | null {
+  try {
+    const r = JSON.parse(fs.readFileSync(file, 'utf8')) as ReviewRecord;
+    return r && r.version === 1 && typeof r.target === 'string' ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeRecord(r: ReviewRecord): void {
+  const file = recordFile(r.repoKey, r.key);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(r));
+  fs.renameSync(tmp, file);
+}
+
+/** Every record file in the cache. */
+function files(dir = recordsDir()): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries.flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : e.name.endsWith('.json') ? [path.join(dir, e.name)] : []));
+}
+
+/** Whether the record's process still serves it: a review that ended without saying so is paused. */
+const serving = (r: ReviewRecord) => r.pid != null && !r.stopped && pidAlive(r.pid);
+
+export function status(r: ReviewRecord): Listed['status'] {
+  if (serving(r)) return 'running';
+  return r.closed ? 'closed' : 'paused';
+}
+
+/** The reviews untangle remembers: running first, then paused, then closed, the latest first in each. */
+export function listRecords(): Listed[] {
+  const order = { running: 0, paused: 1, closed: 2 };
+  // When a review last moved: running ones by when they opened, the others by when they stopped.
+  const when = (r: Listed) => (r.status === 'running' ? r.opened : r.status === 'closed' ? r.closed! : r.stopped?.at ?? r.updated);
+  return files()
+    .map(readRecord)
+    .filter((r): r is ReviewRecord => !!r)
+    .map((r) => {
+      const s = status(r);
+      // Ended without saying so: killed, or the machine went down.
+      const stopped = s !== 'running' && !r.stopped ? { at: r.updated, why: 'ended' as const } : r.stopped;
+      return { ...r, stopped, status: s };
+    })
+    .sort((a, b) => order[a.status] - order[b.status] || (when(a) < when(b) ? 1 : when(a) > when(b) ? -1 : 0));
+}
+
+/** The folders a record names: its checkouts and analyses. */
+export const recordDirs = (r: ReviewRecord) => [
+  ...r.checkouts.map((sha) => worktreeDir(r.repoKey, sha)),
+  ...r.analyses.map(([base, head]) => reviewDir(r.repoKey, base, head)),
+];
+
+/** What a folder takes on disk, in bytes, its links not followed; 0 when it isn't there. */
+export function dirSize(dir: string): number {
+  let total = 0;
+  const walk = (d: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) {
+        try {
+          // What it takes on disk, as du says it, where the system tells.
+          const st = fs.lstatSync(p);
+          total += st.blocks != null ? st.blocks * 512 : st.size;
+        } catch {
+          // Gone while counting.
+        }
+      }
+    }
+  };
+  walk(dir);
+  return total;
+}
+
+/** What a review holds on disk: its checkouts and analyses, in bytes. */
+export const recordSize = (r: ReviewRecord) => recordDirs(r).reduce((n, d) => n + dirSize(d), 0);

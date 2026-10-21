@@ -4,6 +4,7 @@
 (function () {
   'use strict';
   const C = window.ReviewCore;
+  const { nList, agentLabel } = C;
   const $ = (sel, el) => (el || document).querySelector(sel);
   // served: the server keeps marks and answers on demand. key: this review, for browser storage.
   const CONFIG = JSON.parse(($('#d-config') || { textContent: '{}' }).textContent || '{}');
@@ -2205,20 +2206,6 @@
   const agentsNow = () => (NT.data ? NT.data.agents : []);
   // The one a note just written goes to: the first that hears it, else the first.
   const agentFirst = () => { const l = agentsNow(); return l.find((a) => a.state !== 'deaf' && a.state !== 'left') || l[0] || null; };
-  // Note numbers as words: N4, N2 and N4, N1–N3, N1, N3 and N5.
-  function nList(ns) {
-    const runs = [];
-    [...ns].sort((a, b) => a - b).forEach((n) => { const r = runs[runs.length - 1]; if (r && n === r[1] + 1) r[1] = n; else runs.push([n, n]); });
-    const parts = runs.flatMap(([a, b]) => (b - a >= 2 ? [`N${a}–N${b}`] : a === b ? [`N${a}`] : [`N${a}`, `N${b}`]));
-    return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] || '';
-  }
-  function agentLabel(a) {
-    if (a.state === 'listening') return `${a.name} is listening`;
-    if (a.state === 'working') return `${a.name} is working${a.on.length ? ' on ' + nList(a.on) : ''}`;
-    if (a.state === 'queued') return a.on.length ? `${nList(a.on)} ${a.on.length === 1 ? 'waits' : 'wait'} for ${a.name}’s turn` : `untangle’s line waits for ${a.name}’s turn`;
-    if (a.state === 'deaf') return `${a.name} isn’t listening`;
-    return `${a.name} left`;
-  }
 
   function ntSet(d) {
     const was = NT.data;
