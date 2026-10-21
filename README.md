@@ -284,14 +284,16 @@ own, so a watch or a chat that ends never closes the page.
 `untangle reviews` opens a page with every review `untangle` remembers on this machine: the ones
 running, the ones paused, and the closed ones. Each row is a pull request, or a branch, with its
 progress, what waits for you (an agent's answer, a note it wrote), where its agent's chat is, and
-the memory it holds with its language server. Open a row and it shows the chat's last lines, read
-from the agent's own transcript, the notes waiting for you, and what the review holds on disk. The
-memory chip, top right, shows what each review holds as the pointer rests on it.
+the memory it holds with its language server. A click opens a row, and another click closes it:
+as many stay open as you like. An open row shows the chat's last lines, read from the agent's own
+transcript, the notes waiting for you, and what the review holds on disk. The memory chip, top
+right, shows what each review holds as the pointer rests on it.
 
 | Key           |                                                  |
 | ------------- | ------------------------------------------------ |
 | `Ctrl K`      | start a review: New review, as below             |
 | `↑` `↓`       | the previous or next review                      |
+| `→` `←`       | open or close its row                            |
 | `Enter`       | bring the review's page to the front             |
 | `C`           | bring its chat's terminal to the front           |
 | `P` / `R`     | pause the review, or resume a paused one         |

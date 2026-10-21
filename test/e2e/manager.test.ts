@@ -156,6 +156,19 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when the paused row is clicked too, '
+    + 'then both rows stay open, each with its details; clicked again, only the paused one closes.',
+    async () => {
+      await page.click('.row.paused');
+      await page.until(`document.querySelectorAll('.rw.open .peek').length === 2`);
+      assert.deepEqual(await page.eval(`[...document.querySelectorAll('.rw.open .row')].map((r) => r.classList.contains('running') ? 'running' : 'paused')`), ['running', 'paused']);
+      await page.click('.row.paused');
+      await page.until(`document.querySelectorAll('.rw.open').length === 1`);
+      assert.equal(await page.eval(`!!document.querySelector('.rw.open .row.running')`), true);
+    },
+  );
+
+  it(
     'when the pointer rests on the memory chip, '
     + 'then its menu opens; it closes as the pointer leaves, unless a click kept it open.',
     async () => {

@@ -147,7 +147,10 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .rw { display: grid; border-radius: 10px; }
 .row { display: grid; grid-template-columns: 14px minmax(0, 1fr) 216px 128px 84px; align-items: center; gap: 0 16px; min-height: 58px; padding: 9px 12px; border-radius: 10px; cursor: pointer; }
 .row:hover { background: var(--hover-soft); }
-.rw.sel .row { background: var(--raised); border-radius: 10px 10px 0 0; }
+/* Rows open as many as you like; the one the keys are on has a ring. */
+.rw.open { margin-block: 3px; }
+.rw.open .row { background: var(--raised); border-radius: 10px 10px 0 0; }
+.rw.sel .row { box-shadow: inset 0 0 0 1px var(--hair-2); }
 .st { justify-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--done); }
 .st.need { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .st.build { width: 10px; height: 10px; background: none; border: 1.5px solid var(--accent); border-right-color: transparent; animation: spin .9s linear infinite; }

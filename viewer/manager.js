@@ -44,7 +44,8 @@
   const GLYPH = { claude: { tool: '●', out: '└', say: '●', you: '>' }, codex: { tool: '•', out: '└', say: '•', you: '›' } };
 
   // Closed reviews picked to free or forget, and whether Forget is asking first.
-  const S = { data: null, tab: 'open', filter: 'all', sel: null, menu: null, tail: null, tailFor: null, toast: null, starting: new Set(), picked: new Set(), confirm: false };
+  // The rows open (as many as you like), the row the keys are on, and the open rows' chats' last lines.
+  const S = { data: null, tab: 'open', filter: 'all', sel: null, opened: new Set(), tails: new Map(), menu: null, toast: null, starting: new Set(), picked: new Set(), confirm: false };
   // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
   // then the review picked, and how its agent starts (the form), or the review an agent joins.
   const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null };
@@ -228,14 +229,14 @@
   }
 
   function row(r) {
-    const sel = S.sel === r.id;
+    const sel = S.sel === r.id, on = S.opened.has(r.id);
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
     const l2 = r.older ? `${esc(r.repo)} · started by an untangle from before this page`
       : r.status === 'running'
       ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · <span class="a">+${fmt(r.size.add)}</span> <span class="d">−${fmt(r.size.del)}</span> in ${fmt(r.size.files)} file${r.size.files === 1 ? '' : 's'}`
       : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
     const ev = r.status === 'running' ? events(r) : '';
-    return `<div class="rw${sel ? ' sel' : ''}" data-id="${esc(r.id)}">
+    return `<div class="rw${on ? ' open' : ''}${sel ? ' sel' : ''}" data-id="${esc(r.id)}">
       <div class="row ${r.status}" data-act="sel" data-id="${esc(r.id)}">
         <span class="st ${st}"></span>
         <span class="main">
@@ -245,14 +246,14 @@
         </span>
         ${agentCell(r)}${progCell(r)}${memCell(r)}
       </div>
-      ${sel ? peek(r) : ''}
+      ${on ? peek(r) : ''}
     </div>`;
   }
 
   function tail(r) {
     const c = r.chat;
     if (!c) return '';
-    const lines = S.tailFor === r.id ? S.tail : null;
+    const lines = S.tails.get(r.id) || null;
     if (!lines || !lines.length) return `<p class="pk-text">${lines ? 'Nothing in its chat yet.' : 'Its last lines show here once untangle finds the chat’s transcript.'}</p>`;
     const g = GLYPH[c.kind] || GLYPH.claude;
     return `<div class="tail">${lines.map((l) => `<div class="tl ${l.kind}"><i>${g[l.kind]}</i><span>${esc(l.text)}</span></div>`).join('')}</div>`;
@@ -593,21 +594,23 @@
     api('reviews').then((d) => {
       S.data = d;
       if (S.sel && !rows().some((r) => r.id === S.sel)) S.sel = null;
+      for (const id of S.opened) if (!rows().some((r) => r.id === id)) { S.opened.delete(id); S.tails.delete(id); }
       render();
     }, () => {}).finally(() => { timer = setTimeout(poll, 2000); });
     loadTail();
   }
 
+  // The last lines of each open row's chat.
   function loadTail() {
-    const id = S.sel;
-    if (!id) return;
-    api('tail?id=' + encodeURIComponent(id)).then((d) => {
-      if (S.sel !== id) return;
-      S.tail = d.lines;
-      S.tailFor = id;
-      const box = document.querySelector(`.rw[data-id="${CSS.escape(id)}"] .peek`);
-      if (box) sheet();
-    }, () => {});
+    for (const id of S.opened) {
+      const r = byId(id);
+      if (!r || !r.chat) continue;
+      api('tail?id=' + encodeURIComponent(id)).then((d) => {
+        if (!S.opened.has(id) || JSON.stringify(S.tails.get(id)) === JSON.stringify(d.lines)) return;
+        S.tails.set(id, d.lines);
+        sheet();
+      }, () => {});
+    }
   }
 
   const byId = (id) => rows().find((r) => r.id === id);
@@ -621,7 +624,7 @@
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
     if (name === 'close') {
       S.menu = null;
-      post('close', { id }).then(() => { toast(r.older ? `Closed ${short(r)}` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; poll(); }, (e) => toast(e.message, true));
+      post('close', { id }).then(() => { toast(r.older ? `Closed ${short(r)}` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; S.opened.delete(id); poll(); }, (e) => toast(e.message, true));
     }
     if (name === 'pause' || name === 'pause-now') {
       S.menu = null;
@@ -661,9 +664,9 @@
     const key = b.dataset.key, id = b.dataset.id;
     switch (b.dataset.act) {
       case 'sel':
-        S.sel = S.sel === id ? null : id;
-        S.tail = null;
-        S.tailFor = null;
+        S.sel = id;
+        if (S.opened.has(id)) { S.opened.delete(id); S.tails.delete(id); }
+        else S.opened.add(id);
         render();
         loadTail();
         break;
@@ -825,16 +828,15 @@
       const r = list[Math.max(0, Math.min(list.length - 1, i))];
       if (!r) return;
       S.sel = r.id;
-      S.tail = null;
-      S.tailFor = null;
       render();
-      loadTail();
       const el = document.querySelector(`.rw[data-id="${CSS.escape(r.id)}"]`);
       if (el) el.scrollIntoView({ block: 'nearest' });
     };
     if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); go(at + 1); }
     else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); go(at < 0 ? 0 : at - 1); }
     else if (e.key === 'Enter' && S.sel) { e.preventDefault(); act('open', S.sel); }
+    else if ((e.key === 'ArrowRight' || e.key === 'l') && S.sel && !S.opened.has(S.sel)) { e.preventDefault(); S.opened.add(S.sel); render(); loadTail(); }
+    else if ((e.key === 'ArrowLeft' || e.key === 'h') && S.sel && S.opened.has(S.sel)) { e.preventDefault(); S.opened.delete(S.sel); S.tails.delete(S.sel); render(); }
     else if (e.key === 'c' && S.sel && byId(S.sel) && byId(S.sel).chat && byId(S.sel).chat.orca) act('chat', S.sel);
     else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build && !byId(S.sel).older) act('pause', S.sel);
     else if (e.key === 'r' && S.sel && byId(S.sel) && byId(S.sel).status === 'paused') act('resume', S.sel);
@@ -842,7 +844,9 @@
       const r = open().find(needs);
       if (r) { e.preventDefault(); act('open', r.id); }
     } else if (e.key === 'Escape') {
+      // A menu first, then the rows open, then the row the keys are on.
       if (S.menu) S.menu = null;
+      else if (S.opened.size) { S.opened.clear(); S.tails.clear(); }
       else S.sel = null;
       render();
     }
