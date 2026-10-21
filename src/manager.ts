@@ -3,6 +3,7 @@
 // processes: the manager only reads them, and does what the page asks with them.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
 import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
 import { cacheRoot, worktreeDir } from './cache.js';
@@ -12,6 +13,7 @@ import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
 import { newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTerminal } from './orca.js';
+import { childPids, rss } from './metrics.js';
 import { fonts, managerPage } from './page.js';
 import { notesFile } from './notes.js';
 import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, writeRecord, type Listed } from './records.js';
@@ -43,15 +45,39 @@ function readManager(): ManagerRun | null {
   }
 }
 
-/** The manager running now, when it answers. */
+/** When the untangle this process runs was built: its newest compiled file, as it started. */
+const BUILT = (() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  try {
+    return Math.max(0, ...fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => fs.statSync(path.join(dir, f)).mtimeMs));
+  } catch {
+    return 0;
+  }
+})();
+
+/**
+ * The manager running now, when it answers. One an earlier build of untangle runs gives way to
+ * this one, unless it's waiting to pause a review: it would forget to.
+ */
 export async function findManager(): Promise<ManagerRun | null> {
   const m = readManager();
   if (!m || !pidAlive(m.pid)) return null;
+  let hello;
   try {
-    return (await call(m, 'GET', 'hello', { timeout: 3000 })).status === 200 ? m : null;
+    hello = await call(m, 'GET', 'hello', { timeout: 3000 });
   } catch {
     return null;
   }
+  if (hello.status !== 200) return null;
+  const was = hello.data as { built?: number; busy?: boolean };
+  if (was.busy || (was.built ?? 0) >= BUILT) return m;
+  try {
+    process.kill(m.pid, 'SIGTERM');
+  } catch {
+    // Gone already.
+  }
+  for (let i = 0; i < 60 && pidAlive(m.pid); i++) await new Promise((r) => setTimeout(r, 50));
+  return null;
 }
 
 /** The manager running now, or one started for this: its page opened, with the palette when asked. */
@@ -123,12 +149,18 @@ export interface Row {
   freed: string | null;
   /** A closed one's checkouts and analyses, and how many of them other closed reviews hold too. */
   parts: { checkouts: number; analyses: number; shared: number } | null;
+  /** Run by an untangle from before records: it can't say how it's doing, only that it runs. */
+  older: boolean;
 }
 
 const idOf = recordId;
 
-/** A review that's starting: its process runs, and it has no record until it's built. */
+/**
+ * A review that's starting: its process runs, and it has no record until it's built. Or one an
+ * older untangle runs, which never has one: its memory is read from its processes.
+ */
 function starting(run: RunInfo, s: Summary | undefined): Row {
+  const old = older.has(run.pid);
   const m = run.pr ? /^([^/]+)\/([^#]+)#(\d+)$/.exec(run.pr) : null;
   const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || (m ? `#${m[3]}` : 'Starting'));
   return {
@@ -140,10 +172,18 @@ function starting(run: RunInfo, s: Summary | undefined): Row {
     author: null, url: null, size: { add: 0, del: 0, files: 0 },
     status: 'running', stopped: null, closed: null, opened: run.started, head: run.head || '',
     progress: { done: 0, total: 0 }, notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null,
-    memory: s?.memory ?? null,
-    build: { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, github: null, need: null, needAt: null, active: s?.active ?? null, disk: null, freed: null, parts: null,
+    memory: old ? memoryOf(run.pid) : s?.memory ?? null,
+    build: old ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
+    pages: s?.pages ?? 0, pausing: false, github: null, need: null, needAt: null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old,
   };
+}
+
+/** A review's memory, from its process and its children (its language server). */
+function memoryOf(pid: number): Summary['memory'] | null {
+  const own = rss(pid);
+  if (own == null) return null;
+  const kids = childPids(pid).map(rss).filter((b): b is number => b != null);
+  return { untangle: own, lsp: kids.length ? kids.reduce((a, b) => a + b, 0) : null };
 }
 
 /** What a review's target stands for, to find it running: a pull request, or a directory's repository and branch. */
@@ -217,6 +257,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     disk,
     freed: r.freed ?? null,
     parts: r.status === 'closed' && !r.freed ? partsOf(r, h) : null,
+    older: false,
   };
 }
 
@@ -275,12 +316,16 @@ class Sizes {
 
 /** The manager: what the page asks of it. */
 /** The summary of each of these running reviews, by process. */
+// Reviews an older untangle runs: they don't know the summary call, so they aren't asked again.
+const older = new Set<number>();
+
 async function summariesOf(runs: RunInfo[]): Promise<Map<number, Summary>> {
   const out = new Map<number, Summary>();
-  await Promise.all(runs.map(async (run) => {
+  await Promise.all(runs.filter((run) => !older.has(run.pid)).map(async (run) => {
     try {
       const a = await call(run, 'GET', 'summary', { timeout: 5000 });
       if (a.status === 200) out.set(run.pid, a.data as unknown as Summary);
+      else if (a.status === 404) older.add(run.pid);
     } catch {
       // Stopping as we asked.
     }
@@ -517,6 +562,7 @@ export class Manager {
     // Reviews whose process runs and which have no record yet: they're being built.
     const recorded = new Set(list.filter((r) => r.status === 'running').map((r) => r.pid));
     for (const pid of this.launched.keys()) if (recorded.has(pid) || !runs.some((run) => run.pid === pid)) this.launched.delete(pid);
+    for (const pid of older) if (!runs.some((run) => run.pid === pid)) older.delete(pid);
     const fresh = runs.filter((run) => !recorded.has(run.pid));
     if (fresh.length) {
       const asked = await summariesOf(fresh);
@@ -525,7 +571,7 @@ export class Manager {
         // A paused or closed review starting again keeps its row: what it knows, and how far the build is.
         const at = rows.findIndex((x) => x.status !== 'running' && (x.id === this.launched.get(run.pid) || (!!run.pr && list.find((r) => idOf(r) === x.id)?.pr === run.pr)));
         if (at < 0) rows.unshift(s);
-        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, freed: null, parts: null, opened: s.opened, memory: s.memory, build: s.build, pages: s.pages, active: s.active, agents: [], waiting: [], need: null, needAt: null };
+        else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, freed: null, parts: null, opened: s.opened, memory: s.memory, build: s.build, older: s.older, pages: s.pages, active: s.active, agents: [], waiting: [], need: null, needAt: null };
       }
     }
     return {
@@ -581,7 +627,7 @@ export class Manager {
   /** The page's API. */
   async call(route: string, method: string, query: URLSearchParams, body: unknown): Promise<{ status?: number; data: unknown }> {
     const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown };
-    if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid } };
+    if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid, built: BUILT, busy: this.busy } };
     if (route === 'reviews' && method === 'GET') return { data: await this.view() };
     if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
     if (route === 'agents' && method === 'GET') return { data: { ...agentOptions(), orca: !!orcaCli() } };

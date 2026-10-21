@@ -3077,7 +3077,7 @@
   const rvName = (r) => r.name.replace(/^[^#]*#/, '#');
   function revsPopHtml() {
     const list = RV.list || [];
-    const items = list.map((r) => `<button type="button" class="rv-it" data-act="rv-open" data-id="${esc(r.id)}"${r.status === 'running' ? '' : ' title="Paused: it starts again from the manager"'}><i class="dot${r.status === 'paused' ? ' paused' : r.need ? ' need' : ''}"></i><span class="num">${esc(rvName(r))}</span><span class="t">${esc(r.title)}</span><small class="${r.need ? 'need' : ''}">${esc(r.need || (r.status === 'paused' ? 'paused' : r.agents[0] ? r.agents[0].label : r.build ? 'building' : ''))}</small></button>`).join('');
+    const items = list.map((r) => `<button type="button" class="rv-it" data-act="rv-open" data-id="${esc(r.id)}"${r.status === 'running' ? '' : ' title="Paused: it starts again from the manager"'}><i class="dot${r.status === 'paused' ? ' paused' : r.need ? ' need' : ''}"></i><span class="num">${esc(rvName(r))}</span><span class="t">${esc(r.title)}</span><small class="${r.need ? 'need' : ''}">${esc(r.need || (r.status === 'paused' ? 'paused' : r.agents[0] ? r.agents[0].label : r.build ? 'building' : r.older ? 'older untangle' : ''))}</small></button>`).join('');
     return `<div class="rv-h">Your reviews<button type="button" class="linkish" data-act="rv-manager">Open the manager</button></div>${RV.list ? items || '<p class="rv-none">No other reviews: this one is the only one.</p>' : '<p class="rv-none">Asking untangle…</p>'}<button type="button" class="rv-new" data-act="rv-new"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Start a review</button>`;
   }
   function rvLoad() {

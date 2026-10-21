@@ -18,6 +18,16 @@ export function rss(pid: number): number | null {
   }
 }
 
+/** A process's children: a review's language server, for one that can't say its memory itself. */
+export function childPids(pid: number): number[] {
+  try {
+    const text = linux ? fs.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8') : execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' });
+    return text.split(/\s+/).filter(Boolean).map(Number);
+  } catch {
+    return [];
+  }
+}
+
 /** CPU time a process has used, in milliseconds (Linux: user and system ticks of 10 ms). */
 function cpuMs(pid: number): number | null {
   if (!linux) return null;

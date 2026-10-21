@@ -52,7 +52,48 @@
   const AGENT = { claude: 'Claude', codex: 'Codex' };
   // Quoted for a shell, as untangle types it into the terminal.
   const sh = (t) => (/^[\w./:@%+=,-]+$/.test(t) ? t : `'${t.replace(/'/g, `'\\''`)}'`);
-  let toastTimer = 0;
+  let toastTimer = 0, toastN = 0;
+
+  // The page is drawn again every two seconds. What didn't change keeps its elements, so an open
+  // row doesn't open again, a spinner doesn't start over, and the row under the pointer stays lit.
+  // Elements with a data-id are matched by it (and their data-act), the rest by place and tag.
+  const tpl = document.createElement('template');
+  const keyOf = (n) => (n.nodeType === 1 && n.dataset.id != null ? `${n.dataset.act || ''}|${n.dataset.id}` : null);
+  function patch(el, html) {
+    tpl.innerHTML = html;
+    children(el, tpl.content);
+  }
+  function morph(a, b) {
+    if (a.nodeType !== 1) {
+      if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue;
+      return;
+    }
+    for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+    for (const { name, value } of [...b.attributes]) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+    children(a, b);
+  }
+  function children(a, b) {
+    let at = a.firstChild;
+    for (let n = b.firstChild; n; ) {
+      const next = n.nextSibling, key = keyOf(n);
+      let m = null;
+      if (key != null) {
+        for (let x = at; x; x = x.nextSibling) if (keyOf(x) === key) { m = x; break; }
+      } else if (at && keyOf(at) == null && at.nodeName === n.nodeName) m = at;
+      if (!m) a.insertBefore(n, at);
+      else {
+        if (m === at) at = at.nextSibling;
+        else a.insertBefore(m, at);
+        morph(m, n);
+      }
+      n = next;
+    }
+    while (at) {
+      const next = at.nextSibling;
+      a.removeChild(at);
+      at = next;
+    }
+  }
 
   function api(path, init) {
     return fetch('api/' + path, init).then((r) => r.json().catch(() => ({ error: r.statusText })).then((j) => {
@@ -75,7 +116,7 @@
   };
 
   function toast(text, bad) {
-    S.toast = { text, bad: !!bad };
+    S.toast = { text, bad: !!bad, n: ++toastN };
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { S.toast = null; layer(); }, 3200);
     layer();
@@ -111,7 +152,7 @@
     const d = S.data ? S.data.disk : null;
     const sum = d ? d.open + d.closed + d.old + d.shared : 0;
     const seg = (v, c) => (v > 0 ? `<i style="flex:${v} 1 0;background:${c}"></i>` : '');
-    $('#side').innerHTML = `<div class="big"><b>${fmt(left)}</b><span>change${left === 1 ? '' : 's'} left to review</span><span class="bar"><i style="width:${total ? ((100 * done) / total).toFixed(1) : 0}%"></i></span><small>${fmt(done)} of ${fmt(total)} reviewed, in ${list.length} open review${list.length === 1 ? '' : 's'}</small></div>
+    patch($('#side'), `<div class="big"><b>${fmt(left)}</b><span>change${left === 1 ? '' : 's'} left to review</span><span class="bar"><i style="width:${total ? ((100 * done) / total).toFixed(1) : 0}%"></i></span><small>${fmt(done)} of ${fmt(total)} reviewed, in ${list.length} open review${list.length === 1 ? '' : 's'}</small></div>
       <div class="tabs" role="tablist"><button type="button" role="tab" data-act="tab" data-key="open" aria-selected="${S.tab === 'open'}">Open<i>${list.length}</i></button><button type="button" role="tab" data-act="tab" data-key="closed" aria-selected="${S.tab === 'closed'}">Closed<i>${rows().length - list.length}</i></button></div>
       <div class="nav">${nav}</div>
       ${repos.size ? `<div class="grp">Repositories</div><div class="nav">${[...repos].sort((a, b) => b[1] - a[1]).map(([name, n]) => nr('repo:' + name, ICON.repo, name, n)).join('')}</div>` : ''}
@@ -119,7 +160,7 @@
         <div class="disk-bar">${d ? seg(d.open, 'var(--d-open)') + seg(d.closed, 'var(--d-closed)') + seg(d.old, 'var(--d-old)') + seg(d.shared, 'var(--d-shared)') : ''}</div>
         <div class="legend"><span><i style="background:var(--d-open)"></i>Open reviews<b>${d ? bytes(d.open) : '—'}</b></span><span><i style="background:var(--d-closed)"></i>Closed, can be freed<b>${d ? bytes(d.closed) : '—'}</b></span><span><i style="background:var(--d-old)"></i>Old checkouts<b>${d ? bytes(d.old) : '—'}</b></span><span><i style="background:var(--d-shared)"></i>Clones and shared<b>${d ? bytes(d.shared) : '—'}</b></span></div>
         ${S.tab === 'open' && d && d.closed + d.old > 0 ? '<button type="button" class="link" data-act="tab" data-key="closed">Clean up</button>' : ''}
-      </div>`;
+      </div>`);
   }
 
   // ---- The list
@@ -136,6 +177,7 @@
   }
 
   function agentCell(r) {
+    if (r.older) return '<span class="agent"><span class="lab" data-st="none"><i></i><span>Agent not known</span></span><small>an older untangle doesn’t say</small></span>';
     const a = r.agents[0];
     const c = r.chat;
     const id = c ? `${c.kind === 'codex' ? 'Thread' : 'Session'} ${c.id.slice(0, 8)}` : '';
@@ -155,6 +197,7 @@
   }
 
   function progCell(r) {
+    if (r.older) return '<span class="prog"><span class="step">Progress not known</span></span>';
     if (r.build) {
       const pct = Math.round(built(r.build) * 100);
       return `<span class="prog"><span class="step"><b>${pct}%</b> ${esc(r.build.step ? r.build.step.label : 'starting')}</span><span class="track build"><i style="width:${pct}%"></i></span></span>`;
@@ -173,7 +216,8 @@
   function row(r) {
     const sel = S.sel === r.id;
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
-    const l2 = r.status === 'running'
+    const l2 = r.older ? `${esc(r.repo)} · started by an untangle from before this page`
+      : r.status === 'running'
       ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · <span class="a">+${fmt(r.size.add)}</span> <span class="d">−${fmt(r.size.del)}</span> in ${fmt(r.size.files)} file${r.size.files === 1 ? '' : 's'}`
       : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
     const ev = r.status === 'running' ? events(r) : '';
@@ -202,19 +246,21 @@
 
   function peek(r) {
     const c = r.chat, a = r.agents[0];
-    const chat = c
+    const chat = r.older
+      ? '<div class="pk-h"><b>An older untangle</b></div><p class="pk-text">This review runs an untangle from before this page, so it can’t say how far it is, which agent holds it, or what waits for you. Its own page works as always. Close it and start it again with New review, and it’s listed in full.</p>'
+      : c
       ? `<div class="pk-h"><b>${esc(c.agent)}</b><span>${esc(a ? a.label : `${c.agent}’s chat, kept`)}</span><span class="sp"></span>${c.orca ? `<button type="button" class="btn sm" data-act="chat" data-id="${esc(r.id)}">${ICON.term}Chat<kbd>C</kbd></button>` : ''}</div>${tail(r)}`
       : `<div class="pk-h"><b>No agent</b></div><p class="pk-text">No chat holds this review. Add Claude or Codex, and its chat starts with the untangle skill${S.data && S.data.orca ? ', in Orca' : ''}.</p>${r.status === 'running' && !r.build ? `<div class="pk-act"><button type="button" class="btn sm" data-act="add-agent" data-id="${esc(r.id)}">${ICON.plus}Add an agent</button></div>` : ''}`;
     const w = r.waiting;
-    const notes = `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
+    const notes = r.older ? '<div class="pk-h"><b>Notes</b></div><p class="pk-text">On its page.</p>' : `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
     const running = r.status === 'running';
     const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${r.status !== 'closed' ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
       ${S.menu === 'more:' + r.id ? `<div class="pop" style="right:8px;top:40px;width:236px">${running && working(r) && !r.pausing ? `<button type="button" class="mi" data-act="pause-now" data-id="${esc(r.id)}">${ICON.pause}Pause now, mid-turn</button>` : ''}${r.status === 'paused' && r.chat ? `<button type="button" class="mi" data-act="resume-bare" data-id="${esc(r.id)}">${ICON.play}Resume without the agent</button>` : ''}<button type="button" class="mi" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close review</button></div>` : ''}
       ${running ? `<div class="kv"><span>untangle</span><b>${r.memory ? bytes(r.memory.untangle) : '—'}</b><span></span></div>
-      <div class="kv"><span>Language server</span><b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b>${r.memory && r.memory.lsp ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}</div>` : ''}
-      <div class="kv"><span>On disk</span><b>${r.disk != null ? bytes(r.disk) : 'measuring…'}</b><span></span></div>
+      <div class="kv"><span>Language server</span><b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b>${r.memory && r.memory.lsp && !r.id.startsWith('run:') ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}</div>` : ''}
+      <div class="kv"><span>On disk</span><b>${r.disk != null ? bytes(r.disk) : r.id.startsWith('run:') ? '—' : 'measuring…'}</b><span></span></div>
       <div class="kv"><span>Head</span><b>${esc(r.head.slice(0, 7))}</b><span></span></div>
-      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.build ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}</div>` : ''}
+      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.build || r.older ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}</div>` : ''}
       ${r.status === 'paused' ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="resume" data-id="${esc(r.id)}">${ICON.play}Resume<kbd>R</kbd></button></div>` : ''}`;
     return `<div class="peek"><div class="pk">${chat}</div><div class="pk">${notes}</div><div class="pk res">${res}</div></div>`;
   }
@@ -239,12 +285,9 @@
       const run = list.filter((r) => r.status === 'running'), paused = list.filter((r) => r.status === 'paused');
       body = (run.length ? `<div class="gh"><b>Running</b>${run.length}</div>${run.map(row).join('')}` : '') + (paused.length ? `<div class="gh"><b>Paused</b>${paused.length}</div>${paused.map(row).join('')}` : '');
     }
-    const list0 = $('#sheet .list');
-    const scroll = list0 ? list0.scrollTop : 0;
     const idle = S.tab === 'open' && S.filter === 'all' ? open().find((r) => idleFor(r) > 3600000 && !r.pausing && r.memory) : null;
     const hint = idle ? `<span class="hint">${esc(idle.name.replace(/^[^#]*#/, '#'))} sat idle ${span(idleFor(idle))} · pausing frees <b>${bytes(memOf(idle))}</b><button type="button" class="btn" data-act="pause" data-id="${esc(idle.id)}">Pause</button></span>` : '';
-    $('#sheet').innerHTML = `<div class="head"><h1>${esc(title)}</h1><span class="sub">${S.data ? `${list.length} · newest first` : ''}</span><span class="sp"></span>${hint}</div><div class="list">${body}</div>${pill()}`;
-    $('#sheet .list').scrollTop = scroll;
+    patch($('#sheet'), `<div class="head"><h1>${esc(title)}</h1><span class="sub">${S.data ? `${list.length} · newest first` : ''}</span><span class="sp"></span>${hint}</div><div class="list">${body}</div>${pill()}`);
   }
 
   // ---- Closed reviews: what each holds on disk, and freeing it
@@ -305,10 +348,7 @@
     const body = !S.data ? '<p class="empty">Loading your reviews…</p>'
       : !closedRows().length ? '<p class="empty">No closed reviews. A review you close, or whose pull request merges while it’s paused, is listed here with what it holds on disk.</p>'
       : `${confirm}<div class="cols"><span></span><span>Review</span><span>Reviewed</span><span>Notes</span><span>Space</span><span></span></div>${list.map(crow).join('') || '<p class="empty">Nothing here now.</p>'}${S.filter === 'all' ? sharedRows() : ''}`;
-    const list0 = $('#sheet .list');
-    const scroll = list0 ? list0.scrollTop : 0;
-    $('#sheet').innerHTML = `<div class="head"><h1>${S.filter === 'freed' ? 'Space freed' : S.filter.startsWith('repo:') ? esc(S.filter.slice(5)) : 'Closed reviews'}</h1><span class="sub">${S.data ? `${closedRows().length} · ${bytes(total)}` : ''}</span><span class="sp"></span>${act}</div><div class="list closed">${body}</div>`;
-    $('#sheet .list').scrollTop = scroll;
+    patch($('#sheet'), `<div class="head"><h1>${S.filter === 'freed' ? 'Space freed' : S.filter.startsWith('repo:') ? esc(S.filter.slice(5)) : 'Closed reviews'}</h1><span class="sub">${S.data ? `${closedRows().length} · ${bytes(total)}` : ''}</span><span class="sp"></span>${act}</div><div class="list closed">${body}</div>`);
   }
 
   // ---- Over the page: the memory menu, and toasts
@@ -326,8 +366,8 @@
         <div class="pop-r"><small>This page’s own process</small><b>${bytes(S.data.memory.manager)}</b></div>
       </div>`;
     }
-    if (S.toast) h += `<div class="toast${S.toast.bad ? ' bad' : ''}" role="status">${esc(S.toast.text)}</div>`;
-    $('#layer').innerHTML = h;
+    if (S.toast) h += `<div class="toast${S.toast.bad ? ' bad' : ''}" role="status" data-id="toast:${S.toast.n}">${esc(S.toast.text)}</div>`;
+    patch($('#layer'), h);
   }
 
   // ---- The palette: New review
@@ -551,7 +591,7 @@
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
     if (name === 'close') {
       S.menu = null;
-      post('close', { id }).then(() => { toast(id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; poll(); }, (e) => toast(e.message, true));
+      post('close', { id }).then(() => { toast(r.older ? `Closed ${short(r)}` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; poll(); }, (e) => toast(e.message, true));
     }
     if (name === 'pause' || name === 'pause-now') {
       S.menu = null;
@@ -604,6 +644,7 @@
         S.picked.clear();
         S.confirm = false;
         render();
+        $('#sheet .list').scrollTop = 0;
         break;
       case 'pick':
         if (S.picked.has(id)) S.picked.delete(id);
@@ -637,6 +678,7 @@
       case 'filter':
         S.filter = key;
         render();
+        $('#sheet .list').scrollTop = 0;
         break;
       case 'mem':
         S.menu = S.menu === 'mem' ? null : 'mem';
@@ -762,7 +804,7 @@
     else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); go(at < 0 ? 0 : at - 1); }
     else if (e.key === 'Enter' && S.sel) { e.preventDefault(); act('open', S.sel); }
     else if (e.key === 'c' && S.sel && byId(S.sel) && byId(S.sel).chat && byId(S.sel).chat.orca) act('chat', S.sel);
-    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build) act('pause', S.sel);
+    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build && !byId(S.sel).older) act('pause', S.sel);
     else if (e.key === 'r' && S.sel && byId(S.sel) && byId(S.sel).status === 'paused') act('resume', S.sel);
     else if (e.key === ' ') {
       const r = open().find(needs);

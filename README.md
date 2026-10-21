@@ -325,9 +325,13 @@ Inside a review, Reviews, left of its title, lists the others with what's new in
 the ones that need you, a toast says when one comes, and a click brings that review's page to the
 front. It also opens this page, or starts a review from it.
 
+A review an untangle from before this page runs is listed too, with its memory, but it can't say
+how far it is or which agent holds it: close it and start it again with New review to see it in
+full.
+
 A small process serves the page, at `http://127.0.0.1:7777/` unless something else has that port.
 `untangle reviews` starts it the first time, and it stops once the page has been closed for a
-while. Reviews stay their own processes: the page reads what each one says of itself every two
+while. One an earlier build of `untangle` serves gives way to the new build's. Reviews stay their own processes: the page reads what each one says of itself every two
 seconds while it's shown. `untangle reviews -list` prints the same reviews in the terminal:
 
 ```text

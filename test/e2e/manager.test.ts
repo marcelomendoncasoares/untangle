@@ -135,6 +135,17 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when the page asks for the reviews again, '
+    + 'then the open row keeps its elements: its peek doesn’t open again, its dot and the row under the pointer aren’t made anew.',
+    async () => {
+      await page.eval(`window.__kept = [document.querySelector('.peek'), document.querySelector('.row.running'), document.querySelector('.row.running .st'), document.querySelector('.peek .tail')]`);
+      // Two rounds of asking, and of reading the chat's last lines.
+      await page.eval(`new Promise((r) => setTimeout(r, 4500))`);
+      assert.deepEqual(await page.eval(`[document.querySelector('.peek'), document.querySelector('.row.running'), document.querySelector('.row.running .st'), document.querySelector('.peek .tail')].map((e, i) => e === window.__kept[i])`), [true, true, true, true]);
+    },
+  );
+
+  it(
     'when Space is pressed, '
     + 'then the review that needs you opens: here in the browser, since it has no tab in Orca.',
     async () => {
