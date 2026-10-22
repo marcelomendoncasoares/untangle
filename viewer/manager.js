@@ -181,7 +181,6 @@
       <div class="disk"><div class="disk-h"><b>${d ? bytes(sum) : '—'}</b><span>in untangle’s cache</span>${d && d.measuring ? '<i class="meas" role="status" aria-label="Measuring" title="Measuring what each folder holds"></i>' : ''}</div>
         <div class="disk-bar">${d ? seg(d.open, 'var(--d-open)') + seg(d.closed, 'var(--d-closed)') + seg(d.old, 'var(--d-old)') + seg(d.shared, 'var(--d-shared)') : ''}</div>
         <div class="legend"><span><i style="background:var(--d-open)"></i>Open reviews<b>${d ? bytes(d.open) : '—'}</b></span><span><i style="background:var(--d-closed)"></i>Closed, can be freed<b>${d ? bytes(d.closed) : '—'}</b></span><span><i style="background:var(--d-old)"></i>Old checkouts and analyses<b>${d ? bytes(d.old) : '—'}</b></span><span><i style="background:var(--d-shared)"></i>Clones and shared<b>${d ? bytes(d.shared) : '—'}</b></span></div>
-        ${S.tab === 'open' && d && d.closed + d.old > 0 ? '<button type="button" class="link" data-act="tab" data-key="closed">Clean up</button>' : ''}
       </div>`);
   }
 

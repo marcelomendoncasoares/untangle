@@ -70,11 +70,12 @@ describe('Given two closed reviews that share a base, a paused one that moved pa
   });
 
   it(
-    'when Clean up is clicked, '
-    + 'then Closed lists the two with what only each holds, and under Shared their base and the old checkouts.',
+    'when Closed is chosen, '
+    + 'then it lists the two with what only each holds, and under Shared their base and the old checkouts. The side’s space has no shortcut to it.',
     async () => {
-      await page.until(`!!document.querySelector('.disk .link')`);
-      await page.click('.disk .link');
+      await page.until(`!!document.querySelector('.disk .legend')`);
+      assert.equal(await page.eval(`document.querySelectorAll('.disk button').length`), 0);
+      await page.click('[data-act="tab"][data-key="closed"]');
       await page.until(`document.querySelectorAll('.crow').length === 4`);
       assert.deepEqual(await page.eval(`[[...document.querySelectorAll('.crow:not(.fixed) .ttl')].map((e) => e.textContent), [...document.querySelectorAll('.crow:not(.fixed) .sz small')].map((e) => e.textContent), [...document.querySelectorAll('.crow.fixed')].map((e) => e.querySelector('.ttl').textContent + ': ' + e.querySelector('.l2').textContent), document.querySelector('.head .btn').textContent.replace(/·.*/, '')]`), [
         ['Review b', 'Review a'],
