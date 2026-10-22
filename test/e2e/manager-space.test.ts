@@ -88,11 +88,12 @@ describe('Given two closed reviews that share a base, a paused one that moved pa
 
   it(
     'when the window is narrow, '
-    + 'then what the Shared rows say wraps onto more lines, rather than being cut.',
+    + 'then what the Shared rows say wraps onto more lines, rather than being cut, and a review’s folder name ends in an ellipsis inside its column.',
     async () => {
       await page.setViewport(800, 900);
       try {
         await page.until(`innerWidth === 800`);
+        assert.deepEqual(await page.eval(`[...document.querySelectorAll('.crow:not(.fixed)')].map((r) => r.querySelector('.num').getBoundingClientRect().right <= r.querySelector('.main').getBoundingClientRect().right + 0.5)`), [true, true]);
         const shared = `[...document.querySelectorAll('.crow.fixed')]`;
         assert.deepEqual(await page.eval(`${shared}.map((r) => [...r.querySelectorAll('.ttl, .l2')].map((e) => (e.scrollWidth <= e.clientWidth ? 'whole' : 'cut')).join(' '))`), ['whole whole', 'whole whole']);
         assert.equal(await page.eval(`${shared}.at(-1).querySelector('.l2').getBoundingClientRect().height > 20`), true);

@@ -228,6 +228,25 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when a branch’s review goes by its folder’s long name, '
+    + 'then the name never runs into what’s next: in the palette it stays on one line before the title, and in a narrow window it gives way to the title, ending in an ellipsis.',
+    async () => {
+      await page.key('k', { ctrl: true });
+      await page.until(`!!document.querySelector('.pal-r.dir')`);
+      assert.deepEqual(await page.eval(`(() => { const r = document.querySelector('.pal-r.dir'), n = r.querySelector('.num'), b = n.getBoundingClientRect(); return [n.title === n.textContent, b.height < 20, b.right <= r.querySelector('.t').getBoundingClientRect().left]; })()`), [true, true, true]);
+      await page.key('Escape');
+      await page.until(`!document.querySelector('.pal')`);
+      await page.setViewport(800, 900);
+      try {
+        await page.until(`innerWidth === 800`);
+        assert.deepEqual(await page.eval(`[...document.querySelectorAll('.row')].map((r) => { const n = r.querySelector('.num'), w = n.getBoundingClientRect(); return [w.right <= r.querySelector('.main').getBoundingClientRect().right + 0.5, n.scrollWidth > n.clientWidth, r.querySelector('.ttl').getBoundingClientRect().width > w.width]; })`), [[true, true, true], [true, true, true]]);
+      } finally {
+        await page.setViewport(1440, 900);
+      }
+    },
+  );
+
+  it(
     'when the pull request asked of you is started from the palette, '
     + 'then its row shows at once, being built, with what GitHub said of it; when it doesn’t start, the row goes and the toast says why.',
     async () => {

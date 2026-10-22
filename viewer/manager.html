@@ -163,7 +163,10 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .st.closed { background: var(--text-4); }
 .main { display: grid; gap: 4px; min-width: 0; }
 .l1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.num { flex: none; font: 500 12.5px/1 var(--code); color: var(--text-3); }
+.num { flex: none; font: 500 12.5px/1 var(--code); color: var(--text-3); white-space: nowrap; }
+/* A branch's review goes by its folder, whose name can be long: before it would run into what's
+   next, it gives way to the title, down to a few letters and an ellipsis, with room below for them. */
+.num.dir { flex: 0 100 auto; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
 .kind { flex: none; font-size: 11px; line-height: 1; color: var(--text-2); background: var(--hover); border-radius: 4px; padding: 3px 6px; }
 .ttl { min-width: 0; font-size: 13.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row.paused .ttl, .row.closed .ttl { color: var(--text-2); }
@@ -268,6 +271,8 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .pal-r { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: calc(100% - 12px); height: 36px; margin: 0 6px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
 .pal-r:hover, .pal-r.on { background: var(--hover); }
 .pal-r .num { font: 500 12px/1 var(--code); color: var(--text-3); }
+.pal-r.dir { grid-template-columns: minmax(56px, auto) minmax(0, 1fr) auto; }
+.pal-r .num.dir { max-width: 240px; line-height: 1.4; }
 .pal-r .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-r .h { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .pal-r .h.res { color: var(--local-ink); }

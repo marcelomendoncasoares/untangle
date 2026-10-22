@@ -7,6 +7,10 @@
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   // Titles keep their code: `serverpod doctor`.
   const md = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>');
+  // What a review goes by: its number, #12, or a branch's review its folder. A folder's long name
+  // gives way to the title when the row is narrow, and shows whole on hover.
+  const longName = (n) => !n.startsWith('#') && n.length > 4;
+  const numTag = (n) => (longName(n) ? `<span class="num dir" title="${esc(n)}">${esc(n)}</span>` : `<span class="num">${esc(n)}</span>`);
   const fmt = (n) => n.toLocaleString('en-US');
   const bytes = (n) => (!n ? '0 KB' : n < 1 << 20 ? Math.max(1, Math.round(n / 1024)) + ' KB' : n < 1000 * (1 << 20) ? Math.round(n / (1 << 20)) + ' MB' : (n / (1 << 30)).toFixed(1) + ' GB');
   // A while, as people say it: 4 min, 3 h 50 m, 2 d.
@@ -251,7 +255,7 @@
       <div class="row ${r.status}${r.pending ? ' pending' : ''}"${r.pending ? '' : ` data-act="sel" data-id="${esc(r.id)}"`}>
         <span class="st ${st}"></span>
         <span class="main">
-          <span class="l1"><span class="num">${esc(r.name.replace(/^[^#]*#/, '#'))}</span>${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span>
+          <span class="l1">${numTag(r.name.replace(/^[^#]*#/, '#'))}${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span>
           <span class="l2">${l2}</span>
           ${ev ? `<span class="l3">${ev}</span>` : ''}
         </span>
@@ -339,7 +343,7 @@
     const when = r.github ? `${r.github.state === 'merged' ? 'merged' : 'closed on GitHub'} ${day(r.github.at)}` : `closed ${day(r.closed)}`;
     return `<div class="crow${on ? ' picked' : ''}${r.freed ? ' freed' : ''}" data-act="pick" data-id="${esc(r.id)}">
       <button type="button" class="cb${on ? ' on' : ''}" data-act="pick" data-id="${esc(r.id)}" aria-pressed="${on}" aria-label="Pick ${esc(r.name)}"></button>
-      <span class="main"><span class="l1"><span class="num">${esc(num(r))}</span>${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span><span class="l2">${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · ${when}${r.freed ? ` · space freed ${day(r.freed)}` : ''}</span></span>
+      <span class="main"><span class="l1">${numTag(num(r))}${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span><span class="l2">${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · ${when}${r.freed ? ` · space freed ${day(r.freed)}` : ''}</span></span>
       ${progCell(r)}
       <span class="cnotes">${r.notes.open ? `<b>${r.notes.open}</b> open note${r.notes.open === 1 ? '' : 's'}` : 'no open notes'}</span>
       <span class="sz"><b>${r.disk != null ? bytes(r.disk) : '…'}</b><small>${parts}</small></span>
@@ -465,7 +469,7 @@
     const where = ag && ag.orca ? '<b>Reviews</b> workspace: a tab for the page' + (kind === 'none' ? '' : ', a terminal for the chat') : 'Orca isn’t here: ' + (kind === 'none' ? 'the page opens in your browser' : 'the chat’s command is copied, to paste in a terminal');
     const adv = kind === 'none' ? '' : `<div class="field"><span></span><button type="button" class="adv" data-act="f-adv" aria-expanded="${f.adv}">${ICON.chev}Advanced<span>how ${AGENT[kind]} starts, and its command</span></button></div>
       ${f.adv ? `<div class="field"><label for="f-flags">Starts with</label><span class="flags"><input id="f-flags" type="text" spellcheck="false" autocomplete="off" value="${esc(f.flags[kind] || '')}" placeholder="${kind === 'claude' ? '--model opus --permission-mode auto' : '-m gpt-6.1-sol'}"></span></div><pre class="cmd" id="f-cmd">${esc(command())}</pre>` : ''}`;
-    return `<div class="sh">${P.addFor ? '<span></span>' : `<button type="button" class="ib" data-act="pal-back" aria-label="Back">${ICON.back}</button>`}<span class="main"><span class="l1"><span class="num">${esc(it.num)}</span>${it.kind ? `<span class="kind">${esc(it.kind)}</span>` : ''}<span class="ttl">${md(it.title)}</span></span><span class="l2">${esc(it.sub)}</span></span></div>
+    return `<div class="sh">${P.addFor ? '<span></span>' : `<button type="button" class="ib" data-act="pal-back" aria-label="Back">${ICON.back}</button>`}<span class="main"><span class="l1">${numTag(it.num)}${it.kind ? `<span class="kind">${esc(it.kind)}</span>` : ''}<span class="ttl">${md(it.title)}</span></span><span class="l2">${esc(it.sub)}</span></span></div>
       <div class="pal-body">
         ${P.addFor ? '' : `<div class="field"><span>Agent</span><span class="seg">${seg}</span></div>`}
         ${agentRows}
@@ -499,7 +503,7 @@
         group = c.group;
         h += `<div class="pal-g">${esc(group)}${group === 'Asked to review you' && P.pulls ? `<span>${P.pulls.asked.length}</span>` : ''}</div>`;
       }
-      h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}" data-act="choose" data-i="${i}"><span class="num">${esc(c.num)}</span><span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
+      h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}${longName(c.num) ? ' dir' : ''}" data-act="choose" data-i="${i}">${numTag(c.num)}<span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
     });
     const note = P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link to start its review.' : 'Nothing waits for you on GitHub.') : '';
     const body = `<div class="scrim" data-act="close-pal"></div><div class="pal pick" role="dialog" aria-label="Start a review">
