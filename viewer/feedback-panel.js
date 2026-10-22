@@ -31,7 +31,7 @@ const TOOLS = [['arrow', 'Arrow'], ['box', 'Box'], ['pen', 'Pen'], ['hide', 'Hid
 
 const STYLE = `
 .fbk-scrim { position: fixed; inset: 0; z-index: 900; background: rgba(5, 5, 7, .62); }
-.fbk { position: fixed; z-index: 901; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1180px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 14px; background: var(--raised); box-shadow: 0 0 0 1px var(--hair-2), 0 24px 64px rgba(0, 0, 0, .7); color: var(--text); font: 400 13px/1.45 var(--ui); -webkit-font-smoothing: antialiased; }
+.fbk { position: fixed; z-index: 901; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1180px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 10px; background: var(--raised); box-shadow: 0 0 0 1px var(--hair-2), 0 24px 64px rgba(0, 0, 0, .7); color: var(--text); font: 400 13px/1.45 var(--ui); -webkit-font-smoothing: antialiased; }
 .fbk[hidden], .fbk-scrim[hidden], .fbk-take[hidden] { display: none; }
 .fbk-h { display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 20px; }
 .fbk-h > b { font: 600 14px/1.2 var(--ui); }
