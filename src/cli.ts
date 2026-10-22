@@ -407,7 +407,7 @@ async function review(opts: Options): Promise<number> {
   // is built while the page keeps working on the current one, and then replaces it.
   let refreshing: { state: 'checking' | 'building' | 'ready' | 'failed'; head: string; status: Status; error?: string } | null = null;
   let latest = { at: 0, head: null as string | null };
-  const refreshView = () => (refreshing ? { state: refreshing.state, head: refreshing.head, steps: refreshing.status.steps, error: refreshing.error } : { state: 'idle', head: target?.headSha || null });
+  const refreshView = () => (refreshing ? { state: refreshing.state, head: refreshing.head, steps: refreshing.status.steps, plan: refreshing.status.plan ?? null, error: refreshing.error } : { state: 'idle', head: target?.headSha || null });
   const check = async (ask: boolean) => {
     // Asking GitHub at most twice a minute, however many pages ask. While an agent holds the review,
     // its commits show within seconds: the branch is asked every few, GitHub every 15.
@@ -424,6 +424,8 @@ async function review(opts: Options): Promise<number> {
     let t: Target;
     try {
       progress.header(['', 'Refreshing']);
+      // The steps it expects, as a first build does: the page says how far it is.
+      progress.plan([byUrl ? 'pull request' : 'branch', ...buildSteps(opts.chains), 'history']);
       progress.step(byUrl ? 'pull request' : 'branch');
       t = await resolve(progress);
       progress.finish();

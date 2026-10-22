@@ -6585,7 +6585,7 @@
   // ---------- refreshing in place
   // untangle looks up the pull request again; when it moved, it builds the new review while this
   // page keeps working, and the page then reloads on the same view. New commits show as a banner.
-  const FRESH = { state: null, head: null, steps: [], error: null, latest: null, moved: null, timer: null };
+  const FRESH = { state: null, head: null, steps: [], plan: null, error: null, latest: null, moved: null, timer: null };
   const RESUME = 'untangle:resume';
   function startRefresh() {
     if (!CONFIG.served || FRESH.state === 'checking' || FRESH.state === 'building') return;
@@ -6596,10 +6596,12 @@
   function onFresh(j) {
     clearTimeout(FRESH.timer);
     if (j.state === 'current') { Object.assign(FRESH, { state: null, latest: null }); renderFresh(); return toast(`Up to date: ${String(j.head).slice(0, 7)} is the latest`); }
-    Object.assign(FRESH, { state: j.state, head: j.head || FRESH.head, steps: j.steps || [], error: j.error || null });
+    // Why it failed is said once, in full: the pill only says it didn't.
+    if (j.state === 'failed' && FRESH.state !== 'failed') toast(`Couldn’t update: ${j.error || 'unknown error'}`);
+    Object.assign(FRESH, { state: j.state, head: j.head || FRESH.head, steps: j.steps || [], plan: j.plan || FRESH.plan, error: j.error || null });
     if (j.state === 'ready') return reloadHere();
     renderFresh();
-    if (j.state === 'checking' || j.state === 'building') FRESH.timer = setTimeout(() => api('refresh').then((r) => r.json()).then(onFresh).catch(() => onFresh({ state: FRESH.state, head: FRESH.head, steps: FRESH.steps })), 700);
+    if (j.state === 'checking' || j.state === 'building') FRESH.timer = setTimeout(() => api('refresh').then((r) => r.json()).then(onFresh).catch(() => onFresh({ state: FRESH.state, head: FRESH.head, steps: FRESH.steps, plan: FRESH.plan })), 700);
   }
   // Whether newer commits exist (asked at most every half minute by untangle, however many ask).
   function freshCheck() {
@@ -6616,20 +6618,46 @@
     // The last marks get there first (a big review's are too big to finish after the page is gone).
     Promise.race([flushSave(true), new Promise((done) => setTimeout(done, 2000))]).then(() => location.reload());
   }
+  // How far an update is, from 0 to 1: the steps it expects, the one it's on, and how far that one
+  // is through what it counts. Null until it says which steps it expects.
+  function freshShare() {
+    const plan = FRESH.plan || [];
+    if (!plan.length) return null;
+    const run = FRESH.steps.filter((x) => x.state === 'running').pop();
+    const at = run ? plan.indexOf(run.label) : -1;
+    const past = Math.max(-1, ...FRESH.steps.filter((x) => x.state === 'done').map((x) => plan.indexOf(x.label)));
+    const part = run && run.count && run.count[1] ? run.count[0] / run.count[1] : 0;
+    return Math.max(0.02, Math.min(0.98, ((at >= 0 ? at : past + 1) + part) / plan.length));
+  }
+  // The pill keeps its size whatever it says: new commits, then how far the update is, in a word and
+  // a bar. The step it's on, or why it failed, shows on hover.
   function renderFresh() {
     const el = $('#vw-fresh');
     if (!el) return;
     const short = (h) => esc(String(h || '').slice(0, 7));
-    const step = FRESH.steps.filter((x) => x.state === 'running').map((x) => x.label + (x.detail ? ': ' + x.detail : '')).pop();
-    let h = '';
-    if (FRESH.moved) h = `<span>untangle now reviews <code>${short(FRESH.moved)}</code>; this page shows <code>${short(CONFIG.head)}</code>.</span><button type="button" class="btn xs primary" data-act="reload">Reload</button>`;
-    else if (FRESH.state === 'checking') h = '<span class="spin" aria-hidden="true"></span><span>Looking for new commits…</span>';
-    else if (FRESH.state === 'building') h = `<span class="spin" aria-hidden="true"></span><span>Updating to <code>${short(FRESH.head)}</code>${step ? ` · ${esc(step)}` : ''}…</span>`;
-    else if (FRESH.state === 'failed') h = `<span class="d">Couldn’t update: ${esc(FRESH.error || 'unknown error')}</span><button type="button" class="btn xs" data-act="refresh">Try again</button>`;
-    else if (FRESH.latest) h = `<span>New commits: <code>${short(FRESH.latest)}</code></span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>`;
+    const run = FRESH.steps.filter((x) => x.state === 'running').pop();
+    let h = '', title = '';
+    if (FRESH.moved) { h = `<span class="fr-t">Now on <code>${short(FRESH.moved)}</code></span><button type="button" class="btn xs primary" data-act="reload">Reload</button>`; title = `untangle now reviews ${short(FRESH.moved)}; this page shows ${short(CONFIG.head)}`; }
+    else if (FRESH.state === 'checking') h = '<span class="spin" aria-hidden="true"></span><span class="fr-t">Looking for new commits</span>';
+    else if (FRESH.state === 'building') {
+      const p = freshShare();
+      title = run ? run.label + (run.detail ? ': ' + run.detail : '') : '';
+      // Further on, only the number and the bar move.
+      const at = el.querySelector('.fr-pct');
+      if (p != null && at && el.dataset.head === FRESH.head) {
+        at.textContent = Math.round(p * 100) + '%';
+        el.querySelector('.fr-bar i').style.width = (p * 100).toFixed(1) + '%';
+        el.title = title;
+        return;
+      }
+      h = `<span class="spin" aria-hidden="true"></span><span class="fr-t">Updating to <code>${short(FRESH.head)}</code></span>${p == null ? '' : `<b class="fr-pct" aria-hidden="true">${Math.round(p * 100)}%</b><span class="fr-bar" aria-hidden="true"><i style="width:${(p * 100).toFixed(1)}%"></i></span>`}`;
+    } else if (FRESH.state === 'failed') { h = '<span class="fr-t d">Couldn’t update</span><button type="button" class="btn xs" data-act="refresh">Try again</button>'; title = FRESH.error || ''; }
+    else if (FRESH.latest) h = `<span class="fr-t">New commits: <code>${short(FRESH.latest)}</code></span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>`;
     const was = el.hidden;
     el.hidden = !h;
     el.innerHTML = h;
+    el.title = title;
+    el.dataset.head = FRESH.state === 'building' ? FRESH.head || '' : '';
     // It slides down from the top bar.
     if (was && h && moving()) el.animate([{ transform: 'translateY(-8px)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 280, easing: EASE });
   }

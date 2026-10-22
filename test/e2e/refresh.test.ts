@@ -123,6 +123,7 @@ describe('Given a served review of a greeting and a notes file, ', { skip, timeo
     let glow: string;
     let marked: string;
     let draft: string;
+    let pill: Array<[number, string]>;
 
     before(async () => {
       await rest(page!);
@@ -145,8 +146,11 @@ describe('Given a served review of a greeting and a notes file, ', { skip, timeo
       await page!.type('Not yet');
       glowed = land('lib/notes.dart', ['// edited', '// pad 1', '// glowed'], 'Glow a line', '04').slice(0, 7);
       await page!.until(`!document.querySelector('#vw-fresh')?.hidden && (document.querySelector('#vw-fresh')?.textContent || '').includes(${JSON.stringify(glowed)})`, 90_000);
+      // What the pill says and how wide it is, at each change, kept past the reload.
+      await page!.eval(`(() => { const el = document.querySelector('#vw-fresh'), log = []; const note = () => { if (el.hidden) return; const t = el.querySelector('.fr-t'), n = el.querySelector('.fr-pct'); log.push([Math.round(el.getBoundingClientRect().width), (t ? t.textContent : el.textContent) + (n ? ' · n%' : '')]); try { sessionStorage.setItem('fresh-log', JSON.stringify(log)); } catch (e) {} }; new MutationObserver(note).observe(el, { childList: true, subtree: true, characterData: true, attributes: true }); note(); })()`);
       await page!.click('#vw-fresh [data-act="refresh"]');
       await page!.until(`(document.querySelector('.t-head')?.textContent || '').includes('${glowed}')`, 120_000);
+      pill = JSON.parse(await read(page!, `sessionStorage.getItem('fresh-log') || '[]'`)) as Array<[number, string]>;
       where = await read(page!, `document.querySelector('.crumbs')?.textContent ?? ''`);
       await page!.until(`!!document.querySelector('.code[data-p="lib/notes.dart"] .glow')`, 30_000);
       await page!.until(`!!document.querySelector('.code[data-p="lib/notes.dart"] span[class*=" k"]')`, 30_000);
@@ -164,6 +168,14 @@ describe('Given a served review of a greeting and a notes file, ', { skip, timeo
       await page!.click('.cm-add');
       await page!.until(`!!document.querySelector('.th.new textarea.cmp-ta')`);
       draft = await read(page!, `document.querySelector('.th.new textarea.cmp-ta')?.value ?? ''`);
+    });
+
+    it('then the pill that offered it keeps its size as it updates, saying only how far it is.', () => {
+      assert.deepEqual([...new Set(pill.map(([w]) => w))], [236]);
+      const said = new Set(pill.map(([, t]) => t));
+      assert.ok(said.has(`Updating to ${glowed} · n%`), [...said].join(' / '));
+      // Once it's built, the page may hear that untangle moved on before it reloads.
+      assert.deepEqual([...said].filter((t) => ![`New commits: ${glowed}`, 'Looking for new commits', `Updating to ${glowed}`, `Updating to ${glowed} · n%`, `Now on ${glowed}`].includes(t)), []);
     });
 
     it('then the page reloads on the notes file.', () => {

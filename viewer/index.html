@@ -160,9 +160,14 @@ a.t-pr:hover { text-decoration: underline; text-decoration-color: var(--text-3);
 .t-commit .ib svg { width: 13px; height: 13px; }
 .t-unsaved { display: none; font: 500 11.5px/1 var(--ui); color: var(--del-ink); white-space: nowrap; }
 .vw.unsaved .t-unsaved { display: inline; }
-.vw-fresh { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 3px 0 10px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); font: 500 12.5px/1 var(--ui); white-space: nowrap; min-width: 0; }
+/* New commits, and the update they bring: one size whatever it says, how far in a number and a bar. */
+.vw-fresh { position: relative; display: flex; flex: none; align-items: center; gap: 8px; width: 236px; height: 28px; padding: 0 3px 0 10px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-ink); font: 500 12.5px/1 var(--ui); white-space: nowrap; overflow: hidden; }
 .vw-fresh[hidden] { display: none; }
-.vw-fresh > span:not(.spin) { overflow: hidden; text-overflow: ellipsis; }
+.vw-fresh .fr-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vw-fresh .fr-t.d { color: var(--del-ink); }
+.vw-fresh .fr-pct { padding-right: 7px; font: 600 12px/1 var(--code); font-variant-numeric: tabular-nums; }
+.vw-fresh .fr-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--accent-soft); }
+.vw-fresh .fr-bar i { display: block; height: 100%; background: var(--accent); transition: width 300ms var(--ease); }
 .vw-fresh code { color: var(--text); }
 .vw-jump { appearance: none; border: 0; display: flex; align-items: center; gap: 8px; flex: 0 1 330px; min-width: 150px; height: 30px; padding: 0 6px 0 10px; border-radius: 8px; background: var(--sheet); color: var(--text-3); font: 400 12.5px/1 var(--ui); cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
 .vw-jump:hover { background: var(--raised); color: var(--text-2); }
