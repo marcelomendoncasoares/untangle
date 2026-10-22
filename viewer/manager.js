@@ -209,7 +209,8 @@
     const id = c ? `${c.kind === 'codex' ? 'Thread' : 'Session'} ${c.id.slice(0, 8)}` : '';
     if (r.status === 'running' && a && (r.pausing || r.closing)) return `<span class="agent"><span class="lab" data-st="pausing"><i></i><span>${r.closing ? 'Closing' : 'Pausing'} after ${esc(a.name)}’s turn</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
     if (r.status === 'running' && a) return `<span class="agent"><span class="lab" data-st="${esc(a.state)}"><i></i><span>${esc(a.label)}</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
-    if ((r.status !== 'running' || r.build) && c) return `<span class="agent"><span class="lab" data-st="kept"><i></i><span>${esc(c.agent)}’s chat, kept</span></span><small>${esc(id)}</small></span>`;
+    // The chat kept to resume: the chip names its agent, and its id goes under it.
+    if ((r.status !== 'running' || r.build) && c) return `<span class="agent"><span class="lab" data-st="kept" title="${esc(c.agent)}’s chat is kept: Resume brings it back"><i></i><span>${esc(c.agent)}</span></span><small>${esc(id)}</small></span>`;
     return `<span class="agent"><span class="lab" data-st="none"><i></i><span>No agent</span></span><small>${r.status === 'running' ? 'a chat’s untangle watch holds it' : 'no chat held it'}</small></span>`;
   }
 
@@ -281,7 +282,7 @@
       : r.twin
       ? '<div class="pk-h"><b>Open twice</b></div><p class="pk-text">Two untangles serve this review: this one and the one above, which keeps its record. Close this one: its notes may be behind, and what it saves could undo the other’s. A review can’t be started twice any more.</p>'
       : c
-      ? `<div class="pk-h"><b>${esc(c.agent)}</b><span>${esc(a ? a.label : `${c.agent}’s chat, kept`)}</span><span class="sp"></span>${c.orca ? `<button type="button" class="btn sm" data-act="chat" data-id="${esc(r.id)}">${ICON.term}Chat<kbd>C</kbd></button>` : ''}</div>${tail(r)}`
+      ? `<div class="pk-h"><b>${esc(c.agent)}</b><span>${esc(a ? a.label : 'its chat, kept')}</span><span class="sp"></span>${c.orca ? `<button type="button" class="btn sm" data-act="chat" data-id="${esc(r.id)}">${ICON.term}Chat<kbd>C</kbd></button>` : ''}</div>${tail(r)}`
       : `<div class="pk-h"><b>No agent</b></div><p class="pk-text">No chat holds this review. Add Claude or Codex, and its chat starts with the untangle skill${S.data && S.data.orca ? ', in Orca' : ''}.</p>${r.status === 'running' && !r.build && !r.twin ? `<div class="pk-act"><button type="button" class="btn sm" data-act="add-agent" data-id="${esc(r.id)}">${ICON.plus}Add an agent</button></div>` : ''}`;
     const w = r.waiting;
     const notes = r.older ? '<div class="pk-h"><b>Notes</b></div><p class="pk-text">On its page.</p>' : `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;

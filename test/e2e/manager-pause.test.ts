@@ -103,7 +103,7 @@ describe('Given a review Claude works on, in the manager inside Orca, ', { skip,
       await page.until(`!!document.querySelector('.row.paused')`, 30_000);
       assert.deepEqual(await page.eval(`[document.querySelector('.row.paused .l2').textContent.split(' · ')[0], document.querySelector('.row.paused .lab').textContent, document.querySelector('.peek .pk-act .btn.primary').textContent]`), [
         'Paused a moment ago',
-        'Claude’s chat, kept',
+        'Claude',
         'ResumeR',
       ]);
     },
