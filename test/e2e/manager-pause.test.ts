@@ -121,4 +121,19 @@ describe('Given a review Claude works on, in the manager inside Orca, ', { skip,
       await page.until(`[...document.querySelectorAll('.toast')].some((t) => t.textContent === ${JSON.stringify(`${name()} is starting again, with Claude’s chat`)})`);
     },
   );
+
+  it(
+    'when Close is clicked in its row, '
+    + 'then the review closes: it leaves the open reviews, and Closed lists it.',
+    async () => {
+      await page.until(`!!document.querySelector('.row.running') && !document.querySelector('.st.build')`, 60_000);
+      if (!(await page.eval(`!!document.querySelector('.rw.open .peek')`))) await page.click('.row.running');
+      await page.until(`!!document.querySelector('.peek [data-act="close"]')`);
+      assert.equal(await page.eval(`[...document.querySelectorAll('.peek .pk-act .btn')].map((b) => b.textContent).join(' · ')`), 'Open review⏎ · PauseP · Close');
+      await page.click('.peek [data-act="close"]');
+      await page.until(`!document.querySelector('.row')`, 30_000);
+      await page.click('[data-act="tab"][data-key="closed"]');
+      await page.until(`document.querySelectorAll('.crow:not(.fixed)').length === 1`);
+    },
+  );
 });

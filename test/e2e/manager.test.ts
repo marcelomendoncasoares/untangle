@@ -121,7 +121,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
 
   it(
     'when the running row is clicked, '
-    + 'then it opens as a peek: Claude’s last lines, the note that waits for you, and the review’s memory and head, to open or pause.',
+    + 'then it opens as a peek: Claude’s last lines, the note that waits for you, and the review’s memory and head, to open, pause or close.',
     async () => {
       await page.click('.row.running');
       await page.until(`!!document.querySelector('.peek .tail')`);
@@ -129,7 +129,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
         ['● Bash(untangle reply N1 \'Because it’s friendlier.\')', '● Answered N1 in its thread.'],
         ['N1a.dart:2Claude answered'],
         ['untangle', 'Language server', 'On disk', 'Head'],
-        'Open review⏎PauseP',
+        'Open review⏎PausePClose',
       ]);
     },
   );
