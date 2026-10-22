@@ -110,7 +110,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
         'paused | feature against main |  | No agent | 0 of 1',
       ].join('\n'));
       assert.deepEqual(await page.eval(`[[...document.querySelectorAll('.big > *')].map((e) => e.textContent).join(' | '), [...document.querySelectorAll('.gh')].map((g) => g.textContent).join(' / '), document.querySelector('.nr[data-key="need"]').textContent, document.querySelector('.pill').textContent, document.title]`), [
-        '2 | changes left to review |  | 0 of 2 reviewed, in 2 open reviews',
+        '2 | changes left to review |  | 0 of 2 reviewed | in 2 open reviews',
         'Running1 / Paused1',
         'Need you1',
         '1 needs youGo to ' + path.basename(repo.dir) + 'Space',
