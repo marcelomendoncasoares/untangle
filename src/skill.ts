@@ -51,8 +51,9 @@ user answers in each note's thread, and \`untangle watch\` brings the answers.
 When \`untangle watch\` prints notes, or a line from untangle says there are new ones (run
 \`untangle watch\` to read them):
 
-1. Read them all. The review's opening line comes first: follow it. By default it asks you to
-   discuss before changing anything.
+1. Read them all. The review's opening line comes first: follow it. By default it says to make
+   the changes the notes ask for, and to answer a note that asks a question, or isn't clear,
+   before changing anything.
 2. Answer each note in its thread: \`untangle reply N2 'your answer'\`. An answer with quotes or
    backticks reads from stdin instead: \`untangle reply N2 - <<'EOF'\`, the answer, then \`EOF\`
    (\`untangle note\` takes \`-\` too). Once you've made the change a note asks for, add

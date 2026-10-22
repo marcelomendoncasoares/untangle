@@ -76,7 +76,7 @@ describe('Given a branch no review is running for, and an agent that watches it,
       assert.ok(out.includes([
         `untangle: 1 note you haven’t read, on ${path.basename(repo!.dir)} at ${head.slice(0, 7)}. Line numbers are on that commit.`,
         '',
-        'Discuss these with me before changing anything.',
+        'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
         '',
         'N1 · lib/a.dart:2',
         `In the change "Say hello" (${head.slice(0, 7)})`,
@@ -106,7 +106,7 @@ describe('Given a branch no review is running for, and an agent that watches it,
     + 'then they print as Copy for agent gives them.',
     async () => {
       const r = await command(['notes', '-all']);
-      assert.deepEqual([r.code, r.out.split('\n').slice(0, 5)], [0, [`My review notes on ${path.basename(repo!.dir)} (branch feature, at ${head.slice(0, 7)}). Line numbers are on that commit.`, '', 'Discuss these with me before changing anything.', '', 'N1 · lib/a.dart:2 (resolved)']]);
+      assert.deepEqual([r.code, r.out.split('\n').slice(0, 5)], [0, [`My review notes on ${path.basename(repo!.dir)} (branch feature, at ${head.slice(0, 7)}). Line numbers are on that commit.`, '', 'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.', '', 'N1 · lib/a.dart:2 (resolved)']]);
     },
   );
 

@@ -160,7 +160,14 @@ interface Holder {
   fresh: boolean;
 }
 
-export const DEFAULT_OPENING = 'Discuss these with me before changing anything.';
+/**
+ * The line the notes open with, for the agent, unless the review says otherwise: a note that asks
+ * for a change gets it, and one that asks or isn't clear gets an answer first. It once said to
+ * discuss everything first, which held agents back from changes the notes asked for: a review that
+ * kept that default takes this one.
+ */
+export const DEFAULT_OPENING = 'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.';
+const FORMER_OPENING = 'Discuss these with me before changing anything.';
 // A burst of notes reaches a waiting agent together: this long after the last one.
 const QUIET = Number(process.env.UNTANGLE_NOTES_QUIET) >= 0 && process.env.UNTANGLE_NOTES_QUIET ? Number(process.env.UNTANGLE_NOTES_QUIET) : 3000;
 const MAX_BODY = 64 << 10;
@@ -282,7 +289,7 @@ export class Notes {
     this.data = { version: 1, mode: null, live: true, opening: DEFAULT_OPENING, scope: 'open', base: null, head: null, next: 1, seq: 0, notes: [], events: [], agents: {} };
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<Stored>;
-      if (saved && saved.version === 1 && Array.isArray(saved.notes)) this.data = { ...this.data, ...saved };
+      if (saved && saved.version === 1 && Array.isArray(saved.notes)) this.data = { ...this.data, ...saved, opening: saved.opening === FORMER_OPENING || typeof saved.opening !== 'string' ? DEFAULT_OPENING : saved.opening };
     } catch {
       // No notes yet.
     }

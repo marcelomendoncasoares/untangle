@@ -142,7 +142,7 @@ describe('Given notes on the greeting’s message and print, and a note on a fil
     assert.equal(notes.exportText('open'), [
       `My review notes on acme/app#7 (branch feature, at ${short(g.head)}). Line numbers are on that commit.`,
       '',
-      'Discuss these with me before changing anything.',
+      'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
       '',
       'N1 · lib/app.dart:3',
       `In the change "Greet by name" (${short(g.head)})`,
@@ -255,7 +255,7 @@ describe('Given notes an agent watches, ', () => {
     const got = await waiting;
     assert.ok('text' in got);
     assert.deepEqual([got.notes, got.replies, got.first], [2, 0, true]);
-    assert.equal(got.text.split('\n').slice(0, 3).join('\n'), `untangle: 2 notes you haven’t read, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.\n\nDiscuss these with me before changing anything.`);
+    assert.equal(got.text.split('\n').slice(0, 3).join('\n'), `untangle: 2 notes you haven’t read, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.\n\nWhere a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.`);
     assert.match(got.text, /\nN1 · lib\/app\.dart:3\n[\s\S]*\nN2 · lib\/app\.dart:4\n/);
   });
 
@@ -439,7 +439,7 @@ describe('Given notes a Claude chat holds, in an Orca terminal, ', () => {
     assert.equal(second.text.split('\n').slice(0, 5).join('\n'), [
       `untangle: you hold this review now: another Claude chat held it. Here are its 2 open notes, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.`,
       '',
-      'Discuss these with me before changing anything.',
+      'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
       '',
       'N1 · lib/app.dart:3',
     ].join('\n'));
@@ -639,6 +639,30 @@ describe('Given a note on a pull request reviewed from its link, ', () => {
     assert.deepEqual([got.text.split('\n')[0], notes.exportText('open').split('\n')[0]], [
       `untangle: 1 note you haven’t read, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.${there}`,
       `My review notes on acme/app#7 (branch feature, at ${short(g.head)}). Line numbers are on that commit.${there}`,
+    ]);
+  });
+});
+
+describe('Given notes kept with the opening line untangle once gave them, and notes with one of your own, ', () => {
+  let dir = '';
+  const kept = (opening: string) => {
+    const file = path.join(dir, `${encodeURIComponent(opening.slice(0, 12))}.json`);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, mode: 'local', live: true, opening, scope: 'open', base: null, head: null, next: 1, seq: 0, notes: [], events: [], agents: {} }));
+    return new Notes(file).exportText('open').split('\n')[2];
+  };
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-notes-'));
+  });
+
+  after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('when they are read, then the former default gives way to today’s, which lets a note ask for a change, and yours stays.', () => {
+    assert.deepEqual([kept('Discuss these with me before changing anything.'), kept('Only answer: change nothing.')], [
+      'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
+      'Only answer: change nothing.',
     ]);
   });
 });
