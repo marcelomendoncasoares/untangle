@@ -154,6 +154,18 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when its language server holds memory, '
+    + 'then Free sits before the number, which lines up with the others in the review’s column.',
+    async () => {
+      // Every list the page gets says the language server holds 600 MB.
+      await page.eval(`(() => { const f = window.fetch; window.__fetch = f; window.fetch = (u, i) => f(u, i).then((r) => (String(u) === 'api/reviews' ? r.json().then((d) => new Response(JSON.stringify({ ...d, reviews: d.reviews.map((x) => (x.status === 'running' ? { ...x, memory: { untangle: 120 << 20, lsp: 600 << 20 } } : x)) }))) : r)); })()`);
+      await page.until(`!!document.querySelector('.peek [data-act="lsp"]') && [...document.querySelectorAll('.peek .kv b')].some((b) => b.textContent === '600 MB')`, 10_000);
+      assert.deepEqual(await page.eval(`(() => { const kv = [...document.querySelectorAll('.peek .kv')].find((k) => k.firstElementChild.textContent === 'Language server'); const free = kv.querySelector('.btn').getBoundingClientRect(), mb = kv.querySelector('b').getBoundingClientRect(); return [kv.querySelector('b').textContent, free.right < mb.left, new Set([...document.querySelectorAll('.peek .kv b')].map((b) => Math.round(b.getBoundingClientRect().right))).size]; })()`), ['600 MB', true, 1]);
+      await page.eval(`window.fetch = window.__fetch`);
+    },
+  );
+
+  it(
     'when Space is pressed, '
     + 'then the review that needs you opens: here in the browser, since it has no tab in Orca.',
     async () => {
