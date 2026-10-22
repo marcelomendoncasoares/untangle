@@ -357,6 +357,9 @@ export class Manager {
   private readonly launched = new Map<number, string>();
   // Starts on their way, by what they review: one asked again meanwhile waits for it, and finds it running.
   private readonly underway = new Set<string>();
+  // Closed reviews whose space is still to free: it waits for their process to end, and for any
+  // review being built (what it takes isn't named anywhere yet).
+  private readonly toFree = new Set<string>();
   // GitHub's pull requests for the palette, asked at most once a minute.
   private pullsKept: { at: number; value: { asked: Pull[]; yours: Pull[]; error: string | null } } | null = null;
 
@@ -531,13 +534,43 @@ export class Manager {
         if (!now || now.pid !== r.pid) continue;
         const at = (j.state === 'MERGED' ? j.mergedAt : j.closedAt) || new Date().toISOString();
         writeRecord({ ...now, closed: now.closed ?? at, github: { state: j.state === 'MERGED' ? 'merged' : 'closed', at }, updated: new Date().toISOString() });
+        // A paused one closes now, and its space goes, as when you close it.
+        if (r.status === 'paused') this.toFree.add(idOf(r));
       } catch {
         // GitHub didn't answer: next time.
       }
     }
+    this.freeClosed();
   }
 
-  /** Closes a review: a running one stops, saying it's closed; a paused one's record says so. */
+  /**
+   * Frees the space of the reviews just closed, as Free does: their notes, marks and records stay.
+   * One whose process is still stopping waits for it, and all of them for a review being built.
+   * The ids freed.
+   */
+  private freeClosed(): string[] {
+    if (!this.toFree.size) return [];
+    const list = listRecords();
+    const of = (id: string) => list.find((r) => idOf(r) === id);
+    // Opened again meanwhile, a review keeps its space.
+    for (const id of this.toFree) { const r = of(id); if (!r || r.status !== 'closed' || r.freed) this.toFree.delete(id); }
+    const ready = new Set([...this.toFree].filter((id) => { const r = of(id)!; return r.pid == null || !pidAlive(r.pid) || Date.now() - Date.parse(r.stopped?.at ?? r.closed!) > 30_000; }));
+    if (!ready.size) return [];
+    try {
+      const r = free(ready, list);
+      this.sizes.gone(r.removed);
+      ready.forEach((id) => this.toFree.delete(id));
+      return r.freed;
+    } catch (e) {
+      if (e instanceof Building) return [];
+      throw e;
+    }
+  }
+
+  /**
+   * Closes a review: a running one stops, saying it's closed; a paused one's record says so. Its
+   * space is freed then, once its process has ended: its notes, marks and record stay, to reopen it.
+   */
   async close(f: { record: Listed | null; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
     if (f.run) {
       // A second untangle of a review that runs writes its record as it stops: the one that holds it gets it back.
@@ -555,18 +588,22 @@ export class Manager {
         for (let i = 0; i < 100 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
         if (readRecord(recordFile(held.repoKey, held.key))?.pid === run.pid) writeRecord(held);
       }
-      // It says so in its record, unless it was being built again: the old record does then.
-      if (!f.record || f.record.pid === f.run.pid) return { data: { closed: true } };
+      if (!f.record) return { data: { closed: true } };
+      for (let i = 0; i < 200 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
     }
     if (!f.record) return { status: 404, data: { error: 'no such review' } };
     const file = recordFile(f.record.repoKey, f.record.key);
     const r = readRecord(file);
     if (!r) return { status: 404, data: { error: 'no such review' } };
-    // Built and closed by its new process meanwhile.
-    if (r.pid !== f.record.pid) return { data: { closed: true } };
-    const at = new Date().toISOString();
-    writeRecord({ ...r, closed: at, stopped: r.stopped ?? { at, why: 'stop' }, updated: at });
-    return { data: { closed: true } };
+    // A review that runs says so in its record as it stops. Its record says so here when it didn't:
+    // paused, or stopping as it was paused a moment ago, or being built again with no record yet.
+    if (!r.closed && (r.pid === f.record.pid || r.pid === f.run?.pid)) {
+      const at = new Date().toISOString();
+      writeRecord({ ...r, closed: at, stopped: r.stopped ?? { at, why: 'stop' }, updated: at });
+    }
+    const id = idOf(f.record);
+    this.toFree.add(id);
+    return { data: { closed: true, freed: this.freeClosed().includes(id) } };
   }
   // The tabs the manager opened for reviews whose own tab it couldn't bring back, by process.
   private readonly pages = new Map<number, string>();
@@ -581,6 +618,7 @@ export class Manager {
 
   /** The reviews, as the page shows them, with memory and disk (a review's Reviews menu skips disk). */
   async view(o: { disk: boolean } = { disk: true }) {
+    this.freeClosed();
     const list = listRecords();
     const live = await summaries(list);
     const sizeOf = (dirs: string[]) => {

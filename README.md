@@ -159,9 +159,9 @@ Claude and Codex, and *Copy for agent* takes the notes to any other chat.
 `untangle reviews` opens a page with every review on your machine: running, paused or closed,
 each with its progress, its agent, and what waits for you. Open a row to read the agent's last
 steps and the notes it left you, and Space opens the next review that needs you. Pause a review to
-give its memory back, and Resume brings it back with its chat. Closed reviews show the space they
-hold, and free it in a click. Inside a review, Reviews lists the others and says when one needs
-you.
+give its memory back, and Resume brings it back with its chat. Close one, and the space it held
+on disk is freed, its notes and marks kept. Inside a review, Reviews lists the others and says
+when one needs you.
 
 ![The reviews page: #168 open, with Claude listening, its last steps and the note it answered; #170 with no agent; and #142 paused, its chat kept](docs/images/reviews.png)
 
@@ -336,9 +336,10 @@ running without an agent gets one the same way, from its row.
 the agent's turn to end, so the chat stops at a good place; *Pause now*, in the row's menu,
 doesn't. A review left idle for an hour says so. A paused pull request that's merged or closed on
 GitHub moves to Closed.
-- **Closed** lists the space each review holds. *Free the space* keeps its notes and marks, so
-*Reopen* builds the rest again, and *Forget* asks first, then removes those too. Fourteen days
-after a review closes, its space is freed on its own.
+- **Close** stops a review and frees the space it holds on disk. Its notes and marks stay, so
+*Reopen* builds the rest again, and *Forget*, under Closed, asks first, then removes those too. A
+paused pull request that's merged or closed on GitHub closes the same way. What a review closed
+before still holds is freed fourteen days on, or with *Free the space*.
 - **Outside Orca**, the agent's command is copied for you to run in a terminal.
 
 ### Upgrading

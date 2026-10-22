@@ -137,6 +137,24 @@ describe('Given a review Claude holds from a chat the manager started, ', { time
       await until('the pause', async () => (await rows()).find((x) => x.id === id && x.status === 'paused'));
     },
   );
+
+  it(
+    'when the paused review is closed, '
+    + 'then it’s closed with its space freed: its checkouts go, its analyses keep only your marks, and its notes stay.',
+    async () => {
+      const repoKey = id.slice(0, id.lastIndexOf('/')), key = encodeURIComponent(id.slice(id.lastIndexOf('/') + 1));
+      const record = () => JSON.parse(fs.readFileSync(path.join(cache, 'sessions', repoKey, key + '.json'), 'utf8')) as { closed: string | null; freed: string | null; checkouts: string[]; analyses: Array<[string, string]> };
+      const was = record();
+      const dirs = [...was.checkouts.map((sha) => path.join(cache, 'worktrees', repoKey, sha.slice(0, 12))), ...was.analyses.map(([b, h]) => path.join(cache, 'reviews', repoKey, `${b.slice(0, 12)}-${h.slice(0, 12)}`))];
+      const held = () => dirs.filter((d) => fs.existsSync(d) && fs.readdirSync(d).some((f) => f !== 'state.json'));
+      assert.ok(held().length > 0);
+      const r = await manager.call('close', { method: 'POST', body: { id } });
+      assert.deepEqual(r.data, { closed: true, freed: true });
+      const now = record();
+      assert.deepEqual([!!now.closed, !!now.freed, now.checkouts, held()], [true, true, [], []]);
+      assert.equal(fs.existsSync(path.join(cache, 'notes', repoKey, key + '.json')), true);
+    },
+  );
 });
 
 describe('Given a paused review whose pull request merged on GitHub, and a closed one’s that merged too, ', { timeout: 120_000 }, () => {
@@ -179,12 +197,16 @@ describe('Given a paused review whose pull request merged on GitHub, and a close
 
   it(
     'when the manager’s page opens, '
-    + 'then it asks GitHub: the paused review is closed, as merged when it merged, and the closed one says it merged, still closed when you closed it.',
+    + 'then it asks GitHub: the paused review is closed, as merged when it merged, and its space freed; the closed one says it merged, still closed when you closed it.',
     async () => {
       const rows = await until('both merged', async () => { const x = ((await manager.call('reviews')).data as { reviews: Array<Row & { closed: string }> }).reviews; return x.every((r) => r.github) ? x : null; });
       const by = (n: number) => rows.find((x) => x.id === `github.com/acme/app/pr-${n}`)!;
       assert.deepEqual([by(12).status, by(12).github, by(12).closed], ['closed', { state: 'merged', at: '2026-10-14T12:00:00Z' }, '2026-10-14T12:00:00Z']);
       assert.deepEqual([by(13).status, by(13).github, by(13).closed], ['closed', { state: 'merged', at: '2026-10-15T12:00:00Z' }, '2026-10-11T12:00:00.000Z']);
+      // Closed now, the paused one's space is freed; the one closed before keeps its own until then.
+      const freed = await until('the space freed', async () => ((await manager.call('reviews')).data as { reviews: Array<Row & { freed: string | null }> }).reviews.find((x) => x.id === 'github.com/acme/app/pr-12' && x.freed));
+      assert.equal(((await manager.call('reviews')).data as { reviews: Array<Row & { freed: string | null }> }).reviews.find((x) => x.id === 'github.com/acme/app/pr-13')!.freed, null);
+      assert.ok(freed);
     },
   );
 });

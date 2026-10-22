@@ -124,7 +124,7 @@ describe('Given a review Claude works on, in the manager inside Orca, ', { skip,
 
   it(
     'when Close is clicked in its row, '
-    + 'then the review closes: it leaves the open reviews, and Closed lists it.',
+    + 'then the review closes, and its space is freed: it leaves the open reviews, and Closed lists it, its space freed.',
     async () => {
       await page.until(`!!document.querySelector('.row.running') && !document.querySelector('.st.build')`, 60_000);
       if (!(await page.eval(`!!document.querySelector('.rw.open .peek')`))) await page.click('.row.running');
@@ -132,8 +132,9 @@ describe('Given a review Claude works on, in the manager inside Orca, ', { skip,
       assert.equal(await page.eval(`[...document.querySelectorAll('.peek .pk-act .btn')].map((b) => b.textContent).join(' · ')`), 'Open review⏎ · PauseP · Close');
       await page.click('.peek [data-act="close"]');
       await page.until(`!document.querySelector('.row')`, 30_000);
+      await page.until(`[...document.querySelectorAll('.toast')].some((t) => t.textContent === ${JSON.stringify(`Closed ${name()} and freed its space: its notes and marks stay`)})`);
       await page.click('[data-act="tab"][data-key="closed"]');
-      await page.until(`document.querySelectorAll('.crow:not(.fixed)').length === 1`);
+      await page.until(`document.querySelectorAll('.crow:not(.fixed)').length === 1 && document.querySelector('.crow .l2').textContent.includes(' · space freed ')`);
     },
   );
 });

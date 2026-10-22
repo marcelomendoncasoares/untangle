@@ -685,7 +685,7 @@
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
     if (name === 'close') {
       S.menu = null;
-      post('close', { id }).then(() => { toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : `Closed ${short(r)}: it’s under Closed now`); if (S.sel === id) S.sel = null; S.opened.delete(id); poll(); }, (e) => toast(e.message, true));
+      post('close', { id }).then((d) => { toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : d.freed ? `Closed ${short(r)} and freed its space: its notes and marks stay` : `Closed ${short(r)}: its space is freed in a moment`); if (S.sel === id) S.sel = null; S.opened.delete(id); poll(); }, (e) => toast(e.message, true));
     }
     if (name === 'pause' || name === 'pause-now') {
       S.menu = null;
