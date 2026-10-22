@@ -194,9 +194,10 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     async () => {
       await page.hover('#mem');
       await page.until(`!!document.querySelector('.mem-pop')`);
-      assert.deepEqual(await page.eval(`[...document.querySelectorAll('.mem-pop .pop-r')].map((r) => [r.textContent.replace(/\\d+ [KMG]B/g, 'n MB'), r.title.replace(/\\d+ [KMG]B|off$/g, 'n MB'), r.scrollWidth <= r.clientWidth])`), [
-        [`${path.basename(repo.dir)}n MB`, 'untangle n MB · language server n MB', true],
-        ['This pagen MB', '', true],
+      // A line's name and its total apart: a folder's name can end in digits.
+      assert.deepEqual(await page.eval(`[...document.querySelectorAll('.mem-pop .pop-r')].map((r) => [(r.querySelector('.who, small') || {}).textContent, r.querySelector('b').textContent.replace(/^\\d+ [KMG]B$/, 'n MB'), r.title.replace(/\\d+ [KMG]B|off$/g, 'n MB'), r.scrollWidth <= r.clientWidth])`), [
+        [path.basename(repo.dir), 'n MB', 'untangle n MB · language server n MB', true],
+        ['This page', 'n MB', '', true],
       ]);
       await page.hover('.head h1');
       await page.until(`!document.querySelector('.mem-pop')`);
