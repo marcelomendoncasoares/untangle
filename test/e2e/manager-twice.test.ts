@@ -104,7 +104,7 @@ describe('Given a review two untangles serve, started before untangle checked fo
         '#5 | Retry calls | acme/app · ada · +9 −2 in 3 files | Codex answered N6 | 42 of 301',
         '#5 | Retry calls | acme/app · a second untangle of this review | Open twice: close this one | 40 of 301',
       ]);
-      assert.equal(await page.eval(`document.querySelector('#side .big').textContent`), '259changes left to review42 of 301 reviewed, in 1 open review');
+      assert.equal(await page.eval(`document.querySelector('#side .big').textContent`), '259changes left to review42 of 301 reviewedin 1 open review');
     },
   );
 
