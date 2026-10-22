@@ -120,6 +120,14 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when the page opens, '
+    + 'then the search in the top bar starts where the list’s sheet does, below it.',
+    async () => {
+      assert.equal(await page.eval(`document.querySelector('.jump').getBoundingClientRect().left === document.querySelector('.sheet').getBoundingClientRect().left`), true);
+    },
+  );
+
+  it(
     'when the running row is clicked, '
     + 'then it opens as a peek: Claude’s last lines, the note that waits for you, and the review’s memory and head, to open, pause or close.',
     async () => {
