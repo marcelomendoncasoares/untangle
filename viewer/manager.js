@@ -207,7 +207,7 @@
     const a = r.agents[0];
     const c = r.chat;
     const id = c ? `${c.kind === 'codex' ? 'Thread' : 'Session'} ${c.id.slice(0, 8)}` : '';
-    if (r.status === 'running' && a && r.pausing) return `<span class="agent"><span class="lab" data-st="pausing"><i></i><span>Pausing after ${esc(a.name)}’s turn</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
+    if (r.status === 'running' && a && (r.pausing || r.closing)) return `<span class="agent"><span class="lab" data-st="pausing"><i></i><span>${r.closing ? 'Closing' : 'Pausing'} after ${esc(a.name)}’s turn</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
     if (r.status === 'running' && a) return `<span class="agent"><span class="lab" data-st="${esc(a.state)}"><i></i><span>${esc(a.label)}</span></span><small>${esc(id)}${c && c.orca ? ' · in Orca' : ''}</small></span>`;
     if ((r.status !== 'running' || r.build) && c) return `<span class="agent"><span class="lab" data-st="kept"><i></i><span>${esc(c.agent)}’s chat, kept</span></span><small>${esc(id)}</small></span>`;
     return `<span class="agent"><span class="lab" data-st="none"><i></i><span>No agent</span></span><small>${r.status === 'running' ? 'a chat’s untangle watch holds it' : 'no chat held it'}</small></span>`;
@@ -287,17 +287,19 @@
     const notes = r.older ? '<div class="pk-h"><b>Notes</b></div><p class="pk-text">On its page.</p>' : `<div class="pk-h"><b>${w.length ? 'Waiting for you' : 'Nothing waits for you'}</b></div>${w.map((x) => `<div class="wn"><span class="nb">N${x.n}</span><code>${esc(x.path.split('/').pop())}${x.line ? ':' + x.line : ''}</code><span>${esc(x.by)} ${x.wrote ? 'wrote' : 'answered'}</span></div>`).join('')}<div class="pk-more">${r.notes.open ? `${r.notes.open} open note${r.notes.open === 1 ? '' : 's'}` : 'No open notes'}</div>`;
     const running = r.status === 'running';
     // What's rarely wanted waits behind ⋯: the ways to skip the agent's turn, or the agent.
-    const more = (running && working(r) && !r.pausing && !r.twin ? `<button type="button" class="mi" data-act="pause-now" data-id="${esc(r.id)}">${ICON.pause}Pause now, mid-turn</button>` : '')
+    const midTurn = running && working(r) && !r.twin;
+    const more = (midTurn && !r.pausing && !r.closing ? `<button type="button" class="mi" data-act="pause-now" data-id="${esc(r.id)}">${ICON.pause}Pause now, mid-turn</button>` : '')
+      + (midTurn ? `<button type="button" class="mi" data-act="close-now" data-id="${esc(r.id)}">${ICON.stop}Close now, mid-turn</button>` : '')
       + (r.status === 'paused' && r.chat ? `<button type="button" class="mi" data-act="resume-bare" data-id="${esc(r.id)}">${ICON.play}Resume without the agent</button>` : '');
     // Close, by Open review and Pause, or by Resume: a second untangle has its own.
-    const close = r.twin ? '' : `<button type="button" class="btn sm ghost" data-act="close" data-id="${esc(r.id)}" title="Close the review: its notes and marks stay, and it opens again from Closed">Close</button>`;
+    const close = r.twin ? '' : `<button type="button" class="btn sm ghost" data-act="close" data-id="${esc(r.id)}"${r.closing ? ' disabled' : ''} title="Close the review: its tab and its chat’s terminal close, its space is freed, and its notes and marks stay">${r.closing ? 'Closing' : 'Close'}</button>`;
     const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${more ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
       ${S.menu === 'more:' + r.id && more ? `<div class="pop" style="right:8px;top:40px;width:236px">${more}</div>` : ''}
       ${running ? `<div class="kv"><span>untangle</span><b>${r.memory ? bytes(r.memory.untangle) : '—'}</b><span></span></div>
       <div class="kv"><span>Language server</span><b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b>${r.memory && r.memory.lsp && !r.id.startsWith('run:') ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}</div>` : ''}
       <div class="kv"><span>On disk</span><b>${r.disk != null ? bytes(r.disk) : r.id.startsWith('run:') ? '—' : 'measuring…'}</b><span></span></div>
       <div class="kv"><span>Head</span><b>${esc(r.head.slice(0, 7))}</b><span></span></div>
-      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.twin ? `<button type="button" class="btn sm" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close this one</button>` : r.build || r.older ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}${close}</div>` : ''}
+      ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.twin ? `<button type="button" class="btn sm" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close this one</button>` : r.build || r.older ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing || r.closing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}${close}</div>` : ''}
       ${r.status === 'paused' ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="resume" data-id="${esc(r.id)}">${ICON.play}Resume<kbd>R</kbd></button>${close}</div>` : ''}`;
     return `<div class="peek"><div class="pk">${chat}</div><div class="pk">${notes}</div><div class="pk res">${res}</div></div>`;
   }
@@ -322,7 +324,7 @@
       const run = list.filter((r) => r.status === 'running'), paused = list.filter((r) => r.status === 'paused');
       body = (run.length ? `<div class="gh"><b>Running</b>${run.length}</div>${run.map(row).join('')}` : '') + (paused.length ? `<div class="gh"><b>Paused</b>${paused.length}</div>${paused.map(row).join('')}` : '');
     }
-    const idle = S.tab === 'open' && S.filter === 'all' ? open().find((r) => idleFor(r) > 3600000 && !r.pausing && r.memory) : null;
+    const idle = S.tab === 'open' && S.filter === 'all' ? open().find((r) => idleFor(r) > 3600000 && !r.pausing && !r.closing && r.memory) : null;
     const hint = idle ? `<span class="hint">${esc(idle.name.replace(/^[^#]*#/, '#'))} sat idle ${span(idleFor(idle))} · pausing frees <b>${bytes(memOf(idle))}</b><button type="button" class="btn" data-act="pause" data-id="${esc(idle.id)}">Pause</button></span>` : '';
     patch($('#sheet'), `<div class="head"><h1>${esc(title)}</h1><span class="sub">${S.data ? `${list.length} · newest first` : ''}</span><span class="sp"></span>${hint}</div><div class="list">${body}</div>${pill()}`);
   }
@@ -407,7 +409,7 @@
       h += `<div class="pop mem-pop" style="right:${Math.round(innerWidth - m.right)}px;top:${Math.round(m.bottom + 6)}px;width:400px" role="dialog" aria-label="Memory">
         <div class="pop-h">Memory<span>${bytes(total)}</span></div>
         ${run.map((r) => `<div class="pop-r"><small><span class="who">${esc(r.name)}</span>untangle ${r.memory ? bytes(r.memory.untangle) : '—'} · language server ${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'off'}</small><b>${r.memory ? bytes(memOf(r)) : '—'}</b></div>`).join('')}
-        ${run.filter((r) => idleFor(r) > 3600000 && !r.pausing).map((r) => `<div class="pop-r"><button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}">${ICON.pause}Pause ${esc(r.name)}, idle ${span(idleFor(r))} · frees ${bytes(memOf(r))}</button><span></span></div>`).join('')}
+        ${run.filter((r) => idleFor(r) > 3600000 && !r.pausing && !r.closing).map((r) => `<div class="pop-r"><button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}">${ICON.pause}Pause ${esc(r.name)}, idle ${span(idleFor(r))} · frees ${bytes(memOf(r))}</button><span></span></div>`).join('')}
         <div class="pop-r"><small>This page’s own process</small><b>${bytes(S.data.memory.manager)}</b></div>
       </div>`;
     }
@@ -611,7 +613,7 @@
       repo: p ? p.repo : `${m[1]}/${m[2]}`.toLowerCase(), author: p ? p.author : null, url: it.target, size: { add: 0, del: 0, files: 0 },
       status: 'running', stopped: null, closed: null, opened: new Date().toISOString(), head: '', progress: { done: 0, total: 0 },
       notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null, memory: null, build: { phase: 'starting', step: null, plan: null, error: null },
-      pages: 0, pausing: false, github: null, need: null, needAt: null, active: null, disk: null, freed: null, parts: null, older: false, twin: false, pending: true,
+      pages: 0, pausing: false, closing: false, github: null, need: null, needAt: null, active: null, disk: null, freed: null, parts: null, older: false, twin: false, pending: true,
     };
   }
 
@@ -683,9 +685,16 @@
     if (name === 'open') post('open', { id }).then((d) => toast(d.where === 'orca' ? `${short(r)} is in front, in Orca` : `Opened ${short(r)} in the browser`), (e) => toast(e.message, true));
     if (name === 'chat') post('chat', { id }).then(() => toast(`${r.chat.agent}’s chat is in front, in Orca`), (e) => toast(e.message, true));
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
-    if (name === 'close') {
+    if (name === 'close' || name === 'close-now') {
       S.menu = null;
-      post('close', { id }).then((d) => { toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : d.freed ? `Closed ${short(r)} and freed its space: its notes and marks stay` : `Closed ${short(r)}: its space is freed in a moment`); if (S.sel === id) S.sel = null; S.opened.delete(id); poll(); }, (e) => toast(e.message, true));
+      post('close', { id, now: name === 'close-now' }).then((d) => {
+        const a = r.agents[0];
+        if (d.waiting) { toast(`${short(r)} closes when ${a ? a.name : 'its agent'}’s turn ends`); return poll(); }
+        toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : d.freed ? `Closed ${short(r)} and freed its space: its notes and marks stay` : `Closed ${short(r)}: its space is freed in a moment`);
+        if (S.sel === id) S.sel = null;
+        S.opened.delete(id);
+        poll();
+      }, (e) => toast(e.message, true));
     }
     if (name === 'pause' || name === 'pause-now') {
       S.menu = null;
@@ -815,6 +824,7 @@
       case 'chat':
       case 'lsp':
       case 'close':
+      case 'close-now':
       case 'start':
       case 'pause':
       case 'pause-now':
@@ -928,7 +938,7 @@
     else if ((e.key === 'ArrowRight' || e.key === 'l') && S.sel && !S.opened.has(S.sel)) { e.preventDefault(); S.opened.add(S.sel); render(); loadTail(); }
     else if ((e.key === 'ArrowLeft' || e.key === 'h') && S.sel && S.opened.has(S.sel)) { e.preventDefault(); S.opened.delete(S.sel); S.tails.delete(S.sel); render(); }
     else if (e.key === 'c' && S.sel && byId(S.sel) && byId(S.sel).chat && byId(S.sel).chat.orca) act('chat', S.sel);
-    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build && !byId(S.sel).older && !byId(S.sel).twin) act('pause', S.sel);
+    else if (e.key === 'p' && S.sel && byId(S.sel) && byId(S.sel).status === 'running' && !byId(S.sel).build && !byId(S.sel).older && !byId(S.sel).twin && !byId(S.sel).closing) act('pause', S.sel);
     else if (e.key === 'r' && S.sel && byId(S.sel) && byId(S.sel).status === 'paused') act('resume', S.sel);
     else if (e.key === ' ') {
       const r = open().find(needs);

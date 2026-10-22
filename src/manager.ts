@@ -138,6 +138,8 @@ export interface Row {
   pages: number;
   /** Pausing once its agent's turn ends. */
   pausing: boolean;
+  /** Closing once its agent's turn ends. */
+  closing: boolean;
   /** Merged or closed on GitHub, when it was. */
   github: { state: 'merged' | 'closed'; at: string } | null;
   /** What waits for you, in words: Claude answered N3 and N4. And the first note it's about. */
@@ -190,7 +192,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
     memory: old ? memoryOf(run.pid) : s?.memory ?? null,
     build: old || s?.phase === 'ready' ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false,
+    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false,
   };
 }
 
@@ -264,6 +266,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     build: s && s.phase !== 'ready' ? { phase: s.phase, step: s.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s.plan, error: s.error } : null,
     pages: s?.pages ?? 0,
     pausing: false,
+    closing: false,
     github: r.github ?? null,
     need: need(waiting),
     needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null,
@@ -348,9 +351,10 @@ async function summariesOf(runs: RunInfo[]): Promise<Map<number, Summary>> {
 
 export class Manager {
   private readonly sizes = new Sizes();
-  // Reviews pausing once their agent's turn ends: Pause waits for it, Pause now doesn't.
-  private readonly pausing = new Set<string>();
-  private pauseTimer: NodeJS.Timeout | null = null;
+  // Reviews pausing or closing once their agent's turn ends: Pause and Close wait for it, Pause now
+  // and Close now don't.
+  private readonly stopping = new Map<string, 'pause' | 'close'>();
+  private stopTimer: NodeJS.Timeout | null = null;
   // When the page opens, then hourly: GitHub, about paused reviews' pull requests, and closed reviews' space.
   private hourlyAt = 0;
   // Reviews started again from their row, by process: their row shows them starting.
@@ -438,9 +442,46 @@ export class Manager {
     return { chat: { id, handle }, command: handle ? null : command };
   }
 
-  /** Whether the manager has something to finish: a pause waiting for a turn to end. */
+  /** Whether the manager has something to finish: a pause or a close waiting for a turn to end. */
   get busy(): boolean {
-    return this.pausing.size > 0;
+    return this.stopping.size > 0;
+  }
+
+  /** Whether a review's agent is in a turn: its pause or close waits for the turn to end, unless now. */
+  private async inTurn(run: RunInfo): Promise<boolean> {
+    const s = (await summariesOf([run])).get(run.pid);
+    return !!s && s.agents.some((a) => a.state === 'working');
+  }
+
+  /** Waits for the review's agent's turn to end, then pauses or closes it. */
+  private afterTurn(id: string, how: 'pause' | 'close'): { data: unknown } {
+    this.stopping.set(id, how);
+    this.stopTimer ??= setInterval(() => void this.stopWhenIdle(), 2000);
+    return { data: { waiting: true } };
+  }
+
+  private async stopWhenIdle() {
+    for (const [id, how] of [...this.stopping]) {
+      const f = this.find(id);
+      if (!f || !f.run) { this.stopping.delete(id); continue; }
+      if (await this.inTurn(f.run)) continue;
+      if (how === 'pause') await this.pauseNow(f.record, f.run);
+      else { this.stopping.delete(id); await this.closeNow(f); }
+    }
+    if (!this.stopping.size && this.stopTimer) { clearInterval(this.stopTimer); this.stopTimer = null; }
+  }
+
+  /**
+   * What a review that stops leaves in Orca goes with it: its page's tab, and its chat's terminal
+   * when the manager started the chat. A chat you started yourself stays yours.
+   */
+  private async leave(run: RunInfo, record: Listed | null) {
+    const cli = orcaCli();
+    if (!cli) return;
+    for (const page of [run.page, this.pages.get(run.pid)]) if (page) await orca(['tab', 'close', '--page', page], cli);
+    this.pages.delete(run.pid);
+    const c = record?.chats[0];
+    if (c?.orca && startedHere(c)) await orca(['terminal', 'close', '--terminal', c.orca.handle, '--tab'], cli);
   }
 
   /**
@@ -450,42 +491,19 @@ export class Manager {
    */
   async pause(f: { record: Listed; run: RunInfo | null }, now: boolean): Promise<{ status?: number; data: unknown }> {
     if (!f.run) return { status: 409, data: { error: `${shortName(f.record)} isn’t running` } };
-    if (!now) {
-      const s = (await summariesOf([f.run])).get(f.run.pid);
-      if (s && s.agents.some((a) => a.state === 'working')) {
-        this.pausing.add(idOf(f.record));
-        this.pauseTimer ??= setInterval(() => void this.pauseWhenIdle(), 2000);
-        return { data: { waiting: true } };
-      }
-    }
+    if (!now && (await this.inTurn(f.run))) return this.afterTurn(idOf(f.record), 'pause');
     await this.pauseNow(f.record, f.run);
     return { data: { paused: true } };
   }
 
-  private async pauseWhenIdle() {
-    for (const id of [...this.pausing]) {
-      const f = this.find(id);
-      if (!f || !f.run) { this.pausing.delete(id); continue; }
-      const s = (await summariesOf([f.run])).get(f.run.pid);
-      if (!s || !s.agents.some((a) => a.state === 'working')) await this.pauseNow(f.record, f.run);
-    }
-    if (!this.pausing.size && this.pauseTimer) { clearInterval(this.pauseTimer); this.pauseTimer = null; }
-  }
-
   private async pauseNow(record: Listed, run: RunInfo) {
-    const id = idOf(record);
-    this.pausing.delete(id);
+    this.stopping.delete(idOf(record));
     try {
       await call(run, 'POST', 'stop', { body: { why: 'paused' } });
     } catch (e) {
       if (!(e instanceof Gone)) throw e;
     }
-    const cli = orcaCli();
-    if (!cli) return;
-    for (const page of [run.page, this.pages.get(run.pid)]) if (page) await orca(['tab', 'close', '--page', page], cli);
-    this.pages.delete(run.pid);
-    const c = record.chats[0];
-    if (c?.orca && startedHere(c)) await orca(['terminal', 'close', '--terminal', c.orca.handle, '--tab'], cli);
+    await this.leave(run, record);
   }
 
   /**
@@ -568,10 +586,18 @@ export class Manager {
   }
 
   /**
-   * Closes a review: a running one stops, saying it's closed; a paused one's record says so. Its
-   * space is freed then, once its process has ended: its notes, marks and record stay, to reopen it.
+   * Closes a review: a running one stops, saying it's closed, and its tab and chat's terminal close
+   * as a pause's do; a paused one's record says so. While its agent is in a turn, it closes once the
+   * turn ends, unless now. Its space is freed then, once its process has ended: its notes, marks and
+   * record stay, to reopen it.
    */
-  async close(f: { record: Listed | null; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
+  async close(f: { record: Listed | null; run: RunInfo | null }, now = false): Promise<{ status?: number; data: unknown }> {
+    if (f.record && f.run && !now && (await this.inTurn(f.run))) return this.afterTurn(idOf(f.record), 'close');
+    return this.closeNow(f);
+  }
+
+  private async closeNow(f: { record: Listed | null; run: RunInfo | null }): Promise<{ status?: number; data: unknown }> {
+    if (f.record) this.stopping.delete(idOf(f.record));
     if (f.run) {
       // A second untangle of a review that runs writes its record as it stops: the one that holds it gets it back.
       const run = f.run;
@@ -588,6 +614,8 @@ export class Manager {
         for (let i = 0; i < 100 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
         if (readRecord(recordFile(held.repoKey, held.key))?.pid === run.pid) writeRecord(held);
       }
+      // A second untangle, or one being built, has no chat of its own.
+      await this.leave(run, f.record);
       if (!f.record) return { data: { closed: true } };
       for (let i = 0; i < 200 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
     }
@@ -637,7 +665,7 @@ export class Manager {
     const asked = fresh.length ? await summariesOf(fresh) : new Map<number, Summary>();
     const h = holdings(list, runs);
     const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, r.freed ? leftOf(r) : sizeOf(r.status === 'closed' ? h.own.get(idOf(r)) ?? [] : keptDirs(r)), h));
-    rows.forEach((x) => { x.pausing = this.pausing.has(x.id); });
+    rows.forEach((x) => { x.pausing = this.stopping.get(x.id) === 'pause'; x.closing = this.stopping.get(x.id) === 'close'; });
     if (fresh.length) {
       for (const run of fresh) {
         const said = asked.get(run.pid);
@@ -745,7 +773,7 @@ export class Manager {
       const run = listRuns().find((x) => x.pid === Number(building[1]));
       if (!run) return { status: 404, data: { error: 'the review stopped' } };
       if (route === 'open' && method === 'POST') return this.show(run);
-      if (route === 'close' && method === 'POST') return this.close({ record: null, run });
+      if (route === 'close' && method === 'POST') return this.closeNow({ record: null, run });
       return { status: 409, data: { error: 'the review is being built' } };
     }
     const f = this.find(b.id);
@@ -758,7 +786,7 @@ export class Manager {
       if (!f.run) return { status: 409, data: { error: `${shortName(f.record)} isn’t running` } };
       return { data: await this.chat(f.record.target, agent) };
     }
-    if (route === 'close' && method === 'POST') return this.close(f);
+    if (route === 'close' && method === 'POST') return this.close(f, (b as { now?: unknown }).now === true);
     if (route === 'pause' && method === 'POST') return this.pause(f, (b as { now?: unknown }).now === true);
     if (route === 'resume' && method === 'POST') return this.resume(f, (b as { agent?: unknown }).agent !== false);
     if (route === 'chat' && method === 'POST') {

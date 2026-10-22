@@ -336,10 +336,12 @@ running without an agent gets one the same way, from its row.
 the agent's turn to end, so the chat stops at a good place; *Pause now*, in the row's menu,
 doesn't. A review left idle for an hour says so. A paused pull request that's merged or closed on
 GitHub moves to Closed.
-- **Close** stops a review and frees the space it holds on disk. Its notes and marks stay, so
-*Reopen* builds the rest again, and *Forget*, under Closed, asks first, then removes those too. A
-paused pull request that's merged or closed on GitHub closes the same way. What a review closed
-before still holds is freed fourteen days on, or with *Free the space*.
+- **Close** stops a review as Pause does, its tab and its chat's terminal with it, waiting for the
+agent's turn to end (*Close now*, in the row's menu, doesn't), and frees the space it holds on
+disk. Its notes and marks stay, so *Reopen* builds the rest again, and *Forget*, under Closed,
+asks first, then removes those too. A paused pull request that's merged or closed on GitHub closes
+the same way. What a review closed before still holds is freed fourteen days on, or with *Free the
+space*.
 - **Outside Orca**, the agent's command is copied for you to run in a terminal.
 
 ### Upgrading

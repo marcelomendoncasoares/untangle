@@ -124,9 +124,15 @@ describe('Given a review Claude works on, in the manager inside Orca, ', { skip,
 
   it(
     'when Close is clicked in its row, '
-    + 'then the review closes, and its space is freed: it leaves the open reviews, and Closed lists it, its space freed.',
+    + 'then the review closes as a pause does, its tab and Claude’s terminal with it, and its space is freed: Closed lists it, its space freed.',
     async () => {
       await page.until(`!!document.querySelector('.row.running') && !document.querySelector('.st.build')`, 60_000);
+      // The resumed chat holds the review from its new terminal, as it does once told the review is back.
+      const made = (what: string) => calls().filter((c) => c[0] === what && c[1] === 'create').length;
+      const terminal = `term_${made('terminal')}`, tab = `pg_${made('tab')}`;
+      await untangleCommand(['watch', '-timeout', '1s'], { cacheDir: cache, gh, cwd: repo.dir, env: env({ CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: chat, CLAUDE_PID: String(process.pid), CLAUDE_CONFIG_DIR: config, ORCA_TERMINAL_HANDLE: terminal }) });
+      const records = () => (fs.readdirSync(path.join(cache, 'sessions'), { recursive: true }) as string[]).filter((f) => f.endsWith('.json')).map((f) => fs.readFileSync(path.join(cache, 'sessions', f), 'utf8'));
+      await until('its record to name the terminal', () => records().some((r) => r.includes(`"handle":"${terminal}"`)));
       if (!(await page.eval(`!!document.querySelector('.rw.open .peek')`))) await page.click('.row.running');
       await page.until(`!!document.querySelector('.peek [data-act="close"]')`);
       assert.equal(await page.eval(`[...document.querySelectorAll('.peek .pk-act .btn')].map((b) => b.textContent).join(' · ')`), 'Open review⏎ · PauseP · Close');
@@ -135,6 +141,7 @@ describe('Given a review Claude works on, in the manager inside Orca, ', { skip,
       await page.until(`[...document.querySelectorAll('.toast')].some((t) => t.textContent === ${JSON.stringify(`Closed ${name()} and freed its space: its notes and marks stay`)})`);
       await page.click('[data-act="tab"][data-key="closed"]');
       await page.until(`document.querySelectorAll('.crow:not(.fixed)').length === 1 && document.querySelector('.crow .l2').textContent.includes(' · space freed ')`);
+      assert.deepEqual(calls().filter((c) => c[1] === 'close').slice(-2), [['tab', 'close', '--page', tab], ['terminal', 'close', '--terminal', terminal, '--tab']]);
     },
   );
 });
