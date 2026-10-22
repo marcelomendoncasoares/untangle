@@ -4169,29 +4169,49 @@
       const count = stats(blocksOf(focused.blocks)).total;
       h += `<div class="focus-bar">Showing only <b>${esc(l2)}</b> · ${count} change${count > 1 ? 's' : ''}<span class="sp"></span><button type="button" class="btn xs" data-act="clear-focus">Show all ${c.graph.nodes.length} members</button></div>`;
     }
+    // A file's members read together, as the file has them: a function and its uses in one file are
+    // one stretch of its code, in its order, where the first of them comes in the chain.
+    const parts = [], byFile = new Map();
     c.graph.nodes.forEach((n) => {
       if ((focused && n !== focused) || tests.nodes.has(n)) return;
-      const blocks = blocksOf(n.blocks);
-      const ns = stats(blocks);
+      const files = n.group !== null && n.group !== undefined ? [] : [...new Set(blocksOf(n.blocks).map((b) => b.file))];
+      const f = files.length === 1 ? files[0] : null;
+      if (f && byFile.has(f)) return byFile.get(f).push(n);
+      const part = [n];
+      if (f) byFile.set(f, part);
+      parts.push(part);
+    });
+    parts.forEach((ns) => {
+      const n = ns[0];
+      const blocks = ns.flatMap((x) => blocksOf(x.blocks));
+      const ns2 = stats(blocks);
       const { l1, l2, owner } = nodeLabels(n);
-      const out = c.graph.edges.filter((e) => e.from === n.key), usedByN = c.graph.edges.filter((e) => e.to === n.key).length;
-      const usesFull = out.map((e) => `uses ${e.labels.join(', ')} of ${nodeLabels(c.graph.nodes.find((x) => x.key === e.to)).l2}`);
-      const rel = (out.length === 1 ? [`uses ${nodeLabels(c.graph.nodes.find((x) => x.key === out[0].to)).l2}`] : out.length ? [`uses ${out.length}`] : []).concat(usedByN ? [`used by ${usedByN}`] : []).join(' · ');
+      const keys = new Set(ns.map((x) => x.key));
+      const label = (key) => nodeLabels(c.graph.nodes.find((x) => x.key === key)).l2;
+      // What the section uses and what uses it, outside it.
+      const out = c.graph.edges.filter((e) => keys.has(e.from) && !keys.has(e.to)), usedByN = c.graph.edges.filter((e) => keys.has(e.to) && !keys.has(e.from)).length;
+      const usesFull = out.map((e) => `uses ${e.labels.join(', ')} of ${label(e.to)}`);
+      const rel = (out.length === 1 ? [`uses ${label(out[0].to)}`] : out.length ? [`uses ${out.length}`] : []).concat(usedByN ? [`used by ${usedByN}`] : []).join(' · ');
       const full = usesFull.concat(usedByN ? [`used by ${usedByN} member${usedByN > 1 ? 's' : ''}`] : []).join('; ');
-      h += `<section class="sec${lensOn() && !blocks.some((b) => b.edits.length && blockIn(b)) ? ' lens-out' : ''}" id="sec-${n.idx}"><div class="sec-h"><b>${esc(l2)}</b><span>${esc(owner ? owner + ' · ' + l1 : l1)}</span>${n.key === c.graph.root ? '<span class="tag">root</span>' : ''}${rel ? `<span title="${esc(full)}">${esc(rel)}</span>` : ''}<span class="sp"></span>`
-        + `<span class="hov"><span>${leftWords(ns)} · ${plusMinus(sumOf(blocks, 'adds'), sumOf(blocks, 'dels'))}</span>${outOfLens(ns) ? '' : `<button type="button" class="btn xs" data-act="mark-blocks" data-blocks="${esc(n.blocks.join(' '))}">${ns.open ? 'Mark reviewed' : 'Mark unreviewed'}</button>`}</span></div>`
-        + extNoteHtml(c, n);
+      // Its members by name; a file's lines outside them (its imports) go without saying.
+      const named = [...new Set(ns.map((x) => (x.member ? memberParts(x.member).name : x.unit ? nodeLabels(x).l2 : null)).filter(Boolean))];
+      const names = named.length ? named : [l2];
+      const title = ns.length > 1 ? names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '') : l2;
+      const where = ns.length > 1 ? l1 : owner ? owner + ' · ' + l1 : l1;
+      h += `<section class="sec${lensOn() && !blocks.some((b) => b.edits.length && blockIn(b)) ? ' lens-out' : ''}" id="sec-${n.idx}"${ns.length > 1 ? ` data-secs="${ns.map((x) => x.idx).join(' ')}"` : ''}><div class="sec-h"><b${ns.length > 1 ? ` title="${esc(names.join(', '))}"` : ''}>${esc(title)}</b><span>${esc(where)}</span>${keys.has(c.graph.root) ? '<span class="tag">root</span>' : ''}${rel ? `<span title="${esc(full)}">${esc(rel)}</span>` : ''}<span class="sp"></span>`
+        + `<span class="hov"><span>${leftWords(ns2)} · ${plusMinus(sumOf(blocks, 'adds'), sumOf(blocks, 'dels'))}</span>${outOfLens(ns2) ? '' : `<button type="button" class="btn xs" data-act="mark-blocks" data-blocks="${esc(ns.flatMap((x) => x.blocks).join(' '))}">${ns2.open ? 'Mark reviewed' : 'Mark unreviewed'}</button>`}</span></div>`
+        + ns.map((x) => extNoteHtml(c, x)).join('');
       if (n.group !== null && n.group !== undefined) {
         const g = m.groupById.get(n.group);
         h += `<p class="sec-note">The same change in ${blocks.length} places. Each place shows the whole edit.</p>` + instancesHtml(g, blocks, 'chain' + c.id + ':' + n.idx);
       } else {
-        h += subHunksHtml(blocks, { chain: c, unit: n.unit, whole: blocks.every((b) => b.unit), key: 'c' + c.id + 'n' + n.idx });
-        // The member's other changes belong to other chains: folded context here.
-        const rest = n.member ? [...new Set(blocks.map((b) => b.mk))].flatMap((k) => m.byMember.get(k) || []).filter((b) => !c.blockSet.has(b.id)) : [];
+        h += subHunksHtml(blocks, { chain: c, unit: ns.length > 1 ? null : n.unit, whole: blocks.every((b) => b.unit), key: 'c' + c.id + 'n' + n.idx });
+        // The members' other changes belong to other chains: folded context here.
+        const rest = [...new Set(ns.filter((x) => x.member).flatMap((x) => blocksOf(x.blocks)).map((b) => b.mk))].flatMap((k) => m.byMember.get(k) || []).filter((b) => !c.blockSet.has(b.id));
         if (rest.length) {
           const key = c.id + ':' + n.idx, open = state.memberOpen.has(key);
           const others = [...new Set(rest.flatMap((b) => m.chainsOf.get(b.id) || []))];
-          h += `<div class="more-row ctx-row"><button type="button" class="linkish" data-act="toggle-member" data-key="${esc(key)}">${open ? 'Hide' : 'Show'} ${rest.length} more change${rest.length > 1 ? 's' : ''} in this member</button><span>, in ${others.length ? others.slice(0, 2).map((o) => esc(m.chains[o].name)).join(', ') + (others.length > 2 ? ` +${others.length - 2}` : '') : 'no chain'}</span></div>`;
+          h += `<div class="more-row ctx-row"><button type="button" class="linkish" data-act="toggle-member" data-key="${esc(key)}">${open ? 'Hide' : 'Show'} ${rest.length} more change${rest.length > 1 ? 's' : ''} in ${ns.length > 1 ? 'these members' : 'this member'}</button><span>, in ${others.length ? others.slice(0, 2).map((o) => esc(m.chains[o].name)).join(', ') + (others.length > 2 ? ` +${others.length - 2}` : '') : 'no chain'}</span></div>`;
           if (open) h += subHunksHtml(rest, { chain: c, key: 'cm' + key });
         }
       }
@@ -4256,7 +4276,9 @@
   // button. Anywhere else in the chain, or in a file whose changes are in chains, hovering the button
   // drops the graph over the code (a look) and clicking keeps it there, centered on the member being
   // read. It drops and folds back with one motion, played forward and back.
-  const GD = { enterT: 0, leaveT: 0, folded: null, view: null, anim: null, order: [] };
+  // went: the member the graph went to, named while the page stays where it took it (a member at
+  // the end of a short file can't reach the reading line).
+  const GD = { enterT: 0, leaveT: 0, folded: null, view: null, anim: null, order: [], went: null };
   const GD_FRAMES = [
     { opacity: 0, transform: 'translateY(-8px)', clipPath: 'inset(0 0 100% 0 round 0 0 12px 12px)' },
     { opacity: 1, transform: 'none', clipPath: 'inset(0 0 0 0 round 0 0 12px 12px)' },
@@ -4269,8 +4291,8 @@
     const out = [];
     main.querySelectorAll('.sec[id^="sec-"]:not(.ol-sec), .ol-row[data-mark]').forEach((el) => {
       if (el.closest('.gd')) return;
-      const i = el.matches('.ol-row') ? rowNode(c, el) : Number(el.id.slice(4));
-      if (i >= 0 && !out.includes(i)) out.push(i);
+      const ix = el.matches('.ol-row') ? [rowNode(c, el)] : el.dataset.secs ? el.dataset.secs.split(' ').map(Number) : [Number(el.id.slice(4))];
+      ix.forEach((i) => { if (i >= 0 && !out.includes(i)) out.push(i); });
     });
     c.graph.nodes.forEach((n) => { if (!out.includes(n.idx)) out.push(n.idx); });
     return out;
@@ -4278,6 +4300,7 @@
   // The member being read: the last one whose code (its section, or a test's row) starts above the
   // reading line.
   function hereNode(c) {
+    if (GD.went && GD.went.chain === c.id && Math.abs(main.scrollTop - GD.went.top) < 2) return GD.went.node;
     const ref = readY();
     let at = null;
     for (const el of paneQuery('members', () => [...main.querySelectorAll('.sec[id^="sec-"], .ol-row[data-mark]')].filter((x) => !x.closest('.gd')))) {
@@ -4286,7 +4309,18 @@
     }
     if (!at) return GD.order.length ? GD.order[0] : null;
     if (at.matches('.ol-row')) { const i = rowNode(c, at); if (i >= 0) return i; }
-    return at.dataset.secs ? Number(at.dataset.secs.split(' ')[0]) : Number(at.id.slice(4));
+    if (!at.dataset.secs) return Number(at.id.slice(4));
+    // A file's members read together: the one whose change marks the last row above the line.
+    const idxs = at.dataset.secs.split(' ').map(Number);
+    let here = idxs[0];
+    if (!at.matches('.ol-sec')) {
+      for (const t of at.querySelectorAll('.tick[data-block]')) {
+        if (t.getBoundingClientRect().top > ref) break;
+        const i = idxs.find((x) => c.graph.nodes[x] && c.graph.nodes[x].blocks.includes(t.dataset.block));
+        if (i != null) here = i;
+      }
+    }
+    return here;
   }
   // The header names the member being read, and its place in the chain.
   function spyHere() {
@@ -4446,6 +4480,10 @@
     clearTimeout(GD.enterT); GD.enterT = 0;
     if (state.gdrop && !state.gdrop.kept) GD.leaveT = setTimeout(() => { if (state.gdrop && !state.gdrop.kept) gdClose(); }, 260);
   });
+  // A member's section: its own, or the one it shares with the other members of its file.
+  function secOf(i) {
+    return main.querySelector('#sec-' + i) || [...main.querySelectorAll('[data-secs]')].find((x) => x.dataset.secs.split(' ').includes(String(i))) || null;
+  }
   // A member, from the graph: its code, and a pulse there.
   function goNode(i) {
     const c = M().chains[state.view.id], n = c && c.graph.nodes[i];
@@ -4456,7 +4494,10 @@
       || [...main.querySelectorAll('[data-secs]')].find((x) => x.dataset.secs.split(' ').includes(String(i)));
     if (!el) return;
     const cls = el.matches('.ol-row') ? 'flash' : 'flash-sec';
-    glideTo(el, headH() + 8, 0, () => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); });
+    // A member read with the others of its file: the page goes to its own first change.
+    const own = el.dataset.secs && !el.matches('.ol-sec') && Number(el.dataset.secs.split(' ')[0]) !== i ? [...el.querySelectorAll('.tick[data-block]')].find((t) => ids.has(t.dataset.block)) : null;
+    GD.went = null;
+    glideTo(own ? own.closest('.ln') || own : el, headH() + 8, 0, () => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); GD.went = { chain: c.id, node: i, top: main.scrollTop }; spyHere(); });
   }
 
   // ---------- the Tests view: every sentence the review's tests add, reword, regroup or remove, file
@@ -6022,7 +6063,7 @@
       pendingLine = !el || main.querySelector('.ln.loading') ? { view: state.view, line: opts.line } : null;
       if (el && !pendingLine) arrive(el, 'arrive');
     } else if (opts.section != null) {
-      const el = main.querySelector('#sec-' + opts.section);
+      const el = secOf(opts.section);
       if (el) { placeRow(el, headH() + 8); arrive(el, 'flash-sec'); }
     } else if (opts.scroll != null) main.scrollTop = opts.scroll;
     else if (opts.top) main.scrollTop = 0;
@@ -6332,7 +6373,10 @@
     const band = bandOf(el);
     const btn = sec ? sec.querySelector('.sec-h [data-act="mark-blocks"]') : band && band.querySelector('[data-act="mark-blocks"]');
     if (!btn) return false;
-    const blocks = blocksOf(btn.dataset.blocks.split(' ')).filter((b) => b && b.edits.length && blockIn(b) && !doneL(b));
+    // A section that reads a file's members together: the member the change is in.
+    const c = sec && sec.dataset.secs && el.dataset.block ? M().chains[state.view.id] : null;
+    const member = c ? sec.dataset.secs.split(' ').map((i) => c.graph.nodes[Number(i)]).find((n) => n && n.blocks.includes(el.dataset.block)) : null;
+    const blocks = blocksOf(member ? member.blocks : btn.dataset.blocks.split(' ')).filter((b) => b && b.edits.length && blockIn(b) && !doneL(b));
     if (!blocks.length) return false;
     if (commitLens()) markCommitLines(blocks, true);
     else setEdits(blocks.flatMap((b) => b.edits), true);
@@ -7360,7 +7404,7 @@
       state.focus = null;
       state.peek = { ext: { chain: c.id, anchor: at >= 0 ? x.from[0] : 'chain', i } };
       render();
-      if (at >= 0) landAt(main.querySelector('#sec-' + at), headH() + 8);
+      if (at >= 0) landAt(secOf(at), headH() + 8);
       return;
     }
     if (act === 'ext') {

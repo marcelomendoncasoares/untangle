@@ -43,12 +43,14 @@ const newestFirst = [
 
 const factsOf = `[...document.querySelectorAll('.hd-facts dt')].map((dt) => dt.textContent + ': ' + (dt.nextElementSibling?.textContent ?? '').replace(/\\s+/g, ' ').trim()).join('\\n')`;
 const topBar = `document.querySelector('.t-head')?.textContent ?? ''`;
+// The function's change: the first in the section that reads the greeting and its call together.
 const functionTick = `(() => {
-  const sec = [...document.querySelectorAll('.sec')].find((el) => (el.querySelector('.sec-h b')?.textContent || '') === 'greet');
+  const sec = [...document.querySelectorAll('.sec')].find((el) => (el.querySelector('.sec-h b')?.textContent || '').split(', ')[0] === 'greet');
   if (!sec) return 'headers:' + [...document.querySelectorAll('.sec-h b')].map((el) => el.textContent).join(',');
   const summary = sec.querySelector('.hh-sum')?.textContent || '';
   if (summary.includes('reviewed')) return 'reviewed';
-  return sec.querySelector('.tick')?.getAttribute('aria-pressed') ?? 'no tick';
+  const pressed = sec.querySelector('.tick')?.getAttribute('aria-pressed');
+  return pressed === 'true' ? 'reviewed' : pressed ?? 'no tick';
 })()`;
 const lineFade = (text: string) => `(() => { const line = [...document.querySelectorAll('.ln, .sl')].find((el) => (el.textContent || '').includes(${JSON.stringify(text)})); return line && line.className.includes('lens-out') ? 'faded' : 'shown'; })()`;
 
@@ -1085,7 +1087,7 @@ describe('Given a served review of feature, its pull request, a merge of two com
       const id = await read(page!, `([...document.querySelectorAll('.sec')].find((el) => (el.textContent || '').includes('void greet(String name)')) || {}).id ?? ''`);
       await page!.click(`#${id} .tick:not(.lens-out)`);
       await waitForSave(page!);
-      await page!.click(`#${id} .sec-h [data-act="mark-blocks"]`);
+      await page!.click(`#${id} .tick:not(.lens-out)`);
       await waitForSave(page!);
       tick = await read(page!, functionTick);
       await page!.key('Escape');

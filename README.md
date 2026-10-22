@@ -79,8 +79,9 @@ review.
 A chain is one change followed across files: the commit that started it, the calls it changed,
 and the code that had to change in turn. Each commit and the commits that later touched its lines
 make one chain, named after it and opening with its message, so back-and-forths don't repeat. A
-chain reads as a graph of what each change uses; the map shows which chains build on which.
-`-chains structure` follows the code alone, without the commits.
+chain reads as a graph of what each change uses; the map shows which chains build on which. Under
+the graph, the changes of one file read together, in the file's order: a function and its calls
+in that file are one stretch of it. `-chains structure` follows the code alone, without the commits.
 
 ![The chain map of #168: chains by commit, in levels, each after the chains it builds on](docs/images/map.png)
 

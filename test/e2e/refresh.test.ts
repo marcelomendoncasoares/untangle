@@ -159,7 +159,8 @@ describe('Given a served review of a greeting and a notes file, ', { skip, timeo
       const chainId = await read(page!, `([...document.querySelectorAll('[data-chain]')].find((el) => (el.textContent || '').includes('greet(name)')) || {}).dataset?.chain ?? ''`);
       await page!.click(`[data-chain="${chainId}"]`);
       await page!.until(`(document.querySelector('.crumbs')?.textContent || '').includes('greet(name)')`);
-      marked = await read(page!, `([...document.querySelectorAll('.sec')].find((el) => el.querySelector('.sec-h b')?.textContent === 'greet')?.querySelector('.hh-sum')?.textContent) ?? ''`);
+      // The chain reads the greeting and its call together, in one section of their file.
+      marked = await read(page!, `[...([...document.querySelectorAll('.sec')].find((el) => (el.querySelector('.sec-h b')?.textContent || '').split(', ')[0] === 'greet')?.querySelectorAll('.tick[data-block]') ?? [])].filter((t) => !t.closest('.other')).map((t) => t.getAttribute('aria-pressed')).join(' ')`);
       await page!.click('[data-tab="files"]');
       await page!.click('[data-open="lib/notes.dart"]');
       await page!.until(`!!document.querySelector('.code[data-p="lib/notes.dart"]')`);
@@ -182,8 +183,8 @@ describe('Given a served review of a greeting and a notes file, ', { skip, timeo
       assert.equal(where, 'Files/lib/notes.dart');
     });
 
-    it('then the greeting stays reviewed.', () => {
-      assert.equal(marked, '7 lines reviewed');
+    it('then the greeting stays reviewed, and its call open.', () => {
+      assert.equal(marked, 'true false');
     });
 
     it('then the unsent note is kept.', () => {

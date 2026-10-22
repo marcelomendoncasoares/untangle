@@ -57,6 +57,11 @@ const notesBefore = ['// start', ...pads, ''].join('\n');
 const notesAfter = ['// changed', ...pads, ''].join('\n');
 
 const pill = `document.querySelector('.pill-n')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''`;
+// The greeting's chain reads the members of its file together: the greeting's change, then its call's.
+const greetSec = `[...document.querySelectorAll('.sec')].find((el) => (el.querySelector('.sec-h b')?.textContent || '').split(', ')[0] === 'greet')`;
+// The chain's own changes: another chain's next to them shows dimmed, as context.
+const ownTicks = (sec: string) => `[...(${sec}?.querySelectorAll('.tick[data-block]') ?? [])].filter((t) => !t.closest('.other'))`;
+const greetTicks = `${ownTicks(greetSec)}.map((t) => t.getAttribute('aria-pressed')).join(' ')`;
 const crumbs = `document.querySelector('.crumbs')?.textContent ?? ''`;
 const fits = `(() => { const root = document.documentElement; const box = document.querySelector('#viewer'); return root.scrollWidth <= root.clientWidth && (!box || box.scrollWidth <= box.clientWidth) ? 'fits' : root.scrollWidth + ' > ' + root.clientWidth; })()`;
 const tail = `[(document.querySelector('.hh-tail .hh-tx')?.textContent ?? ''), (document.querySelector('.hh-tail .mo')?.textContent ?? '')].join('\\n')`;
@@ -377,6 +382,20 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
     });
   });
 
+  describe('when the greeting’s chain is opened, ', () => {
+    let read1 = '';
+
+    before(async () => {
+      await rest(page!);
+      await chain(page!, 'greet(name)');
+      read1 = await read(page!, `[...document.querySelectorAll('#vw-main .sec')].map((el) => [el.querySelector('.sec-h b').textContent, el.querySelector('.sec-h span').textContent, [...el.querySelectorAll('.sec-file')].map((f) => f.textContent).join(','), ${ownTicks('el')}.map((t) => t.closest('.ln').dataset.c).join(' ')].join(' | ')).join('\\n')`);
+    });
+
+    it('then the greeting and its call, in one file, read as one section of it, in the file’s order.', () => {
+      assert.equal(read1, 'greet, main | app.dart | lib/app.dart | L:1 L:6');
+    });
+  });
+
   describe('when Space is pressed on the greeting, ', () => {
     let folded: string;
     let next: string;
@@ -387,7 +406,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await page!.click('.sec-h b');
       await page!.key(' ');
       await waitForSave(page!);
-      folded = await read(page!, `([...document.querySelectorAll('.sec')].find((el) => el.querySelector('.sec-h b')?.textContent === 'greet')?.querySelector('.hh-sum')?.textContent) ?? ''`);
+      folded = await read(page!, greetTicks);
       next = await read(page!, pill);
     });
 
@@ -395,8 +414,8 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await clearMarks();
     });
 
-    it('then the hunk is already folded into its divider.', () => {
-      assert.equal(folded, '7 lines reviewed');
+    it('then the greeting’s change is reviewed, and its call, in the same stretch of the file, waits.', () => {
+      assert.equal(folded, 'true false');
     });
 
     it('then the pill is on the next change.', () => {
@@ -413,15 +432,15 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await page!.click('.sec-h b');
       await page!.key(' ', { shift: true });
       await waitForSave(page!);
-      members = await read(page!, `[...document.querySelectorAll('.sec')].map((el) => (el.querySelector('.sec-h b')?.textContent ?? '') + ' ' + ((el.querySelector('.hh-sum')?.textContent || '').includes('reviewed') ? 'reviewed' : 'open')).join('\\n')`);
+      members = await read(page!, `[...document.querySelectorAll('.sec')].map((el) => el.querySelector('.sec-h b')?.textContent ?? '').join(' | ') + ' · ' + ${greetTicks}`);
     });
 
     after(async () => {
       await clearMarks();
     });
 
-    it('then that member is reviewed and the call stays open.', () => {
-      assert.equal(members, 'greet reviewed\napp.dart open');
+    it('then that member is reviewed and the call stays open, in the section that reads them together.', () => {
+      assert.equal(members, 'greet, main · true false');
     });
   });
 
@@ -440,7 +459,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await page!.goto(url);
       await page!.until(`!!document.querySelector('.t-head')`, 30_000);
       await chain(page!, 'greet(name)');
-      reviewed = await read(page!, `([...document.querySelectorAll('.sec')].find((el) => el.querySelector('.sec-h b')?.textContent === 'greet')?.querySelector('.hh-sum')?.textContent) ?? ''`);
+      reviewed = await read(page!, greetTicks);
       await page!.click('[aria-label="Marks"]');
       await page!.until(`(document.querySelector('.mi-note')?.textContent || '').includes('untangle/marks/feature')`);
       saved = await read(page!, `document.querySelector('.mi-note')?.textContent ?? ''`);
@@ -453,7 +472,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
     });
 
     it('then the greeting is still reviewed.', () => {
-      assert.equal(reviewed, '7 lines reviewed');
+      assert.equal(reviewed, 'true false');
     });
 
     it('then the marks panel says the marks are kept in git as untangle/marks/feature.', () => {
@@ -477,7 +496,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await page!.until(`!!document.querySelector('[data-act="reset"]')`);
       await page!.click('[data-act="reset"]');
       await page!.until(`!(document.querySelector('.sec .hh-sum')?.textContent || '').includes('reviewed')`);
-      afterReset = await read(page!, `([...document.querySelectorAll('.sec')].find((el) => el.querySelector('.sec-h b')?.textContent === 'greet')?.querySelector('.tick')?.getAttribute('aria-pressed')) ?? 'missing'`);
+      afterReset = await read(page!, `(${greetSec}?.querySelector('.tick')?.getAttribute('aria-pressed')) ?? 'missing'`);
     });
 
     after(async () => {
@@ -520,15 +539,16 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await page!.setViewport(1400, 420);
       await page!.click('.graph-box g.g-node[aria-label="app.dart, top level"]', { scroll: false });
       await page!.until(`!!document.querySelector('.sec.flash-sec') && (document.querySelector('.fv-here')?.textContent || '').includes('app.dart')`);
-      went = await read(page!, `(() => { const sec = document.querySelector('.sec.flash-sec'); const top = sec.getBoundingClientRect().top - document.querySelector('#vw-main').getBoundingClientRect().top - document.querySelector('.fv-head').offsetHeight; return sec.querySelector('.sec-h b').textContent + ' at ' + Math.round(top) + ' · ' + (document.querySelector('.focus-bar') ? 'filtered' : 'all members') + ' · ' + document.querySelector('.fv-here').textContent; })()`);
+      went = await read(page!, `(() => { const sec = document.querySelector('.sec.flash-sec'); const call = ${ownTicks('sec')}.pop().closest('.ln'); const top = call.getBoundingClientRect().top - document.querySelector('#vw-main').getBoundingClientRect().top - document.querySelector('.fv-head').offsetHeight; const seen = top >= 0 && call.getBoundingClientRect().bottom <= document.querySelector('#vw-main').getBoundingClientRect().bottom; return sec.querySelector('.sec-h b').textContent + ', its call ' + (seen ? 'in view' : 'out of view, at ' + Math.round(top)) + ' · ' + (document.querySelector('.focus-bar') ? 'filtered' : 'all members') + ' · ' + document.querySelector('.fv-here').textContent; })()`);
     });
 
     after(async () => {
       await page!.setViewport(1400, 900);
     });
 
-    it('then the page goes to that member\'s code, all members still shown, and the header names it.', () => {
-      assert.equal(went, 'app.dart at 8 · all members · Reading app.dart · 2 of 2');
+    it('then the page goes to that member\'s own change, in the section it shares with the greeting, all members still shown, and the header names it.', () => {
+      // The call is near the file's end, so the page can't take it up to the header: it's in view, named.
+      assert.equal(went, 'greet, main, its call in view · all members · Reading app.dart · 2 of 2');
     });
   });
 
@@ -561,8 +581,9 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
       await rest(page!);
       await chain(page!, 'greet(name)');
       await page!.setViewport(1400, 420);
-      await page!.eval(`(() => { const main = document.querySelector('#vw-main'); const sec = [...main.querySelectorAll('.sec')].find((el) => el.querySelector('.sec-h b')?.textContent === 'app.dart'); main.scrollTop += sec.getBoundingClientRect().top - main.getBoundingClientRect().top - main.querySelector('.fv-head').offsetHeight - 8; })()`);
-      await page!.until(`(document.querySelector('.fv-here')?.textContent || '').includes('app.dart')`);
+      // The greeting's own change at the reading line: the graph has gone under the header.
+      await page!.eval(`(() => { const main = document.querySelector('#vw-main'); const own = ${ownTicks(greetSec)}[0].closest('.ln'); main.scrollTop += own.getBoundingClientRect().top - main.getBoundingClientRect().top - main.querySelector('.fv-head').offsetHeight - 8; })()`);
+      await page!.until(`(document.querySelector('.fv-here')?.textContent || '').includes('greet') && document.querySelector('.fv-head [data-act="graph"]').getAttribute('aria-pressed') === 'false'`);
       await page!.hover('.fv-head [data-act="graph"]', { scroll: false });
       await page!.until(`!document.querySelector('.gd').hidden`);
       dropped = await read(page!, `[document.querySelector('.gd .g-node.here')?.getAttribute('aria-label') ?? 'no ring', document.querySelector('.gd-foot').textContent, document.querySelector('.fv-head [data-act="graph"]').getAttribute('aria-expanded')].join('\\n')`);
@@ -576,7 +597,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
     });
 
     it('then the graph drops from the header, the member being read ringed and named, and goes back up once the pointer leaves.', () => {
-      assert.equal(`${dropped}\n${left}`, 'app.dart, top level\nCentered on app.dart, the member you’re readingClick a member to go to it · Esc or scrolling folds it\ntrue\nfalse');
+      assert.equal(`${dropped}\n${left}`, 'greet, app.dart\nCentered on greet, the member you’re readingClick a member to go to it · Esc or scrolling folds it\ntrue\nfalse');
     });
   });
 
@@ -629,7 +650,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
     });
 
     it('then g drops the graph, and the member\'s click folds it and goes to its code.', () => {
-      assert.equal(went, 'greet · Reading greet · 1 of 2');
+      assert.equal(went, 'greet, main · Reading greet · 1 of 2');
     });
   });
 
