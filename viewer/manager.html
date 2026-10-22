@@ -94,7 +94,10 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .grp { padding: 16px 8px 6px; font-size: 11.5px; color: var(--text-3); }
 .disk { margin-top: auto; display: grid; gap: 9px; padding: 14px 8px 0; border-top: 1px solid var(--hair); }
 .disk-h { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--text-2); }
-.disk-h b { font: 600 13px/1 var(--code); color: var(--text); }
+.disk-h b { font: 600 13px/1 var(--code); color: var(--text); white-space: nowrap; }
+.disk-h span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* While the folders are measured: a circle that turns after the words, on their line. */
+.disk-h .meas { flex: none; align-self: center; width: 10px; height: 10px; border: 1.5px solid var(--text-3); border-right-color: transparent; border-radius: 50%; animation: spin .9s linear infinite; }
 .disk-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--raised); }
 .disk-bar i { display: block; height: 100%; }
 .legend { display: grid; gap: 5px; font-size: 11.5px; color: var(--text-3); }

@@ -187,6 +187,19 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when the cache is being measured, '
+    + 'then its line says so with a circle after its words, all on one line; measured, the circle goes.',
+    async () => {
+      // Every list the page gets says the cache is being measured.
+      await page.eval(`(() => { const f = window.fetch; window.__fetch = f; window.fetch = (u, i) => f(u, i).then((r) => (String(u) === 'api/reviews' ? r.json().then((d) => new Response(JSON.stringify({ ...d, disk: { ...d.disk, measuring: true } }))) : r)); })()`);
+      await page.until(`!!document.querySelector('.disk-h .meas')`, 10_000);
+      assert.deepEqual(await page.eval(`(() => { const h = document.querySelector('.disk-h'), top = (e) => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2); return [h.querySelector('span').textContent, h.getBoundingClientRect().height < 20, Math.abs(top(h.querySelector('span')) - top(h.querySelector('.meas'))) <= 2]; })()`), ['in untangle’s cache', true, true]);
+      await page.eval(`window.fetch = window.__fetch`);
+      await page.until(`!document.querySelector('.disk-h .meas')`, 10_000);
+    },
+  );
+
+  it(
     'when Paused is chosen in the side, '
     + 'then only the paused review is listed, with its chat-less agent cell and what it holds on disk.',
     async () => {
