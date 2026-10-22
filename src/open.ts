@@ -55,14 +55,15 @@ const pageOf = (json: string): string | null => {
   }
 };
 
-// Inside Orca, its CLI opens a tab in Orca's browser, in the terminal's worktree. Orca opens it
-// behind the tab in front, so it's then brought to the front of that worktree: on screen when the
-// worktree is, and waiting there when another is. The tab's page, which brings it back later; false
-// when Orca isn't there or didn't open it.
-async function inOrca(url: string): Promise<{ page: string | null } | false> {
-  const cli = process.env.ORCA_CLI_COMMAND;
+// Inside Orca, its CLI opens a tab in Orca's browser, in the terminal's worktree (or the one asked
+// for). Orca opens it behind the tab in front, so it's then brought to the front of that worktree:
+// on screen when the worktree is, and waiting there when another is. The tab's page, which brings it
+// back later; false when Orca isn't there or didn't open it.
+async function inOrca(url: string, at: Beside = {}): Promise<{ page: string | null } | false> {
+  const cli = at.cli || process.env.ORCA_CLI_COMMAND;
   if (!cli || !has(cli)) return false;
-  const worktree = process.env.ORCA_WORKTREE_ID ? ['--worktree', 'id:' + process.env.ORCA_WORKTREE_ID] : [];
+  const id = at.worktree || process.env.ORCA_WORKTREE_ID;
+  const worktree = id ? ['--worktree', 'id:' + id] : [];
   const created = await orca(cli, ['tab', 'create', '--url', url, ...worktree, '--json']);
   if (created == null) return false;
   const page = pageOf(created);
@@ -81,14 +82,17 @@ function launch(c: { cmd: string; args: string[]; cwd?: string }): boolean {
   }
 }
 
+/** Where in Orca a page opens instead of the terminal's worktree: Orca's command, and the worktree. */
+export interface Beside { cli?: string | null; worktree?: string | null }
+
 /**
- * Opens the URL: with $BROWSER when it's set, in Orca's browser when untangle runs inside Orca
- * (falling back when that fails), else in the default browser. Says where, with Orca's page for
- * the tab it opened; null when nothing opened it.
+ * Opens the URL: with $BROWSER when it's set, in Orca's browser when untangle runs inside Orca or
+ * is asked to open it beside a page there (falling back when that fails), else in the default
+ * browser. Says where, with Orca's page for the tab it opened; null when nothing opened it.
  */
-export async function openPage(url: string): Promise<{ where: 'orca' | 'browser'; page: string | null } | null> {
+export async function openPage(url: string, at?: Beside): Promise<{ where: 'orca' | 'browser'; page: string | null } | null> {
   if (process.env.BROWSER) return launch({ cmd: process.env.BROWSER, args: [url] }) ? { where: 'browser', page: null } : null;
-  const tab = await inOrca(url);
+  const tab = await inOrca(url, at);
   if (tab) return { where: 'orca', page: tab.page };
   const c = command(url);
   return c && launch(c) ? { where: 'browser', page: null } : null;

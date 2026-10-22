@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,8 +57,11 @@ describe('Given the manager inside Orca, ', { timeout: 300_000 }, () => {
     for (const name of ['claude', 'codex']) fs.writeFileSync(path.join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd: repo.dir, env: env() });
     assert.equal(started.code, 0, started.err);
-    manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
+    const url = /http:\/\/\S+/.exec(started.out)![0];
+    manager = reviewClient(url);
     await manager.open();
+    // Its page is open in one of Orca's worktrees, at its address without the token.
+    spawnSync(path.join(bin, 'orca-ide'), ['tab', 'create', '--url', url.replace(/\?.*$/, ''), '--worktree', 'id:wt-me', '--json'], { env: { ...process.env, ORCA_STUB_LOG: orcaLog } });
   });
 
   after(async () => {
@@ -71,7 +75,7 @@ describe('Given the manager inside Orca, ', { timeout: 300_000 }, () => {
 
   it(
     'when a review starts with Claude, '
-    + 'then the Reviews workspace is added to Orca, its page opens as a tab there, and Claude starts in a terminal there, with the skill and the first message after the review.',
+    + 'then its page opens beside the manager’s, and the Reviews workspace is added to Orca, where Claude starts in a terminal, with the skill and the first message after the review.',
     async () => {
       const top = fs.realpathSync(repo.dir);
       // A quote in it stays whole through the shell.
@@ -90,10 +94,10 @@ describe('Given the manager inside Orca, ', { timeout: 300_000 }, () => {
         ['worktree', 'set', '--worktree', `id:${worktree}`, '--display-name', 'Reviews'],
         ['terminal', 'create', '--worktree', `id:${worktree}`, '--title', `${name} · Claude`, '--command', `claude --session-id ${session} -n 'Review ${name}' --model opus '/untangle ${top} Do an initial review of this branch. Don'\\''t miss the tests.'`],
       ]);
-      // The review opens its own page, as a tab of the workspace.
+      // The review opens its own page, beside the manager's.
       const url = runsIn(cache)[0].url;
-      await until('the page’s tab', () => calls().some((c) => c[0] === 'tab' && c[1] === 'create'));
-      assert.deepEqual(calls().find((c) => c[0] === 'tab' && c[1] === 'create'), ['tab', 'create', '--url', url, '--worktree', `id:${worktree}`]);
+      const tab = await until('the page’s tab', () => calls().find((c) => c[0] === 'tab' && c[1] === 'create' && c[3] === url));
+      assert.deepEqual(tab, ['tab', 'create', '--url', url, '--worktree', 'id:wt-me']);
     },
   );
 

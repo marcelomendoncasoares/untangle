@@ -13,7 +13,7 @@ import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
-import { newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTerminal } from './orca.js';
+import { newTerminal, orca, orcaCli, pageWorktree, reviewsWorkspace, showTab, showTerminal } from './orca.js';
 import { childPids, rss } from './metrics.js';
 import { feedbackPanel, fonts, managerPage } from './page.js';
 import { Feedback } from './feedback.js';
@@ -350,6 +350,8 @@ async function summariesOf(runs: RunInfo[]): Promise<Map<number, Summary>> {
 }
 
 export class Manager {
+  /** Its own page's link, once it serves one: the reviews it opens go beside it. */
+  url: string | null = null;
   private readonly sizes = new Sizes();
   // Reviews pausing or closing once their agent's turn ends: Pause and Close wait for it, Pause now
   // and Close now don't.
@@ -408,10 +410,10 @@ export class Manager {
       // One of it that runs is the one; one that's stopping (paused or closed a moment ago) is let go first.
       const running = w && findRun(w);
       if (running && (await serves(running))) return { data: { already: true, pid: running.pid } };
-      // In Orca, its page opens as a tab of the Reviews workspace, and its chat runs there.
+      // In Orca, its page opens beside the manager's, and its chat runs in the Reviews workspace.
       const cli = orcaCli();
-      const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
-      const env = ws && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: ws.worktree } : process.env;
+      const [beside, ws] = await Promise.all([cli ? this.beside(cli) : null, cli && agent ? reviewsWorkspace(cacheRoot(), cli) : null]);
+      const env = beside && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: beside } : process.env;
       const { pid, log } = launch(['-autoclose=false', '--', target], env);
       if (id && pid > 0) this.launched.set(pid, id);
       for (let i = 0; pid > 0 && i < 300; i++) {
@@ -440,6 +442,14 @@ export class Manager {
     const handle = space ? await newTerminal(space.worktree, `${name.replace(/^[^#]*#/, '#')} · ${agent.kind === 'claude' ? 'Claude' : 'Codex'}`, command, cli) : null;
     rememberStart(agent, { id, handle });
     return { chat: { id, handle }, command: handle ? null : command };
+  }
+
+  /**
+   * The worktree a review's page opens in, in Orca: beside the manager's own page, where a tab shows
+   * it, or else the one the manager runs in. Null outside Orca.
+   */
+  private async beside(cli: string): Promise<string | null> {
+    return (this.url ? await pageWorktree(this.url, cli) : null) ?? process.env.ORCA_WORKTREE_ID ?? null;
   }
 
   /** Whether the manager has something to finish: a pause or a close waiting for a turn to end. */
@@ -636,10 +646,12 @@ export class Manager {
   // The tabs the manager opened for reviews whose own tab it couldn't bring back, by process.
   private readonly pages = new Map<number, string>();
 
-  /** Brings a review's page to the front: its own tab, the one the manager opened for it, or a new one. */
+  /** Brings a review's page to the front: its own tab, the one the manager opened for it, or a new one beside the manager's. */
   private async show(run: RunInfo): Promise<{ status?: number; data: unknown }> {
     for (const page of [run.page, this.pages.get(run.pid)]) if (page && (await showTab(page))) return { data: { where: 'orca' } };
-    const p = await openPage(run.url);
+    const cli = orcaCli();
+    const beside = cli ? await this.beside(cli) : null;
+    const p = await openPage(run.url, beside ? { cli, worktree: beside } : undefined);
     if (p?.page) this.pages.set(run.pid, p.page);
     return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
   }
@@ -835,6 +847,7 @@ export async function serveManager(o: { port: number | null; quiet: boolean }): 
     () => {},
   );
   const url = await server.listen();
+  manager.url = url;
   // The checkouts older untangles made as worktrees of your repositories: they stop listing them.
   void rehomeCheckouts();
   const own: ManagerRun = { pid: process.pid, url, token: server.token, started: new Date().toISOString() };

@@ -1,5 +1,6 @@
 // Orca's command line, as untangle's manager uses it: to bring a review's tab or its chat's
-// terminal to the front, and to start chats in the Reviews workspace. Orca exports its command to
+// terminal to the front, to find where its own page is open, and to start chats in the Reviews
+// workspace. Orca exports its command to
 // the terminals it runs (ORCA_CLI_COMMAND); elsewhere on Linux it's orca-ide, since a bare orca
 // there is often the screen reader.
 import { spawn, spawnSync } from 'node:child_process';
@@ -39,6 +40,31 @@ export function orca(args: string[], cli: string | null = orcaCli()): Promise<Or
       }
     });
   });
+}
+
+/**
+ * Where a page of untangle's is open in Orca: the worktree of a tab that shows it, the one in front
+ * first. A tab shows the page's address without the token of untangle's link. Null when none does.
+ */
+export async function pageWorktree(url: string, cli = orcaCli()): Promise<string | null> {
+  let want: URL;
+  try {
+    want = new URL(url);
+  } catch {
+    return null;
+  }
+  const r = await orca(['tab', 'list', '--worktree', 'all'], cli);
+  const tabs = ((r.result as { tabs?: Array<{ url?: string; worktreeId?: string; active?: boolean }> } | null)?.tabs) ?? [];
+  const local = new Set(['127.0.0.1', 'localhost', '[::1]']);
+  const shows = (address = '') => {
+    try {
+      const u = new URL(address);
+      return u.port === want.port && (u.hostname === want.hostname || (local.has(u.hostname) && local.has(want.hostname))) && u.pathname.startsWith(want.pathname);
+    } catch {
+      return false;
+    }
+  };
+  return tabs.filter((t) => t.worktreeId && shows(t.url)).sort((a, b) => Number(!!b.active) - Number(!!a.active))[0]?.worktreeId ?? null;
 }
 
 /** Brings a browser tab to the front: false when it's gone. */
