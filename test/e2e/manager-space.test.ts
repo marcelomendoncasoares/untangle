@@ -87,6 +87,22 @@ describe('Given two closed reviews that share a base, a paused one that moved pa
   );
 
   it(
+    'when the window is narrow, '
+    + 'then what the Shared rows say wraps onto more lines, rather than being cut.',
+    async () => {
+      await page.setViewport(800, 900);
+      try {
+        await page.until(`innerWidth === 800`);
+        const shared = `[...document.querySelectorAll('.crow.fixed')]`;
+        assert.deepEqual(await page.eval(`${shared}.map((r) => [...r.querySelectorAll('.ttl, .l2')].map((e) => (e.scrollWidth <= e.clientWidth ? 'whole' : 'cut')).join(' '))`), ['whole whole', 'whole whole']);
+        assert.equal(await page.eval(`${shared}.at(-1).querySelector('.l2').getBoundingClientRect().height > 20`), true);
+      } finally {
+        await page.setViewport(1440, 900);
+      }
+    },
+  );
+
+  it(
     'when one is picked and its space freed, '
     + 'then only its notes and marks are left, and the base stays for the other.',
     async () => {

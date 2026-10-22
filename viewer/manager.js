@@ -351,7 +351,7 @@
   function sharedRows() {
     const d = S.data.disk;
     if (!d) return '';
-    const fixed = (icon, title, l2, b, small, act, more) => `<div class="crow fixed"><span class="ic">${icon}</span><span class="main"><span class="l1"><span class="ttl">${title}</span></span><span class="l2"${more ? ` title="${more}"` : ''}>${l2}</span></span><span></span><span></span><span class="sz"><b>${b != null ? bytes(b) : '…'}</b><small>${small}</small></span><span class="cact">${act || ''}</span></div>`;
+    const fixed = (icon, title, l2, b, small, act, more) => `<div class="crow fixed"><span class="ic">${icon}</span><span class="main"><span class="l1"><span class="ttl">${title}</span></span><span class="l2"${more ? ` title="${more}"` : ''}>${l2}</span></span><span class="sz"><b>${b != null ? bytes(b) : '…'}</b><small>${small}</small></span><span class="cact">${act || ''}</span></div>`;
     const out = [];
     if (d.clones.length) out.push(fixed(ICON.repo, `${d.clones.length === 1 ? 'Clone' : 'Clones'} of ${esc(and(d.clones.map((c) => c.repo)))}`, 'A clone goes once no review of its repository is left.', d.clones.some((c) => c.bytes == null) ? null : d.clones.reduce((a, c) => a + c.bytes, 0), d.clones.length > 1 ? and(d.clones.map((c) => (c.bytes != null ? bytes(c.bytes) : '…'))) : ''));
     for (const x of d.shares) out.push(fixed(ICON.disk, `${{ base: 'Base checkout', analysis: 'Analysis', checkout: 'Checkout' }[x.what]} of ${esc(and(x.names.map((n) => n.replace(/^[^#]*#/, '#'))))}`, `It goes with the ${x.by.length === 2 ? 'second' : 'last'} of them to be freed.`, x.bytes, `used by ${x.by.length} reviews`));

@@ -131,6 +131,9 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .crow .ic svg { width: 13px; height: 13px; }
 .crow .ttl { color: var(--text-2); }
 .crow.fixed .ttl { font-size: 13px; }
+/* What no one review holds says it in full: its words take the columns its row leaves empty, and wrap. */
+.crow.fixed .main { grid-column: 2 / -3; }
+.crow.fixed .ttl, .crow.fixed .l2 { white-space: normal; overflow-wrap: anywhere; }
 .cnotes { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cnotes b { color: var(--text-2); font-weight: 500; }
 .sz { display: grid; gap: 5px; justify-items: end; min-width: 0; text-align: right; white-space: nowrap; }
@@ -329,7 +332,7 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 @media (max-width: 1100px) {
   .row { grid-template-columns: 14px minmax(0, 1fr) 180px 104px 72px; gap: 0 12px; }
   .cols, .crow { grid-template-columns: 16px minmax(0, 1fr) 104px 156px 72px; gap: 0 12px; }
-  .cols span:nth-child(4), .crow .cnotes, .crow.fixed > span:nth-child(4) { display: none; }
+  .cols span:nth-child(4), .crow .cnotes { display: none; }
   .peek { grid-template-columns: minmax(0, 1fr) 236px; }
   .peek .pk:nth-child(2) { display: none; }
 }
@@ -344,7 +347,7 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
   .head .hint { display: none; }
   .cols { display: none; }
   .crow { grid-template-columns: 16px minmax(0, 1fr) 64px auto; gap: 0 10px; }
-  .crow > span:nth-child(3), .crow > span:nth-child(4) { display: none; }
+  .crow .prog, .crow .cnotes { display: none; }
 }
 </style>
 </head>
