@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
 import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
 import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
+import { rehomeCheckouts } from './checkouts.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
@@ -758,6 +759,8 @@ export async function serveManager(o: { port: number | null; quiet: boolean }): 
     () => {},
   );
   const url = await server.listen();
+  // The checkouts older untangles made as worktrees of your repositories: they stop listing them.
+  void rehomeCheckouts();
   const own: ManagerRun = { pid: process.pid, url, token: server.token, started: new Date().toISOString() };
   fs.mkdirSync(runDir(), { recursive: true, mode: 0o700 });
   fs.writeFileSync(managerFile(), JSON.stringify(own), { mode: 0o600 });

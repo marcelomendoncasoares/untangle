@@ -81,10 +81,11 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
     write(local, 'c', { base: c3, head: c5, checkouts: [c3, c4, c5], analyses: [[c3, c4], [c3, c5]], stopped: { at: now, why: 'paused' }, closed: null });
     write(local, 'e', { base: c0, head: c6, checkouts: [], analyses: [[c0, c6]], closed: weeks, stopped: { at: weeks, why: 'stop' } });
     write('github.com/acme/app', 'pr-12', { target: 'https://github.com/acme/app/pull/12', pr: 'acme/app#12', dir: null, repo: clone(), base: c0, head: c1, checkouts: [c1], analyses: [] });
-    // Review a's notes, and the branch that holds its marks.
+    // Review a's notes, the ref that holds its marks, and the branch an older untangle kept them on.
     fs.mkdirSync(path.join(cache, 'notes', local), { recursive: true });
     fs.writeFileSync(path.join(cache, 'notes', local, 'a.json'), '{"notes":[]}');
-    git(repo.dir, 'branch', 'untangle/a', c1);
+    git(repo.dir, 'update-ref', 'refs/untangle/marks/a', c1);
+    git(repo.dir, 'branch', 'untangle/a', c0);
     const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd, env: {} });
     assert.equal(started.code, 0, started.err);
     manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
@@ -99,6 +100,16 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
     fs.rmSync(cache, { recursive: true, force: true });
     fs.rmSync(cwd, { recursive: true, force: true });
   });
+
+  it(
+    'when the page opens, '
+    + 'then the checkouts made as worktrees of the repository become their own, and it lists none; the clone keeps its worktree.',
+    async () => {
+      await until('the repository to list no checkout', () => git(repo.dir, 'worktree', 'list').split('\n').length === 1);
+      assert.ok(shas.every((sha) => fs.statSync(path.join(checkout(local, sha), '.git')).isDirectory()));
+      assert.ok(git(clone(), 'worktree', 'list').includes(checkout('github.com/acme/app', shas[1])));
+    },
+  );
 
   it(
     'when the page opens, '
@@ -126,7 +137,7 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
       const a = record('a');
       assert.deepEqual([a.checkouts, a.analyses, typeof a.freed], [[], [[shas[0], shas[1]]], 'string']);
       assert.ok(fs.existsSync(path.join(cache, 'notes', local, 'a.json')));
-      assert.equal(git(repo.dir, 'rev-parse', 'untangle/a'), shas[1]);
+      assert.equal(git(repo.dir, 'rev-parse', 'untangle/marks/a'), shas[1]);
     },
   );
 
@@ -154,12 +165,12 @@ describe('Given reviews in the cache: two closed that share a base, one paused t
 
   it(
     'when a freed review is forgotten, '
-    + 'then its notes, the branch that holds its marks, the marks on parts of a change and its record go.',
+    + 'then its notes, its marks (their ref, and the branch an older untangle kept them on), the marks on parts of a change and its record go.',
     async () => {
       const r = await manager.call('forget', { method: 'POST', body: { ids: [id('a')] } });
       assert.deepEqual(r.data, { forgot: 1 });
       assert.deepEqual([fs.existsSync(path.join(cache, 'notes', local, 'a.json')), fs.existsSync(path.join(cache, 'sessions', local, 'a.json')), fs.existsSync(analysis(local, shas[0], shas[1]))], [false, false, false]);
-      assert.equal(git(repo.dir, 'branch', '--list', 'untangle/a'), '');
+      assert.deepEqual([git(repo.dir, 'for-each-ref', 'refs/untangle/'), git(repo.dir, 'branch', '--list', 'untangle/a')], ['', '']);
     },
   );
 

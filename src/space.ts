@@ -1,19 +1,19 @@
-// What reviews hold on disk, and giving it back. A review holds checkouts (git worktrees of its
-// base and of each head it showed) and analyses. An open review keeps its current base and head,
-// so the heads it moved past are old checkouts, as are the checkouts and analyses of reviews from
-// before records. Freeing a closed review removes what no other review keeps, and leaves its
-// notes, its marks and its record, so it opens again as it did the first time. Marks live in the
-// review branch and, for marks on parts of a change, in its analysis's state.json, which freeing
-// keeps. Forgetting a review removes those too, and its repository's clone once no review of it
-// is left.
+// What reviews hold on disk, and giving it back. A review holds checkouts (of its base and of each
+// head it showed) and analyses. An open review keeps its current base and head, so the heads it
+// moved past are old checkouts, as are the checkouts and analyses of reviews from before records.
+// Freeing a closed review removes what no other review keeps, and leaves its notes, its marks and
+// its record, so it opens again as it did the first time. Marks live in the review's marks ref
+// and, for marks on parts of a change, in its analysis's state.json, which freeing keeps.
+// Forgetting a review removes those too, and its repository's clone once no review of it is left.
 import fs from 'node:fs';
 import path from 'node:path';
 import { cacheRoot, cloneDir, reviewDir, worktreeDir } from './cache.js';
+import { linkOf } from './checkouts.js';
 import { gitMaybe } from './exec.js';
 import { notesFile } from './notes.js';
 import { listRecords, readRecord, recordDirs, recordFile, recordId, writeRecord, type Listed } from './records.js';
 import { listRuns, olderRuns, type RunInfo } from './runs.js';
-import { snapshotBranch } from './snapshot.js';
+import { dropMarks, marksRef, MARKS } from './snapshot.js';
 
 /** A closed review's space is freed this long after its pull request merged or closed, or it closed. */
 export const FREE_AFTER = 14 * 86_400_000;
@@ -123,12 +123,12 @@ function young(dir: string): boolean {
   }
 }
 
-/** The repository a checkout belongs to: the cache's clone, or the directory reviewed. */
+/** The repository a checkout is a worktree of, or its own. */
 const ownerOf = (dir: string) => gitMaybe(dir, 'rev-parse', '--path-format=absolute', '--git-common-dir')?.trim() || null;
 
-/** Removes a checkout: its repository lets go of the worktree, and its folder goes. */
+/** Removes a checkout: its folder goes, and a worktree's repository lets go of it. */
 function removeCheckout(dir: string): void {
-  const repo = ownerOf(dir);
+  const repo = linkOf(dir)?.common ?? null;
   if (repo) gitMaybe(repo, 'worktree', 'remove', '--force', '--force', dir);
   fs.rmSync(dir, { recursive: true, force: true });
   if (repo) gitMaybe(repo, 'worktree', 'prune');
@@ -208,7 +208,7 @@ export function removeOld(list: Listed[] = listRecords()): string[] {
 }
 
 /**
- * Forgets closed reviews: their space, notes, marks (the review branch, and their analyses'
+ * Forgets closed reviews: their space, notes, marks (their ref, and their analyses'
  * state.json) and records go. A clone goes too, with its checkouts, once no review of its
  * repository is left. The ids forgotten, and the folders removed.
  */
@@ -224,9 +224,9 @@ export function forget(ids: Set<string>, list: Listed[] = listRecords()): { forg
   }
   for (const r of going) {
     fs.rmSync(notesFile(r.repoKey, r.key), { force: true });
-    const branch = snapshotBranch(r.repo, r.key);
-    // Reviews whose name makes no branch share one: it stays.
-    if (branch !== 'untangle/review' && fs.existsSync(r.repo)) gitMaybe(r.repo, 'branch', '-D', branch);
+    const marks = marksRef(r.repo, r.key);
+    // Reviews whose name makes no ref share one: it stays.
+    if (marks !== MARKS + 'review' && fs.existsSync(r.repo)) dropMarks(r.repo, marks);
     fs.rmSync(recordFile(r.repoKey, r.key), { force: true });
   }
   const left = listRecords(), runs = listRuns();
@@ -235,7 +235,7 @@ export function forget(ids: Set<string>, list: Listed[] = listRecords()): { forg
     const reviewed = (run: RunInfo) => (run.repoKey ? run.repoKey === repoKey : !!run.pr && `github.com/${run.pr.replace(/#\d+$/, '')}` === repoKey.toLowerCase());
     if (!fs.existsSync(clone) || left.some((r) => r.repo === clone) || runs.some(reviewed)) continue;
     // Reviews from before records keep their marks in it, and their notes beside it.
-    if (gitMaybe(clone, 'for-each-ref', '--count=1', 'refs/heads/untangle/')?.trim() || notesLeft(repoKey)) continue;
+    if (gitMaybe(clone, 'for-each-ref', '--count=1', MARKS, 'refs/heads/untangle/')?.trim() || notesLeft(repoKey)) continue;
     const real = fs.realpathSync(clone);
     for (const d of checkoutsOnDisk()) {
       if (path.dirname(d) !== path.join(cacheRoot(), 'worktrees', repoKey)) continue;

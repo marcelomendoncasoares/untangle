@@ -166,8 +166,8 @@ describe('Given the manager, and a review it started that’s still being built,
     repo.write('lib/a.dart', "void greet() {\n  print('hello');\n}\n");
     repo.commit({ subject: 'Say hello', author: ada('2020-06-02T00:00:00Z'), committer: ada('2020-06-02T00:00:00Z') });
     gh = stubGh();
-    // Its build waits at the base's checkout, with its page up.
-    git = heldGit(['worktree']);
+    // Its build waits at the base's checkout, which starts with git init, with its page up.
+    git = heldGit(['init']);
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     bin = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-bin-'));
     opened = path.join(bin, 'opened.log');
