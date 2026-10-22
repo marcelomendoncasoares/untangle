@@ -45,7 +45,8 @@
 
   // Closed reviews picked to free or forget, and whether Forget is asking first.
   // The rows open (as many as you like), the row the keys are on, and the open rows' chats' last lines.
-  const S = { data: null, tab: 'open', filter: 'all', sel: null, opened: new Set(), tails: new Map(), menu: null, toast: null, starting: new Set(), picked: new Set(), confirm: false };
+  // Reviews started here that untangle doesn't list yet, by pull request: their rows show as they start.
+  const S = { data: null, tab: 'open', filter: 'all', sel: null, opened: new Set(), tails: new Map(), menu: null, toast: null, starting: new Set(), picked: new Set(), confirm: false, pending: new Map() };
   // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
   // then the review picked, and how its agent starts (the form), or the review an agent joins.
   const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null };
@@ -118,7 +119,11 @@
   }
   const post = (path, body) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-  const rows = () => (S.data ? S.data.reviews : []);
+  const rows = () => {
+    const list = S.data ? S.data.reviews : [];
+    const waiting = [...S.pending.values()].filter((p) => !list.some((r) => r.status !== 'closed' && prKey(r.target) === p.key));
+    return waiting.length ? [...waiting.map((p) => p.row).reverse(), ...list] : list;
+  };
   const open = () => rows().filter((r) => r.status !== 'closed');
   const closedRows = () => rows().filter((r) => r.status === 'closed');
   const needs = (r) => r.status === 'running' && !!r.need;
@@ -234,14 +239,17 @@
   function row(r) {
     const sel = S.sel === r.id, on = S.opened.has(r.id);
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
+    // Built for the first time, a review doesn't know its size yet.
+    const size = r.build && !r.size.files ? '' : ` · <span class="a">+${fmt(r.size.add)}</span> <span class="d">−${fmt(r.size.del)}</span> in ${fmt(r.size.files)} file${r.size.files === 1 ? '' : 's'}`;
     const l2 = r.older ? `${esc(r.repo)} · started by an untangle from before this page`
       : r.twin ? `${esc(r.repo)} · a second untangle of this review`
       : r.status === 'running'
-      ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · <span class="a">+${fmt(r.size.add)}</span> <span class="d">−${fmt(r.size.del)}</span> in ${fmt(r.size.files)} file${r.size.files === 1 ? '' : 's'}`
+      ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}${size}`
       : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
     const ev = r.status === 'running' ? events(r) : '';
+    // One started here that untangle doesn't list yet has nothing to open or close.
     return `<div class="rw${on ? ' open' : ''}${sel ? ' sel' : ''}" data-id="${esc(r.id)}">
-      <div class="row ${r.status}" data-act="sel" data-id="${esc(r.id)}">
+      <div class="row ${r.status}${r.pending ? ' pending' : ''}"${r.pending ? '' : ` data-act="sel" data-id="${esc(r.id)}"`}>
         <span class="st ${st}"></span>
         <span class="main">
           <span class="l1"><span class="num">${esc(r.name.replace(/^[^#]*#/, '#'))}</span>${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span>
@@ -250,7 +258,7 @@
         </span>
         ${agentCell(r)}${progCell(r)}${memCell(r)}
       </div>
-      ${on ? peek(r) : ''}
+      ${on && !r.pending ? peek(r) : ''}
     </div>`;
   }
 
@@ -402,6 +410,11 @@
   // ---- The palette: New review
 
   const PR_URL = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)(?:[/?#].*)?$/;
+  // A pull request's link as untangle keys its review: owner/repo#n, in lower case.
+  const prKey = (url) => {
+    const m = url && PR_URL.exec(url);
+    return m ? `${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : null;
+  };
   // A review of this pull request, open (being built too) or paused: the palette resumes or brings it, rather than starting it again.
   const sameUrl = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
   const reviewOf = (url) => rows().find((r) => r.status !== 'closed' && !r.twin && (sameUrl(r.url, url) || sameUrl(r.target, url)));
@@ -567,9 +580,31 @@
       poll();
     };
     if (addFor) return post('agent', { id: addFor, agent }).then(said, (e) => toast(e.message, true));
-    S.starting.add(it.target);
-    post('start', { target: it.target, agent }).then(said, (e) => toast(e.message, true)).finally(() => { S.starting.delete(it.target); render(); });
+    // Its row shows now. Once untangle answers, the reviews asked for next list it, or it didn't start.
+    const key = prKey(it.target);
+    const mine = key && { key, row: startingRow(it), answered: 0 };
+    if (mine) S.pending.set(key, mine);
+    post('start', { target: it.target, agent }).then((d) => {
+      if (mine) mine.answered = Date.now();
+      said(d);
+    }, (e) => {
+      if (mine && S.pending.get(key) === mine) S.pending.delete(key);
+      toast(e.message, true);
+    }).finally(render);
     render();
+  }
+
+  // A review started here, as its row shows until untangle lists it: being built, with what the
+  // palette knew of its pull request. A link pasted has its number, as untangle's row will.
+  function startingRow(it) {
+    const p = it.pull, m = PR_URL.exec(it.target);
+    return {
+      id: 'start:' + prKey(it.target), target: it.target, name: it.name, title: p ? it.title : it.num, kind: p ? it.kind : null,
+      repo: p ? p.repo : `${m[1]}/${m[2]}`.toLowerCase(), author: p ? p.author : null, url: it.target, size: { add: 0, del: 0, files: 0 },
+      status: 'running', stopped: null, closed: null, opened: new Date().toISOString(), head: '', progress: { done: 0, total: 0 },
+      notes: { open: 0, waiting: 0 }, waiting: [], agents: [], chat: null, memory: null, build: { phase: 'starting', step: null, plan: null, error: null },
+      pages: 0, pausing: false, github: null, need: null, needAt: null, active: null, disk: null, freed: null, parts: null, older: false, twin: false, pending: true,
+    };
   }
 
   function choose(c) {
@@ -578,7 +613,7 @@
       const m = PR_URL.exec(c.target);
       const pull = P.pulls ? [...P.pulls.asked, ...P.pulls.yours].find((p) => p.url === c.target) : null;
       const kt = /^([a-z]+)(?:\([^)]*\))?!?: (.+)$/.exec(pull ? pull.title : '');
-      return startForm({ target: c.target, num: c.num, name: m ? `${m[2]}#${m[3]}` : c.num, title: pull ? (kt ? kt[2] : pull.title) : `${m[1]}/${m[2]}#${m[3]}`, kind: kt ? kt[1] : null, sub: pull ? `${pull.repo} · ${pull.author}${pull.draft ? ' · draft' : ''} · updated ${ago(pull.updated)}` : 'a link you pasted' });
+      return startForm({ target: c.target, num: c.num, name: m ? `${m[2]}#${m[3]}` : c.num, title: pull ? (kt ? kt[2] : pull.title) : `${m[1]}/${m[2]}#${m[3]}`, kind: kt ? kt[1] : null, sub: pull ? `${pull.repo} · ${pull.author}${pull.draft ? ' · draft' : ''} · updated ${ago(pull.updated)}` : 'a link you pasted', pull });
     }
     closePalette();
     if (c.id && !c.again) return act('open', c.id);
@@ -600,12 +635,17 @@
 
   // ---- Talking to untangle
 
-  let timer = 0;
+  let timer = 0, asks = 0, shownAsk = 0;
   function poll() {
     clearTimeout(timer);
     if (document.visibilityState === 'hidden') return;
+    const n = ++asks, at = Date.now();
     api('reviews').then((d) => {
+      // An answer to an earlier ask than the one shown is older news.
+      if (n < shownAsk) return;
+      shownAsk = n;
       S.data = d;
+      for (const [k, p] of S.pending) if (p.answered && p.answered <= at) S.pending.delete(k);
       if (S.sel && !rows().some((r) => r.id === S.sel)) S.sel = null;
       for (const id of S.opened) if (!rows().some((r) => r.id === id)) { S.opened.delete(id); S.tails.delete(id); }
       render();
@@ -631,7 +671,7 @@
 
   function act(name, id) {
     const r = byId(id);
-    if (!r) return;
+    if (!r || r.pending) return;
     if (name === 'open') post('open', { id }).then((d) => toast(d.where === 'orca' ? `${short(r)} is in front, in Orca` : `Opened ${short(r)} in the browser`), (e) => toast(e.message, true));
     if (name === 'chat') post('chat', { id }).then(() => toast(`${r.chat.agent}’s chat is in front, in Orca`), (e) => toast(e.message, true));
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));

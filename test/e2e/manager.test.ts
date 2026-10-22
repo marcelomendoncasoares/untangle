@@ -215,6 +215,28 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   );
 
   it(
+    'when the pull request asked of you is started from the palette, '
+    + 'then its row shows at once, being built, with what GitHub said of it; when it doesn’t start, the row goes and the toast says why.',
+    async () => {
+      // The start waits in the page: what shows meanwhile, untangle hasn't heard of.
+      await page.eval(`(() => { const f = window.fetch; window.__fetch = f; window.fetch = (u, i) => (String(u) === 'api/start' ? new Promise((r) => { window.__start = r; }) : f(u, i)); })()`);
+      await page.key('k', { ctrl: true });
+      await page.until(`document.querySelectorAll('.pal-r').length === 2`);
+      await page.key('Enter');
+      await page.until(`!!document.querySelector('.pal [data-act="f-start"]')`);
+      await page.key('Enter');
+      await page.until(`!!window.__start && !document.querySelector('.pal')`);
+      assert.deepEqual(await page.eval(`(() => { const r = document.querySelector('.row'); return [r.className, r.hasAttribute('data-act'), r.querySelector('.st').className, r.querySelector('.l1').textContent, r.querySelector('.l2').textContent, r.querySelector('.prog').textContent.replace(/\\s+/g, ' ').trim(), document.querySelectorAll('.row').length]; })()`), [
+        'row running pending', false, 'st build', '#12featRetry calls', 'acme/app · ada', '5% starting', 3,
+      ]);
+      await page.eval(`window.__start(new Response(JSON.stringify({ error: 'the review didn’t start: gh isn’t logged in' }), { status: 502 }))`);
+      await page.until(`!document.querySelector('.row.pending') && !!document.querySelector('.toast.bad')`);
+      assert.deepEqual(await page.eval(`[document.querySelectorAll('.row').length, document.querySelector('.toast').textContent]`), [2, 'the review didn’t start: gh isn’t logged in']);
+      await page.eval(`window.fetch = window.__fetch`);
+    },
+  );
+
+  it(
     'when the paused review is chosen in the palette, '
     + 'then it starts again, and is listed running.',
     async () => {

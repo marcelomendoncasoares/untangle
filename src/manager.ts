@@ -169,20 +169,21 @@ const agentsOf = (s: Summary | undefined): Row['agents'] => (s?.agents ?? []).ma
 
 /**
  * A review that's starting: its process runs, and it has no record until it's built. Or one an
- * older untangle runs, which never has one: its memory is read from its processes.
+ * older untangle runs, which never has one: its memory is read from its processes. Until it says
+ * its title, its pull request's is the one the palette listed.
  */
-function starting(run: RunInfo, s: Summary | undefined): Row {
+function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row {
   const old = olderRuns.has(run.pid);
   const m = run.pr ? /^([^/]+)\/([^#]+)#(\d+)$/.exec(run.pr) : null;
-  const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || (m ? `#${m[3]}` : 'Starting'));
+  const { kind, title } = kindOf((s?.title || run.title || '').replace(/^#\d+ /, '') || pull?.title || (m ? `#${m[3]}` : 'Starting'));
   const waiting = s?.waiting ?? [];
   return {
     id: `run:${run.pid}`,
     target: run.pr && m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : run.dir || '',
     name: m ? `${m[2]}#${m[3]}` : (run.dir || '').split(/[\\/]/).pop() || 'review',
     title, kind,
-    repo: m ? `${m[1]}/${m[2]}` : (run.repoKey || '').replace(/^github\.com\//, ''),
-    author: null, url: null, size: { add: 0, del: 0, files: 0 },
+    repo: pull?.repo ?? (m ? `${m[1]}/${m[2]}` : (run.repoKey || '').replace(/^github\.com\//, '')),
+    author: pull?.author ?? null, url: null, size: { add: 0, del: 0, files: 0 },
     status: 'running', stopped: null, closed: null, opened: run.started, head: run.head || '',
     // Once it's built, what it says of itself: how far, the notes, its agents.
     progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
@@ -376,6 +377,12 @@ export class Manager {
     }
     this.pullsKept = { at: Date.now(), value };
     return value;
+  }
+
+  /** A pull request the palette listed, by the key run files keep: owner/repo#n. */
+  private pullOf(pr: string | null): Pull | null {
+    const v = this.pullsKept?.value;
+    return (pr && v && [...v.asked, ...v.yours].find((p) => `${p.repo}#${p.number}`.toLowerCase() === pr)) || null;
   }
 
   /**
@@ -595,7 +602,7 @@ export class Manager {
     if (fresh.length) {
       for (const run of fresh) {
         const said = asked.get(run.pid);
-        const s = starting(run, said);
+        const s = starting(run, said, this.pullOf(run.pr));
         if (s.older) s.disk = sizeOf(olderDirs(run) ?? []);
         // A second untangle of a review that runs, built by an untangle from before one checked: listed as itself, to close.
         const held = said?.head ? list.find((r) => r.status === 'running' && r.pid !== run.pid && servesRecord(run, r)) : undefined;

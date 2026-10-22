@@ -147,6 +147,9 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .rw { display: grid; border-radius: 10px; }
 .row { display: grid; grid-template-columns: 14px minmax(0, 1fr) 216px 128px 84px; align-items: center; gap: 0 16px; min-height: 58px; padding: 9px 12px; border-radius: 10px; cursor: pointer; }
 .row:hover { background: var(--hover-soft); }
+/* A review started here that untangle doesn't list yet: nothing to open until it does. */
+.row.pending { cursor: default; }
+.row.pending:hover { background: none; }
 /* Rows open as many as you like; the one the keys are on has a ring. */
 .rw.open { margin-block: 3px; }
 .rw.open .row { background: var(--raised); border-radius: 10px 10px 0 0; }

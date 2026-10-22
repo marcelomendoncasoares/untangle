@@ -196,11 +196,13 @@ describe('Given the manager, and a review it started that’s still being built,
     'when its row is opened, '
     + 'then its page comes to the front, as a built one’s does.',
     async () => {
-      const before = fs.existsSync(opened) ? fs.readFileSync(opened, 'utf8').trim().split('\n').length : 0;
+      // The browser starts on its own, after the answer: its line comes when it does. The review opened its page as it started.
+      const url = runsIn(cache)[0].url;
+      const opens = () => (fs.existsSync(opened) ? fs.readFileSync(opened, 'utf8').trim().split('\n').filter((l) => l === url).length : 0);
+      await until('its page to open as it started', () => opens() === 1);
       const r = await manager.call('open', { method: 'POST', body: { id } });
       assert.deepEqual([r.status, r.data], [200, { where: 'browser' }]);
-      const lines = fs.readFileSync(opened, 'utf8').trim().split('\n');
-      assert.deepEqual([lines.length, lines.at(-1)], [before + 1, runsIn(cache)[0].url]);
+      await until('its page to open again', () => opens() === 2, 10_000);
     },
   );
 
@@ -211,6 +213,58 @@ describe('Given the manager, and a review it started that’s still being built,
       assert.equal((await manager.call('close', { method: 'POST', body: { id } })).status, 200);
       await until('its process to end', () => runsIn(cache).length === 0);
       assert.deepEqual(await rows(), []);
+    },
+  );
+});
+
+describe('Given the manager, and a pull request GitHub asks you to review, whose review starts but hasn’t heard from GitHub yet, ', { timeout: 300_000 }, () => {
+  let gh: GhStub;
+  let cache = '', bin = '', held = '';
+  let manager: ReviewClient;
+  let pid = 0;
+  const rows = async () => ((await manager.call('reviews')).data as { reviews: Array<Row & { name: string; kind: string | null; repo: string; author: string | null }> }).reviews;
+
+  before(async () => {
+    const found = { number: 12, title: 'feat: Retry calls', url: 'https://github.com/Acme/App/pull/12', updatedAt: '2026-10-21T10:00:00Z', isDraft: false, repository: { nameWithOwner: 'Acme/App' }, author: { login: 'ada' } };
+    gh = stubGh([
+      { match: ['search', 'prs', '--review-requested=@me'], stdout: [found] },
+      { match: ['search', 'prs', '--author=@me'], stdout: [] },
+    ]);
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    bin = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-bin-'));
+    fs.writeFileSync(path.join(bin, 'browser.sh'), '#!/bin/sh\n', { mode: 0o755 });
+    // gh pr view waits until the test ends, so the review stays where it starts, and never asks GitHub.
+    held = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-gh-'));
+    fs.writeFileSync(path.join(held, 'gh'), `#!/usr/bin/env bash\nif [ "$1 $2" = "pr view" ]; then while [ -d ${JSON.stringify(held)} ]; do sleep 0.05; done; exit 1; fi\nexec ${JSON.stringify(path.join(gh.binDir, 'gh'))} "$@"\n`, { mode: 0o755 });
+    const env = { BROWSER: path.join(bin, 'browser.sh'), PATH: [held, bin, gh.binDir, process.env.PATH].join(path.delimiter) };
+    const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd: os.tmpdir(), env });
+    assert.equal(started.code, 0, started.err);
+    manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
+    await manager.open();
+  });
+
+  after(async () => {
+    // Before gh lets go: the review would ask GitHub then.
+    for (const run of runsIn(cache)) {
+      if (run.pid > 0) try { process.kill(-run.pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    await stopRuns(cache);
+    fs.rmSync(held, { recursive: true, force: true });
+    gh.remove();
+    fs.rmSync(cache, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  });
+
+  it(
+    'when the palette lists it and it’s started, '
+    + 'then its row has the title, kind, repository and author GitHub listed, until the review says them.',
+    async () => {
+      await manager.call('pulls');
+      const r = await manager.call('start', { method: 'POST', body: { target: 'https://github.com/Acme/App/pull/12' } });
+      assert.equal(r.status, 200, r.text);
+      pid = (r.data as { pid: number }).pid;
+      const row = (await rows()).find((x) => x.id === `run:${pid}`);
+      assert.deepEqual(row && [row.name, row.kind, row.title, row.repo, row.author, row.build?.phase], ['app#12', 'feat', 'Retry calls', 'Acme/App', 'ada', 'starting']);
     },
   );
 });

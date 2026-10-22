@@ -306,14 +306,14 @@ right, shows what each review holds as the pointer rests on it.
 New review lists the pull requests GitHub asks you to review and your own (through `gh`), with the
 paused reviews to resume. One whose review is open, or still being built, says so, and picking it
 brings that review to the front. Pick one, or paste any pull request's link, then choose its agent:
-Claude, Codex, or none. The review starts on its own and opens its page, and the agent's chat
-starts next to it with the untangle skill (`/untangle <link>` for Claude, `$untangle <link>` for
-Codex). A new Claude chat starts with a session id `untangle` chose, so the review knows it at once.
-You can resume a chat that held a review before instead, and give a first message, which the
-agent reads after the link: "Request an initial review" fills it with a template that asks for
-the agent's findings as notes, and you can change it. The flags each agent starts with, and the
-whole command, are under Advanced, and the flags are kept for the next start. A review that's
-running without an agent gets one the same way, from its row.
+Claude, Codex, or none. The review is listed as you start it, starts on its own and opens its page,
+and the agent's chat starts next to it with the untangle skill (`/untangle <link>` for Claude,
+`$untangle <link>` for Codex). A new Claude chat starts with a session id `untangle` chose, so the
+review knows it at once. You can resume a chat that held a review before instead, and give a first
+message, which the agent reads after the link: "Request an initial review" fills it with a template
+that asks for the agent's findings as notes, and you can change it. The flags each agent starts
+with, and the whole command, are under Advanced, and the flags are kept for the next start. A review
+that's running without an agent gets one the same way, from its row.
 
 Inside Orca, the reviews' chats and pages live in one workspace, Reviews: a folder of untangle's
 cache (`chats/Reviews`), which the manager adds to Orca the first time. Outside Orca, the chat's
