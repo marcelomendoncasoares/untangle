@@ -178,10 +178,14 @@ describe('Given a review Claude answered in, another paused, and the manager ope
 
   it(
     'when the pointer rests on the memory chip, '
-    + 'then its menu opens; it closes as the pointer leaves, unless a click kept it open.',
+    + 'then its menu opens, a line for each review running and its total, its parts on hover; it closes as the pointer leaves, unless a click kept it open.',
     async () => {
       await page.hover('#mem');
       await page.until(`!!document.querySelector('.mem-pop')`);
+      assert.deepEqual(await page.eval(`[...document.querySelectorAll('.mem-pop .pop-r')].map((r) => [r.textContent.replace(/\\d+ [KMG]B/g, 'n MB'), r.title.replace(/\\d+ [KMG]B|off$/g, 'n MB'), r.scrollWidth <= r.clientWidth])`), [
+        [`${path.basename(repo.dir)}n MB`, 'untangle n MB · language server n MB', true],
+        ['This pagen MB', '', true],
+      ]);
       await page.hover('.head h1');
       await page.until(`!document.querySelector('.mem-pop')`);
       await page.click('#mem');

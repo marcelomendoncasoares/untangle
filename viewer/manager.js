@@ -406,11 +406,12 @@
       const run = open().filter((r) => r.status === 'running');
       const total = run.reduce((a, r) => a + memOf(r), 0) + S.data.memory.manager;
       const m = $('#mem').getBoundingClientRect();
-      h += `<div class="pop mem-pop" style="right:${Math.round(innerWidth - m.right)}px;top:${Math.round(m.bottom + 6)}px;width:400px" role="dialog" aria-label="Memory">
+      // Each review's total, and what it'd give back once it sat idle: its parts show on hover.
+      const idle = (r) => idleFor(r) > 3600000 && !r.pausing && !r.closing;
+      h += `<div class="pop mem-pop" style="right:${Math.round(innerWidth - m.right)}px;top:${Math.round(m.bottom + 6)}px;width:320px" role="dialog" aria-label="Memory">
         <div class="pop-h">Memory<span>${bytes(total)}</span></div>
-        ${run.map((r) => `<div class="pop-r"><small><span class="who">${esc(r.name)}</span>untangle ${r.memory ? bytes(r.memory.untangle) : '—'} · language server ${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'off'}</small><b>${r.memory ? bytes(memOf(r)) : '—'}</b></div>`).join('')}
-        ${run.filter((r) => idleFor(r) > 3600000 && !r.pausing && !r.closing).map((r) => `<div class="pop-r"><button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}">${ICON.pause}Pause ${esc(r.name)}, idle ${span(idleFor(r))} · frees ${bytes(memOf(r))}</button><span></span></div>`).join('')}
-        <div class="pop-r"><small>This page’s own process</small><b>${bytes(S.data.memory.manager)}</b></div>
+        ${run.map((r) => `<div class="pop-r" title="untangle ${r.memory ? bytes(r.memory.untangle) : '—'} · language server ${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'off'}"><span class="who">${esc(r.name)}</span>${idle(r) ? `<small>idle ${span(idleFor(r))}</small><button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}">Pause</button>` : ''}<b>${r.memory ? bytes(memOf(r)) : '—'}</b></div>`).join('')}
+        <div class="pop-r"><small>This page</small><b>${bytes(S.data.memory.manager)}</b></div>
       </div>`;
     }
     if (S.toast) h += `<div class="toast${S.toast.bad ? ' bad' : ''}" role="status" data-id="toast:${S.toast.n}">${esc(S.toast.text)}</div>`;

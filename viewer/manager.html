@@ -255,10 +255,11 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .pop { position: absolute; z-index: 20; display: grid; gap: 4px; padding: 10px; border-radius: 10px; background: var(--raised); box-shadow: 0 0 0 1px var(--hair-2), 0 24px 48px -12px rgba(0, 0, 0, .85); font-size: 12.5px; animation: drop 160ms var(--ease) 1; }
 .pop-h { display: flex; align-items: baseline; gap: 8px; padding: 2px 4px 6px; font-weight: 600; }
 .pop-h span { margin-left: auto; font: 600 12.5px/1 var(--code); }
-.pop-r { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 30px; padding: 0 4px; border-radius: 6px; color: var(--text-2); }
-.pop-r small { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pop-r b { font: 600 12px/1 var(--code); color: var(--text); }
-.pop-r .who { font: 500 12px/1 var(--code); color: var(--text-2); margin-right: 8px; }
+.pop-r { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 0 4px; border-radius: 6px; color: var(--text-2); }
+.pop-r small { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.pop-r b { margin-left: auto; font: 600 12px/1 var(--code); color: var(--text); white-space: nowrap; }
+.pop-r .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12px/1.4 var(--code); color: var(--text-2); }
+.pop-r .btn { height: 22px; padding: 0 8px; font-size: 11px; border-radius: 6px; background: var(--hover); }
 .mi { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 6px; color: var(--text); white-space: nowrap; }
 .mi:hover { background: var(--hover); }
 .mi svg { width: 13px; height: 13px; color: var(--text-3); }
