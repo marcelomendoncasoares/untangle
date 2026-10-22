@@ -28,8 +28,9 @@ export function call(run: Pick<RunInfo, 'url' | 'token'>, method: string, route:
         resolve({ status: res.statusCode || 0, data });
       }).on('error', () => reject(new Gone()));
     });
-    // A review that takes longer than asked to answer counts as gone.
-    req.on('timeout', () => req.destroy(new Gone()));
+    // A review that takes longer than asked to answer counts as gone. A call that asks no time, as a
+    // watch's, waits as long as it takes: Node's own agent times its sockets out after 5 seconds.
+    if (opts.timeout) req.on('timeout', () => req.destroy(new Gone()));
     req.on('error', (e) => reject((e as Error).name === 'AbortError' ? e : new Gone()));
     req.end(body);
   });
