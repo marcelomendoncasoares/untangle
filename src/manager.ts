@@ -23,7 +23,7 @@ import { shortName, summaries, titleOf, type Summary } from './reviews.js';
 import { findRun, listRuns, olderRuns, pidAlive, runDir, wantedDir, wantedUrl, type RunInfo, type Wanted } from './runs.js';
 import { ReviewServer } from './server.js';
 import { Building, forget, free, freeOld, holdings, isCheckout, keptDirs, olderDirs, removeOld, type Holdings } from './space.js';
-import { isPrUrl } from './target.js';
+import { isPrUrl, upstreamOf } from './target.js';
 import { chatTail } from './transcripts.js';
 import { VERSION } from './version.js';
 
@@ -185,7 +185,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     target: run.pr && m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : run.dir || '',
     name: m ? `${m[2]}#${m[3]}` : (run.dir || '').split(/[\\/]/).pop() || 'review',
     title, kind,
-    repo: pull?.repo ?? (m ? `${m[1]}/${m[2]}` : (run.repoKey || '').replace(/^github\.com\//, '')),
+    repo: pull?.repo ?? (m ? `${m[1]}/${m[2]}` : repoName(run.repoKey || '', run.dir)),
     author: pull?.author ?? null, url: null, size: { add: 0, del: 0, files: 0 },
     status: 'running', stopped: null, closed: null, opened: run.started, head: run.head || '',
     // Once it's built, what it says of itself: how far, the notes, its agents.
@@ -195,6 +195,22 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false,
   };
 }
+
+// A directory's upstream, read again after a while: a fork's branches go by it.
+const upstreams = new Map<string, { name: string | null; at: number }>();
+function upstream(dir: string): string | null {
+  const known = upstreams.get(dir);
+  if (known && Date.now() - known.at < SIZE_AGAIN) return known.name;
+  const name = fs.existsSync(dir) ? upstreamOf(dir) : null;
+  upstreams.set(dir, { name, at: Date.now() });
+  return name;
+}
+
+/**
+ * A review's repository, as people name it: owner/repo on GitHub, or the folder's name. A branch of
+ * a fork goes by the repository it came from, as a pull request of it does.
+ */
+const repoName = (repoKey: string, dir: string | null) => (dir && upstream(dir)) || repoKey.replace(/^github\.com\//, '').replace(/^local\/(.+)-[0-9a-f]{8}$/, '$1');
 
 /** A review's memory, from its process and its children (its language server). */
 function memoryOf(pid: number): Summary['memory'] | null {
@@ -247,7 +263,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     name: shortName(r),
     title,
     kind,
-    repo: r.repoKey.replace(/^github\.com\//, '').replace(/^local\/(.+)-[0-9a-f]{8}$/, '$1'),
+    repo: repoName(r.repoKey, r.pr ? null : r.dir),
     author: r.author,
     url: r.url,
     size: r.size,

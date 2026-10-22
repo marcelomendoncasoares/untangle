@@ -50,6 +50,16 @@ function githubRepo(url: string): { owner: string; repo: string } | null {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
+/**
+ * The repository a fork came from, as people name it: its upstream remote's owner/repo on GitHub.
+ * Null when the directory has no such remote.
+ */
+export function upstreamOf(dir: string): string | null {
+  const url = gitMaybe(dir, 'remote', 'get-url', 'upstream');
+  const g = url ? githubRepo(url) : null;
+  return g ? `${g.owner}/${g.repo}` : null;
+}
+
 const GH_FIELDS = 'number,title,url,state,baseRefName,baseRefOid,headRefName,headRefOid,author';
 // gh says who opened it as { login }.
 const fromGh = (j: Omit<PullRequest, 'owner' | 'repo' | 'author'> & { author?: { login?: string } | null }) => ({ ...j, author: j.author?.login ?? null });

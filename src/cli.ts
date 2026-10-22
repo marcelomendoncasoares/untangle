@@ -28,7 +28,7 @@ import { findRun, holder, listRuns, prKey, removeRun, wantedDir, wantedUrl, writ
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
 import { skill } from './skill.js';
-import { isPrUrl, latestHead, resolveDirectory, resolveUrl, type Target } from './target.js';
+import { isPrUrl, latestHead, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
 import { upgrade, upgradeNotice } from './upgrade.js';
 import { VERSION } from './version.js';
 
@@ -368,7 +368,8 @@ async function review(opts: Options): Promise<number> {
     const pr = t.pr;
     const branch = !pr ? gitMaybe(t.repo, 'rev-parse', '--abbrev-ref', 'HEAD')?.trim() : null;
     const title = pr ? `#${pr.number} ${pr.title}` : `${branch && branch !== 'HEAD' ? branch : t.headSha.slice(0, 7)} against ${t.baseRef}`;
-    const repoName = t.repoKey.replace(/^github\.com\//, '').replace(/^local\//, '');
+    // A branch of a fork goes by the repository it came from: its upstream's name, not the fork's.
+    const repoName = (!pr && upstreamOf(t.repo)) || t.repoKey.replace(/^github\.com\//, '').replace(/^local\//, '');
     // A base given as a commit shows once, not as "65bcfb7 65bcfb7".
     const base = t.baseSha.startsWith(t.baseRef) ? t.baseSha.slice(0, 7) : `${t.baseRef} ${t.baseSha.slice(0, 7)}`;
     return {
