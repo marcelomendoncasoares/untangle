@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { describe, it, mock } from 'node:test';
 import { parse } from 'yaml';
-import { Feedback, elapsedSeconds, feedbackForm, runningCommands, scrubFeedback, type FeedbackDraft } from '../../dist/feedback.js';
+import { Feedback, elapsedSeconds, feedbackForm, reportParts, runningCommands, scrubFeedback, type FeedbackDraft } from '../../dist/feedback.js';
 import { parseCommand } from '../../dist/args.js';
 import { Narrator } from '../../dist/narrate.js';
 import { cacheRoot } from '../../dist/cache.js';
@@ -53,6 +53,36 @@ describe('Given ps output with nested child processes, ', () => {
   describe('when ps prints hours without a day, ', () => {
     it('then the elapsed time retains all hours.', () => {
       assert.equal(elapsedSeconds('27:02:01'), 97321);
+    });
+  });
+});
+
+describe('Given an agent’s words for a report, ', () => {
+  // As Codex wrote one, in a paragraph.
+  const paragraph = 'While reviewing https://github.com/serverpod/serverpod/pull/5905, untangle watch had returned successfully and said this chat held the review. After the review work, untangle note -review https://github.com/serverpod/serverpod/pull/5905 - failed with: no review of https://github.com/serverpod/serverpod/pull/5905 is running.';
+
+  describe('when they come in lines, or in one short line, ', () => {
+    it('then the first line is the title, and the lines after it what happened.', () => {
+      assert.deepEqual([reportParts('untangle note fails\r\nIt says no review is running.\n\nThe watch works.\n'), reportParts('  untangle note hangs.  ')], [
+        { title: 'untangle note fails', body: 'It says no review is running.\n\nThe watch works.' },
+        { title: 'untangle note hangs', body: '' },
+      ]);
+    });
+  });
+
+  describe('when they come in one paragraph, ', () => {
+    it('then a first sentence short enough is the title, and the rest what happened; a longer one is cut at a word, with all of the words below it.', () => {
+      assert.deepEqual([reportParts('untangle note hangs. The page says nothing.'), reportParts(paragraph)], [
+        { title: 'untangle note hangs', body: 'The page says nothing.' },
+        { title: 'While reviewing https://github.com/serverpod/serverpod/pull/5905, untangle watch had returned…', body: paragraph },
+      ]);
+    });
+  });
+
+  describe('when they go through GitHub’s form, ', () => {
+    it('then the form’s title and what happened are those parts.', () => {
+      const url = new URL(feedbackForm({ ...draft, text: paragraph }));
+      assert.deepEqual([url.searchParams.get('title'), url.searchParams.get('what')], [reportParts(paragraph).title, paragraph]);
     });
   });
 });

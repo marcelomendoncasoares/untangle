@@ -304,7 +304,7 @@ describe('Given a served review, signed in to gh, ', { skip, timeout: 240_000 },
     let words = '';
 
     before(async () => {
-      const out = await untangleCommand(['feedback', 'untangle note hangs: no answer in 5 minutes'], { cacheDir: s!.cache, gh: s!.gh, cwd: s!.repo.dir });
+      const out = await untangleCommand(['feedback', 'untangle note hangs. It gave no answer in 5 minutes, and the page said nothing.'], { cacheDir: s!.cache, gh: s!.gh, cwd: s!.repo.dir });
       said = out.out.trim();
       await s!.page.until(`!document.querySelector('#vw-alarm').hidden`, 10_000);
       alarm = await read(s!.page, `document.querySelector('#vw-alarm').textContent`);
@@ -315,10 +315,10 @@ describe('Given a served review, signed in to gh, ', { skip, timeout: 240_000 },
       await s!.page.until(`!document.querySelector('.fbk')`);
     });
 
-    it('then the command says the report is on the page, the bar offers it, and it opens with the agent’s words as its title.', () => {
+    it('then the command says the report is on the page, the bar offers it, and it opens with the agent’s first sentence as its title and the rest as what happened.', () => {
       assert.equal(said, 'untangle: the report is on the review’s page, for you to check and send.');
       assert.equal(alarm, 'A report is drafted · for you to checkOpen it');
-      assert.equal(words, 'untangle note hangs: no answer in 5 minutes | ');
+      assert.equal(words, 'untangle note hangs | It gave no answer in 5 minutes, and the page said nothing.');
     });
   });
 

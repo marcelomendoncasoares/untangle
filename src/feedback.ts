@@ -22,9 +22,31 @@ export type FeedbackKind = 'bug' | 'idea';
 export interface FeedbackDraft {
   kind: FeedbackKind;
   text: string;
+  /** The agent's words as a report: its title, and what happened. */
+  title?: string;
+  body?: string;
   details: Array<{ k: string; v: string }>;
   running: Array<{ command: string; pid: number; seconds: number }>;
   at?: string;
+}
+
+// As long as a report's title gets: past it, words are what happened.
+const TITLE = 100;
+
+/**
+ * A report's title and what happened, from an agent's words: their first line, and the lines after
+ * it. Words with no line break are split too: after their first sentence, when it's short enough
+ * for a title. Otherwise one short sentence is all title, and longer words are all what happened,
+ * under their start, cut at a word.
+ */
+export function reportParts(text: string): { title: string; body: string } {
+  const t = text.replace(/\r/g, '').trim();
+  const nl = t.indexOf('\n');
+  if (nl >= 0) return { title: t.slice(0, nl).trim(), body: t.slice(nl + 1).trim() };
+  const first = /^.+?[.!?](?=\s)/.exec(t)?.[0];
+  if (first && first.length <= TITLE) return { title: first.replace(/\.$/, ''), body: t.slice(first.length).trim() };
+  if (t.length <= TITLE) return { title: t.replace(/\.$/, ''), body: '' };
+  return { title: t.slice(0, TITLE).replace(/\s+\S*$/, '') + '…', body: t };
 }
 
 export const feedbackRepo = () => process.env.UNTANGLE_FEEDBACK_REPO || DEFAULT_REPO;
@@ -238,7 +260,7 @@ function draftFrom(value: unknown): FeedbackDraft {
     || !Array.isArray(b.running) || b.running.length > 1000 || !b.running.every((r) => r && typeof r.command === 'string' && r.command.length <= 4000 && Number.isSafeInteger(r.pid) && r.pid > 0 && Number.isFinite(r.seconds) && r.seconds >= 0)) {
     throw new FeedbackError('A draft needs kind, text, details (k and v), and running commands (command, pid and seconds).', 400);
   }
-  return { kind: b.kind, text: b.text, details: b.details.map(({ k, v }) => ({ k, v: scrubFeedback(v) })), running: b.running.map(({ command, pid, seconds }) => ({ command: scrubFeedback(command), pid, seconds })), at: new Date().toISOString() };
+  return { kind: b.kind, text: b.text, ...reportParts(b.text), details: b.details.map(({ k, v }) => ({ k, v: scrubFeedback(v) })), running: b.running.map(({ command, pid, seconds }) => ({ command: scrubFeedback(command), pid, seconds })), at: new Date().toISOString() };
 }
 
 /** ps uses [[dd-]hh:]mm:ss on Linux and macOS. */
@@ -267,8 +289,9 @@ export function runningCommands(text: string, parent: number): FeedbackDraft['ru
 export function feedbackForm(draft: FeedbackDraft): string {
   const url = new URL(`https://github.com/${feedbackRepo()}/issues/new`);
   url.searchParams.set('template', `${draft.kind}.yml`);
-  url.searchParams.set('title', (draft.text.split(/\r?\n/)[0] || (draft.kind === 'idea' ? 'An idea for untangle' : 'untangle is not answering')).slice(0, 256));
-  url.searchParams.set('what', draft.text);
+  const { title, body } = reportParts(draft.text);
+  url.searchParams.set('title', (title || (draft.kind === 'idea' ? 'An idea for untangle' : 'untangle is not answering')).slice(0, 256));
+  url.searchParams.set('what', body || draft.text);
   url.searchParams.set('details', [...draft.details.map((d) => `${d.k}: ${d.v}`), ...draft.running.map((r) => `${r.command}   pid ${r.pid}, ${duration(r.seconds)}`)].join('\n'));
   // Trim diagnostics first, then the description; URL encoding can make each character much longer.
   for (const key of ['details', 'what', 'title']) {

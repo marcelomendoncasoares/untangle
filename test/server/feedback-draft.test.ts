@@ -74,14 +74,14 @@ async function presence() {
 
 describe('Given an open page and an agent’s draft, ', () => {
   describe('when the agent posts it and the page takes it, ', () => {
-    it('then the draft is broadcast, retained with its timestamp, and cleared on request.', async () => {
+    it('then the draft is broadcast, made a report with its title, retained with its timestamp, and cleared on request.', async () => {
       f = await feedbackFixture();
       const page = await presence();
       const draft = { kind: 'bug', text: 'The review hangs', details: [{ k: 'untangle', v: '0.1.0' }], running: [{ command: 'git hash-object -w --stdin', pid: 68131, seconds: 314 }] };
       const response = await f.client.call('feedback/draft', { method: 'POST', body: draft });
       assert.deepEqual(response.data, { pages: 1 });
       const sent = await page.frame as { feedback: { draft: typeof draft & { at: string } } };
-      assert.deepEqual({ ...sent.feedback.draft, at: undefined }, { ...draft, at: undefined });
+      assert.deepEqual({ ...sent.feedback.draft, at: undefined }, { ...draft, title: 'The review hangs', body: '', at: undefined });
       assert.ok(Number.isFinite(Date.parse(sent.feedback.draft.at)));
       const context = (await f.client.call('feedback')).data as { draft: unknown };
       assert.deepEqual(context.draft, sent.feedback.draft);

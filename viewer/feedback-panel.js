@@ -357,7 +357,8 @@ async function open(host) {
   const titleIn = $('#fbk-title'), text = $('textarea'), board = $('.fbk-board'), pic = $('canvas.pic'), ink = $('canvas.ink'), wait = $('.fbk-wait');
   const err = $('.fbk-err'), sendBtn = $('[data-fb="send"]'), webBtn = $('[data-fb="web"]');
   const stepWrite = $('.fbk-b'), stepCheck = $('.fbk-c'), issue = $('.fbk-issue'), ok = $('.fbk-ok');
-  const drafted = draft && draft.text ? split(draft.text) : null;
+  // The agent's words, as untangle made a report of them; one from an older untangle, by its lines.
+  const drafted = draft && draft.text ? (typeof draft.title === 'string' ? { title: draft.title, rest: draft.body || '' } : split(draft.text)) : null;
   titleIn.value = drafted ? drafted.title : kept.title;
   text.value = drafted ? drafted.rest : kept.text;
   if (draft) api('api/feedback/draft', { method: 'DELETE' }).catch(() => {});
