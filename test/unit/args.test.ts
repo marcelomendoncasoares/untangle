@@ -174,6 +174,26 @@ describe('Given the agent’s commands, ', () => {
   );
 
   it(
+    'when reply’s or note’s own flags come after the note, or after the text, as an agent may write them, '
+    + 'then they’re flags, each word of its own, and stdin is still read; other words, a dash or not, are the text.',
+    () => {
+      assert.deepEqual([
+        parseCommand(['reply', 'N2', '-resolve', '-']),
+        parseCommand(['reply', 'N2', 'Done.', '--resolve']),
+        parseCommand(['reply', 'N3', '-review', 'https://github.com/acme/app/pull/5', '-resolve=false', 'Not', '-yet']),
+        parseCommand(['note', 'lib/a.dart:40-42', '-removed', '-']),
+        parseCommand(['note', 'Nothing to change.', '-agent', 'Codex']),
+      ], [
+        { cmd: 'reply', review: null, agent: null, resolve: true, note: 2, text: '-' },
+        { cmd: 'reply', review: null, agent: null, resolve: true, note: 2, text: 'Done.' },
+        { cmd: 'reply', review: 'https://github.com/acme/app/pull/5', agent: null, resolve: false, note: 3, text: 'Not -yet' },
+        { cmd: 'note', review: null, agent: null, removed: true, path: 'lib/a.dart', line: 42, startLine: 40, text: '-' },
+        { cmd: 'note', review: null, agent: 'Codex', removed: false, path: null, line: null, startLine: null, text: 'Nothing to change.' },
+      ]);
+    },
+  );
+
+  it(
     'when reply names no note, '
     + 'then it is refused.',
     () => {

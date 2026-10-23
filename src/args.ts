@@ -134,6 +134,24 @@ function readFlags(argv: string[], flags: Flag[], stop: boolean): { values: Map<
   return { values, rest, raw };
 }
 
+/**
+ * A command's own flags among the words after its first one, as an agent may write them
+ * (untangle reply N2 -resolve -): taken out when they're whole flags, the other words left in
+ * order. A word that only starts with a dash, as text may, stays a word.
+ */
+function laterFlags(words: string[], flags: Flag[], values: Map<string, string | boolean>): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const m = /^--?([a-z]+)(?:=(.*))?$/.exec(words[i]);
+    const flag = m && flags.find((f) => f.name === m[1]);
+    const v = !m || !flag ? undefined : m[2] ?? (flag.type === 'bool' ? 'true' : words[i + 1]);
+    if (!flag || v === undefined || (flag.type === 'bool' && !/^(true|false|1|0)$/.test(v))) { out.push(words[i]); continue; }
+    values.set(flag.name, flag.type === 'bool' ? v === 'true' || v === '1' : v);
+    if (flag.type !== 'bool' && m![2] === undefined) i++;
+  }
+  return out;
+}
+
 /** A duration as Go writes one (300ms, 90s, 10m, 1h30m), in milliseconds. */
 export function duration(text: string): number | null {
   if (text === '0') return 0;
@@ -232,6 +250,7 @@ export const watchUsage = () => commandUsage('watch', 'hold a review as a coding
 ], WATCH_FLAGS, ['', 'The review’s own flags (untangle -h) go to a review watch starts.']);
 export const replyUsage = () => commandUsage('reply', 'answer in a note’s thread', '[flags] <N> <text>', [
   'N is the note’s number (N2, or 2). The text is the rest of the line; - reads it from stdin.',
+  'Flags may come after N too, each as a word of its own: untangle reply N2 -resolve -.',
 ], REPLY_FLAGS);
 export const noteUsage = () => commandUsage('note', 'write a note of your own, on the review’s lines or on the review', '[flags] [<path>[:<line>[-<line>]]] <text>', [
   'Writes a note on the lines, from the agent’s own review of the change: the person reviewing answers',
@@ -303,13 +322,14 @@ export function parseCommand(argv: string[]): Command {
     if (values.get('help')) return { cmd: 'help', text: replyUsage() };
     const m = /^[Nn]?(\d+)$/.exec(rest[0] || '');
     if (!m) throw new UsageError(rest.length ? `${rest[0]} is not a note: say which, as N2 or 2` : 'which note? untangle reply <N> <text>');
-    const text = rest.slice(1).join(' ');
+    const text = laterFlags(rest.slice(1), REPLY_FLAGS, values).join(' ');
     if (!text && !values.get('resolve')) throw new UsageError('what to answer? untangle reply <N> <text>, or -resolve alone');
     return { cmd: 'reply', review: values.has('review') ? String(values.get('review')) : null, agent: values.has('agent') ? String(values.get('agent')) : null, resolve: values.get('resolve') === true, note: Number(m[1]), text: text || null };
   }
   if (first === 'note') {
-    const { values, rest } = readFlags(more, NOTE_FLAGS, true);
+    const { values, rest: given } = readFlags(more, NOTE_FLAGS, true);
     if (values.get('help')) return { cmd: 'help', text: noteUsage() };
+    const rest = given.length ? [given[0], ...laterFlags(given.slice(1), NOTE_FLAGS, values)] : given;
     const who = { review: values.has('review') ? String(values.get('review')) : null, agent: values.has('agent') ? String(values.get('agent')) : null };
     // Its text alone (words, or - for stdin) is a note on the review itself; a lone path still asks for its text.
     if (rest.length === 1 && (rest[0] === '-' || /\s/.test(rest[0].trim()))) return { cmd: 'note', ...who, removed: false, path: null, line: null, startLine: null, text: rest[0] };
