@@ -19,7 +19,7 @@ interface Status { phase: 'building' | 'ready' | 'failed'; title: string; where:
 
 const done = (label: string, ms: number, notes: string[] = []): Step => ({ label, state: 'done', ms, notes });
 const before4 = [done('branch', 640), done('checkouts', 880, [head, base]), done('packages', 1790), done('diff', 380, ['87 files changed, 21 of them generated'])];
-const reading = (n: number): Step => ({ label: 'Dart analyzer', state: 'running', ms: 4000, detail: `Dart files ${n} of 116: packages/serverpod_offline_sync/lib/src/sync/engine.dart`, count: [n, 116], notes: [] });
+const reading = (n: number): Step => ({ label: 'analyzer', state: 'running', ms: 4000, detail: `Dart files ${n} of 116: packages/serverpod_offline_sync/lib/src/sync/engine.dart`, count: [n, 116], notes: [] });
 
 /**
  * Stands in for untangle while it builds: the startup page, a status the test moves on (answered
@@ -89,7 +89,7 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
     let shown = '';
 
     before(async () => {
-      shown = await read(page!, `[document.getElementById('title').textContent, document.getElementById('where').textContent, ${rows}, ${row('Dart analyzer')}.querySelector('.dt').textContent].join('\\n')`);
+      shown = await read(page!, `[document.getElementById('title').textContent, document.getElementById('where').textContent, ${rows}, ${row('analyzer')}.querySelector('.dt').textContent].join('\\n')`);
     });
 
     it('then it names the review, and lists every step with its state and time: what is done, the analyzer reading its files, and what comes after it.', () => {
@@ -100,7 +100,7 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
         'checkouts | done | 880 ms',
         'packages | done | 1.8 s',
         'diff | done | 380 ms',
-        'Dart analyzer | running',
+        'analyzer | running',
         'commits | pending',
         'analysis | pending',
         'history | pending',
@@ -115,7 +115,7 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
 
     it('then the analyzer\'s mark turns, and the running step\'s ground is under it.', async () => {
       const turning = await read(page!, `(() => {
-        const li = ${row('Dart analyzer')}, hl = document.getElementById('hl');
+        const li = ${row('analyzer')}, hl = document.getElementById('hl');
         const spin = li.querySelector('.arc').getAnimations().map((a) => a.animationName).join(',');
         return spin + ' | ' + (hl.style.transform === 'translateY(' + li.offsetTop + 'px)' && hl.style.opacity === '1' ? 'under it' : hl.style.transform);
       })()`);
@@ -130,9 +130,9 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
       const bar = Number(await page!.eval(`parseFloat(document.getElementById('fill').style.width)`));
       await new Promise((resolve) => setTimeout(resolve, 1100));
       build!.set({ phase: 'building', title, where, plan, steps: [...before4, reading(80)], notes: [] });
-      await page!.until(`${row('Dart analyzer')}.querySelector('.dt').textContent.startsWith('Dart files 80 ')`);
+      await page!.until(`${row('analyzer')}.querySelector('.dt').textContent.startsWith('Dart files 80 ')`);
       moved = await read(page!, `(() => {
-        const li = ${row('Dart analyzer')};
+        const li = ${row('analyzer')};
         const now = parseFloat(document.getElementById('fill').style.width);
         return [now > ${bar} && now < 100 ? 'the bar moved on' : 'the bar at ' + now, li.querySelector('.cbar i').style.transform, li.querySelector('.eta').textContent].join(' | ');
       })()`);
@@ -149,7 +149,7 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
 
     before(async () => {
       await page!.eval(`(() => {
-        const li = ${row('Dart analyzer')};
+        const li = ${row('analyzer')};
         new MutationObserver(() => {
           if (!li.classList.contains('done') || window.seen) return;
           window.seen = [
@@ -159,9 +159,9 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
           ].join(' | ');
         }).observe(li, { attributes: true, attributeFilter: ['class'] });
       })()`);
-      build!.set({ phase: 'building', title, where, plan, steps: [...before4, done('Dart analyzer', 9000), { label: 'commits', state: 'running', ms: 0, notes: [] }], notes: [] });
+      build!.set({ phase: 'building', title, where, plan, steps: [...before4, done('analyzer', 9000), { label: 'commits', state: 'running', ms: 0, notes: [] }], notes: [] });
       seen = String(await page!.until('window.seen'));
-      await page!.until(`${row('Dart analyzer')}.querySelector('.now').hidden`);
+      await page!.until(`${row('analyzer')}.querySelector('.now').hidden`);
       after = await read(page!, rows);
     });
 
@@ -175,7 +175,7 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
         'checkouts | done | 880 ms',
         'packages | done | 1.8 s',
         'diff | done | 380 ms',
-        'Dart analyzer | done | 9.0 s',
+        'analyzer | done | 9.0 s',
         'commits | running',
         'analysis | pending',
         'history | pending',
@@ -188,7 +188,7 @@ describe('Given the startup page of a review being built, ', { skip, timeout: 12
 
     before(async () => {
       await page!.eval(`new MutationObserver(() => sessionStorage.setItem('phase', document.getElementById('phase').textContent)).observe(document.getElementById('phase'), { childList: true })`);
-      build!.set({ phase: 'ready', title, where, plan, steps: [...before4, done('Dart analyzer', 9000), done('commits', 470), done('analysis', 3200), done('history', 60)], notes: [] });
+      build!.set({ phase: 'ready', title, where, plan, steps: [...before4, done('analyzer', 9000), done('commits', 470), done('analysis', 3200), done('history', 60)], notes: [] });
       await page!.until(`document.getElementById('viewer')`);
       opened = await read(page!, `sessionStorage.getItem('phase') + ' | ' + document.getElementById('viewer').textContent`);
     });
@@ -229,7 +229,7 @@ describe('Given the startup page of a review whose analysis is cached, ', { skip
         'checkouts | skipped | cached',
         'packages | skipped | cached',
         'diff | skipped | cached',
-        'Dart analyzer | skipped | cached',
+        'analyzer | skipped | cached',
         'commits | skipped | cached',
         'analysis | skipped | cached',
         'history | running',
@@ -265,7 +265,7 @@ describe('Given the startup page of a review that cannot be built, ', { skip, ti
   let build: Awaited<ReturnType<typeof building>> | undefined;
 
   before(async () => {
-    build = await building({ phase: 'failed', title, where, plan, steps: [...before4, { label: 'Dart analyzer', state: 'failed', ms: 1000, notes: [] }], notes: [], error: 'untangle needs the Dart SDK on PATH' });
+    build = await building({ phase: 'failed', title, where, plan, steps: [...before4, { label: 'analyzer', state: 'failed', ms: 1000, notes: [] }], notes: [], error: 'untangle needs the Dart SDK on PATH' });
     page = await launchBrowser(1400, 900);
     await page.goto(build.url);
     await page.until(`document.querySelectorAll('.st').length === ${plan.length}`);
@@ -290,7 +290,7 @@ describe('Given the startup page of a review that cannot be built, ', { skip, ti
         'checkouts | done | 880 ms',
         'packages | done | 1.8 s',
         'diff | done | 380 ms',
-        'Dart analyzer | failed | 1.0 s',
+        'analyzer | failed | 1.0 s',
         'commits | pending',
         'analysis | pending',
         'history | pending',

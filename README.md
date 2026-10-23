@@ -265,7 +265,7 @@ Or for any pull request on GitHub:
 untangle https://github.com/marcelomendoncasoares/serverpod_offline_sync/pull/168
 ```
 
-A page opens at once and lists the build's steps as they run: checkouts, packages, diff, Dart
+A page opens at once and lists the build's steps as they run: checkouts, packages, diff,
 analyzer, commits and analysis. Then the review replaces it. Close the page when you're done,
 and `untangle` stops.
 

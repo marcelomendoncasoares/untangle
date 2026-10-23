@@ -221,10 +221,10 @@ describe('Given the page waiting for the status to change, ', () => {
   after(() => run.remove());
 
   describe('when a step starts, ', () => {
-    before(() => run.narrator.step('Dart analyzer'));
+    before(() => run.narrator.step('analyzer'));
 
     it('then the page hears at once, with the step running.', () => {
-      assert.deepEqual(run.heard, ['rev 1: Dart analyzer running']);
+      assert.deepEqual(run.heard, ['rev 1: analyzer running']);
     });
   });
 });
@@ -234,7 +234,7 @@ describe('Given a running step that counts its files, and the page waiting, ', (
 
   before(() => {
     run = waited();
-    run.narrator.step('Dart analyzer');
+    run.narrator.step('analyzer');
     run.ask();
   });
   after(() => run.remove());
@@ -252,7 +252,7 @@ describe('Given a running step that counts its files, and the page waiting, ', (
     });
 
     it('then the page hears once, 150 ms after the first, with the second and its count.', () => {
-      assert.equal(`${early}|${run.heard.join('\n')}`, '|rev 2: Dart analyzer running, Dart files 2 of 116: lib/b.dart, 2 of 116');
+      assert.equal(`${early}|${run.heard.join('\n')}`, '|rev 2: analyzer running, Dart files 2 of 116: lib/b.dart, 2 of 116');
     });
   });
 
@@ -265,7 +265,7 @@ describe('Given a running step that counts its files, and the page waiting, ', (
     });
 
     it('then it keeps neither what it was reading nor its count.', () => {
-      assert.equal(status, '{"label":"Dart analyzer","state":"done","ms":150,"notes":[]}');
+      assert.equal(status, '{"label":"analyzer","state":"done","ms":150,"notes":[]}');
     });
   });
 });

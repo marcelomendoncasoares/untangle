@@ -50,7 +50,7 @@ export type ChainsBy = 'history' | 'structure';
 
 /** The steps a build runs, in order, when nothing is cached: the page lists those to come. */
 export function buildSteps(chains: ChainsBy): string[] {
-  return ['checkouts', 'packages', 'diff', 'Dart analyzer', ...(chains === 'history' ? ['commits'] : []), 'analysis'];
+  return ['checkouts', 'packages', 'diff', 'analyzer', ...(chains === 'history' ? ['commits'] : []), 'analysis'];
 }
 
 const readJson = <T>(file: string): T | null => {
@@ -190,7 +190,7 @@ async function askAnalyzer(target: Target, dir: string, label: string, version: 
   const files = diff.compares.base.files;
   progress.note(`${files.length} files changed, ${files.filter((f) => !f.hunks).length} of them generated`);
 
-  progress.step('Dart analyzer');
+  progress.step('analyzer');
   if (!has('dart')) throw new Error('untangle needs the Dart SDK on PATH');
   const facts = await extract(diff, headDir, baseDir, progress);
   const answers: Answers = { version, diff, ...facts, headDir, baseDir };
