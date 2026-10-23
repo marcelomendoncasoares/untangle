@@ -53,7 +53,7 @@
   const S = { data: null, tab: 'open', filter: 'all', sel: null, opened: new Set(), tails: new Map(), menu: null, toast: null, starting: new Set(), picked: new Set(), confirm: false, pending: new Map() };
   // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
   // then the review picked, and how its agent starts (the form), or the review an agent joins.
-  const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null };
+  const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null, folder: null };
   const TEMPLATE = (pr) => `Do an initial review of this ${pr ? 'pull request' : 'branch'}. Read the change, then post your findings to untangle as notes on the lines they’re about, one note per point: bugs and edge cases first, then missing tests, then design and naming. Say what you’d change and why, and leave out style nits. If you find nothing to change, say so in a note on the review. Then tell me how many notes you posted, and keep watching the review for mine.`;
   const AGENT = { claude: 'Claude', codex: 'Codex' };
   // Quoted for a shell, as untangle types it into the terminal.
@@ -451,8 +451,29 @@
   const sameUrl = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
   const reviewOf = (url) => rows().find((r) => r.status !== 'closed' && !r.twin && (sameUrl(r.url, url) || sameUrl(r.target, url)));
   const openHint = (r) => (r.status === 'paused' ? 'paused · Resume' : r.build ? 'starting · Open' : 'running · Open');
+  // A folder's path, pasted: from /, ~ or a drive. untangle says which repository and branch it holds.
+  const FOLDER = /^(?:~(?:[\\/]|$)|\/|[A-Za-z]:[\\/])/;
+  // What untangle said of the folder typed: undefined for no path, null while it's asked.
+  const folderSaid = () => {
+    const q = P.q.trim();
+    if (!FOLDER.test(q)) return undefined;
+    return P.folder && P.folder.q === q ? P.folder.d : null;
+  };
+  // Asked once the typing stops.
+  let folderTimer = 0;
+  function lookFolder() {
+    const q = P.q.trim();
+    if (!FOLDER.test(q) || (P.folder && P.folder.q === q)) return;
+    P.folder = { q, d: null };
+    clearTimeout(folderTimer);
+    folderTimer = setTimeout(() => api('folder?path=' + encodeURIComponent(q)).catch((e) => ({ error: e.message })).then((d) => {
+      if (!P.folder || P.folder.q !== q) return;
+      P.folder.d = d;
+      if (P.open && P.stage === 'pick') palette();
+    }), 150);
+  }
 
-  // What the palette offers, in its groups: a link you pasted, what's asked of you, what you paused, your own.
+  // What the palette offers, in its groups: a link or a folder you pasted, what's asked of you, what you paused, your own.
   function choices() {
     const q = P.q.trim().toLowerCase();
     const hit = (...texts) => !q || texts.some((t) => String(t).toLowerCase().includes(q));
@@ -462,6 +483,11 @@
       const url = `https://github.com/${link[1]}/${link[2]}/pull/${link[3]}`;
       const open = reviewOf(url);
       out.push({ group: 'Link', num: '#' + link[3], title: open ? open.title : `Start the review of ${link[1]}/${link[2]}#${link[3]}`, hint: open ? openHint(open) : '', target: open ? null : url, id: open ? open.id : null, again: !!open && open.status === 'paused' });
+    }
+    const f = folderSaid();
+    if (f && f.dir) {
+      const open = rows().find((r) => r.status !== 'closed' && !r.twin && r.target === f.dir);
+      out.push({ group: 'Folder', num: f.name, title: open ? open.title : f.branch || 'No branch checked out', hint: open ? openHint(open) : f.repo || f.where, target: open ? null : f.dir, id: open ? open.id : null, again: !!open && open.status === 'paused', folder: f });
     }
     const pull = (group) => (p) => {
       const open = reviewOf(p.url);
@@ -535,11 +561,12 @@
       }
       h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}${longName(c.num) ? ' dir' : ''}" data-act="choose" data-i="${i}">${numTag(c.num)}<span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
     });
-    const note = P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link to start its review.' : 'Nothing waits for you on GitHub.') : '';
+    const f = folderSaid();
+    const note = f !== undefined ? (f ? f.error || '' : 'Looking for the folder…') : P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link, or a folder’s path, to start its review.' : 'Nothing waits for you on GitHub.') : '';
     const body = `<div class="scrim" data-act="close-pal"></div><div class="pal pick" role="dialog" aria-label="Start a review">
-      <div class="pal-in">${ICON.plus}<input id="pal-in" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a pull request’s link, or search" value="${esc(P.q)}"><kbd>Esc</kbd></div>
+      <div class="pal-in">${ICON.plus}<input id="pal-in" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a pull request’s link or a folder’s path, or search" value="${esc(P.q)}"><kbd>Esc</kbd></div>
       <div class="pal-list">${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}</div>
-      <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>⏎</kbd>choose</span><span>A link to any pull request works too</span></div>
+      <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>⏎</kbd>choose</span><span>Any pull request’s link works too, or a folder’s path</span></div>
     </div>`;
     if (box) {
       // Typing stays where it is: only the list is drawn again.
@@ -643,6 +670,7 @@
   function choose(c) {
     if (!c) return;
     if (c.target && !c.id) {
+      if (c.folder) return startForm({ target: c.target, num: c.num, name: c.num, title: c.title, kind: null, sub: `${c.folder.repo ? c.folder.repo + ' · ' : ''}${c.folder.where}` });
       const m = PR_URL.exec(c.target);
       const pull = P.pulls ? [...P.pulls.asked, ...P.pulls.yours].find((p) => p.url === c.target) : null;
       const kt = /^([a-z]+)(?:\([^)]*\))?!?: (.+)$/.exec(pull ? pull.title : '');
@@ -923,6 +951,7 @@
     if (e.target.id !== 'pal-in') return;
     P.q = e.target.value;
     P.hl = 0;
+    lookFolder();
     palette();
   });
 

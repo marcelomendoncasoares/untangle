@@ -191,7 +191,7 @@ when one needs you.
 ### Start a review with its agent
 
 New review lists the pull requests GitHub asks you to review and your own. Pick one, or paste any
-pull request's link, and choose Claude or Codex: the review opens, and the agent's chat starts
+pull request's link or a folder's path, and choose Claude or Codex: the review opens, and the agent's chat starts
 next to it, already holding the review. Ask for an initial review, and the agent's findings come
 in as notes on the lines they're about. Inside Orca, the review opens beside the reviews page,
 and the agent's chat in a workspace of its own, Reviews.

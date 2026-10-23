@@ -2,11 +2,12 @@
 // while the page is open, asks each running review how it's doing. Reviews stay their own
 // processes: the manager only reads them, and does what the page asks with them.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
 import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
-import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
+import { cacheRoot, reviewDir, tilde, worktreeDir } from './cache.js';
 import { rehomeCheckouts } from './checkouts.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
@@ -242,6 +243,25 @@ function nameOf(target: string): string {
   return m ? `${m[1]}#${m[2]}` : path.basename(target);
 }
 
+/** A folder the palette was given: the repository a review of it reads, by its top folder, and its branch. */
+export type Folder = { dir: string; name: string; where: string; repo: string | null; branch: string | null } | { error: string };
+
+/** The folder at a path pasted in the palette, ~ for your home, or why there's no review of it. */
+export function folderAt(p: string, home = os.homedir()): Folder {
+  const full = p.replace(/^~(?=$|[\\/])/, home);
+  if (!path.isAbsolute(full)) return { error: 'A folder’s whole path, from / or ~' };
+  let isDir = false;
+  try {
+    isDir = fs.statSync(full).isDirectory();
+  } catch {
+    // Nothing there, or nothing to read.
+  }
+  if (!isDir) return { error: `There’s no folder at ${p}` };
+  const w = wantedDir(full);
+  if (!w?.dir) return { error: `${p} isn’t in a git repository` };
+  return { dir: w.dir, name: path.basename(w.dir), where: tilde(w.dir), repo: w.repoKey ? w.repoKey.replace(/^github\.com\//, '') : null, branch: w.branch };
+}
+
 /** A pull request the palette offers: its repository, number, title and author, and when it last moved. */
 export interface Pull { repo: string; number: number; title: string; author: string; url: string; updated: string; draft: boolean }
 
@@ -439,7 +459,7 @@ export class Manager {
    * it already running isn't started again.
    */
   async start(target: string, agent: AgentChoice | null = null, id: string | null = null): Promise<{ status?: number; data: unknown }> {
-    if (!isPrUrl(target) && !(path.isAbsolute(target) && fs.existsSync(target))) return { status: 400, data: { error: `${target} is not a pull request’s link` } };
+    if (!isPrUrl(target) && !(path.isAbsolute(target) && fs.existsSync(target))) return { status: 400, data: { error: `${target} is neither a pull request’s link nor a folder` } };
     const w = wanted(target);
     const key = w?.pr ?? w?.dir ?? target;
     while (this.underway.has(key)) await new Promise((r) => setTimeout(r, 100));
@@ -815,6 +835,7 @@ export class Manager {
     if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid, built: BUILT, busy: this.busy } };
     if (route === 'reviews' && method === 'GET') return { data: await this.view() };
     if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
+    if (route === 'folder' && method === 'GET') return { data: folderAt(query.get('path') ?? '') };
     if (route === 'agents' && method === 'GET') return { data: { ...agentOptions(), orca: !!orcaCli() } };
     if (route === 'start' && method === 'POST' && typeof (b as { target?: unknown }).target === 'string') return this.start((b as { target: string }).target.trim(), agentFrom((b as { agent?: unknown }).agent));
     if (route === 'tail' && method === 'GET') {

@@ -30,6 +30,7 @@ const rowsText = `[...document.querySelectorAll('.row')].map((r) => [r.querySele
 describe('Given a review Claude answered in, another paused, and the manager open, ', { skip, timeout: 300_000 }, () => {
   let repo: TempRepo;
   let other: TempRepo;
+  let third: TempRepo;
   let gh: GhStub;
   let cache = '', bin = '', opened = '';
   let run: UntangleRun;
@@ -52,6 +53,8 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     other = TempRepo.create();
     const head = branch(repo, 'hello');
     branch(other, 'hey');
+    third = TempRepo.create();
+    branch(third, 'howdy');
     const found = { number: 12, title: 'feat: Retry calls', url: 'https://github.com/acme/app/pull/12', updatedAt: '2026-10-21T10:00:00Z', isDraft: false, repository: { nameWithOwner: 'acme/app' }, author: { login: 'ada' } };
     gh = stubGh([{ match: ['search', 'prs', '--review-requested=@me'], stdout: [found] }, { match: ['search', 'prs', '--author=@me'], stdout: [] }]);
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
@@ -97,6 +100,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     gh.remove();
     repo.remove();
     other.remove();
+    third.remove();
     fs.rmSync(cache, { recursive: true, force: true });
     fs.rmSync(bin, { recursive: true, force: true });
   });
@@ -290,6 +294,34 @@ describe('Given a review Claude answered in, another paused, and the manager ope
       await page.until(`!document.querySelector('.row.pending') && !!document.querySelector('.toast.bad')`);
       assert.deepEqual(await page.eval(`[document.querySelectorAll('.row').length, document.querySelector('.toast').textContent]`), [2, 'the review didn’t start: gh isn’t logged in']);
       await page.eval(`window.fetch = window.__fetch`);
+    },
+  );
+
+  it(
+    'when a folder’s path is pasted in the palette, '
+    + 'then it offers the review of the repository the folder is in, on its branch, which opens the form; a folder under review offers its review, and a path with no folder says so.',
+    async () => {
+      const shown = `[...document.querySelectorAll('.pal-g, .pal-r, .pal-note')].map((e) => e.classList.contains('pal-r') ? [...e.children].map((c) => c.textContent).join(' | ') : '[' + e.textContent + ']')`;
+      const top = fs.realpathSync(third.dir);
+      await page.key('k', { ctrl: true });
+      await page.until(`!!document.querySelector('#pal-in')`);
+      await page.type(path.join(third.dir, 'lib'));
+      await page.until(`!!document.querySelector('.pal-r') && document.querySelector('.pal-g').textContent === 'Folder'`);
+      assert.deepEqual(await page.eval(shown), ['[Folder]', `${path.basename(top)} | feature | ${top}`]);
+      await page.key('Enter');
+      await page.until(`!!document.querySelector('.pal [data-act="f-start"]')`);
+      assert.deepEqual(await page.eval(`[document.querySelector('.pal .sh .l1').textContent, document.querySelector('.pal .sh .l2').textContent, document.querySelector('.pal .chk').textContent]`), [`${path.basename(top)}feature`, top, 'Request an initial review from Claude']);
+      await page.click('.pal [data-act="pal-back"]');
+      await page.until(`!!document.querySelector('#pal-in')`);
+      await page.eval(`(() => { const i = document.querySelector('#pal-in'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+      await page.type(repo.dir);
+      await page.until(`(document.querySelector('.pal-r .h') || {}).textContent === 'running · Open'`);
+      await page.eval(`(() => { const i = document.querySelector('#pal-in'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+      await page.type(path.join(third.dir, 'gone'));
+      await page.until(`(document.querySelector('.pal-note') || {}).textContent === ${JSON.stringify(`There’s no folder at ${path.join(third.dir, 'gone')}`)}`);
+      assert.equal(await page.eval(`document.querySelectorAll('.pal-r').length`), 0);
+      await page.key('Escape');
+      await page.until(`!document.querySelector('.pal')`);
     },
   );
 
