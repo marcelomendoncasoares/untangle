@@ -30,16 +30,19 @@ the review if needed and opens its page.
 - Codex: it returns at once, and from then on untangle puts a line in this chat when there is
   something new.
 
-For a pull request opened from its link, the watch names untangle's checkout of it, which is for
-reading only, since untangle builds the review from it. When a note asks for a change there,
-propose it in the reply instead. When asked for a review of the change, do it now, as described
-below. Then tell the user the review is open and end the turn.
+For a pull request opened from its link, the watch names untangle's checkout of the reviewed
+commit, for reading only, and, for an open pull request, a working copy of its branch, for
+changes. Make the changes the user requests in the working copy and commit them there. Push only
+when the user asks. Without a working copy, propose a change in the reply instead. When asked for
+a review of the change, do it now, as described below. Then tell the user the review is open and
+end the turn.
 
 ## Reviewing the change
 
-Read the change against the review's base: \`git diff <base>...HEAD\` for a branch, or \`gh pr diff\`
-for a pull request. For a big change, start from the files it touches and read the parts that
-matter most. Write one note per point on the lines it's about, saying what to change and why.
+Read the change against the review's base and reviewed head: \`git diff <base>...<reviewed-head>\`
+in the folder the watch names. Use the reviewed head so the diff and the notes refer to the same
+commit. For a big change, start from the files it touches and read the parts that matter most.
+Write one note per point on the lines it's about, saying what to change and why.
 
 - For lines, run \`untangle note lib/a.dart:42 'the note'\`; a range is \`lib/a.dart:40-42\`, and a
   path alone is the whole file. Lines are numbered as on the review's commit. For lines the change

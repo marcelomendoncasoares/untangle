@@ -29,6 +29,16 @@ describe('Given a home where Claude and Codex keep their folders, ', () => {
     homes.forEach((h) => fs.rmSync(h, { recursive: true, force: true }));
   });
 
+  it('when the skill is read, then it tells the agent to make the changes the user requests in the working copy, commit them there, and push only when asked.', async () => {
+    const r = await run([]);
+    assert.ok(r.out.includes(`For a pull request opened from its link, the watch names untangle's checkout of the reviewed
+commit, for reading only, and, for an open pull request, a working copy of its branch, for
+changes. Make the changes the user requests in the working copy and commit them there. Push only
+when the user asks. Without a working copy, propose a change in the reply instead. When asked for
+a review of the change, do it now, as described below. Then tell the user the review is open and
+end the turn.`));
+  });
+
   it(
     'when the skill is installed, '
     + 'then it goes where each agent reads skills, with the rule that lets untangle run outside Codex’s sandbox.',

@@ -246,6 +246,18 @@
     return `<span class="memc">${S.starting.has(r.id) ? '<small>starting…</small>' : again}<small>${r.disk != null ? bytes(r.disk) + ' on disk' : ''}</small></span>`;
   }
 
+  // What isn't on GitHub yet: the commits it doesn't have, and changes not committed. A working copy
+  // with some stays when its review's space is freed.
+  const notOnGitHub = (r) => !!r.local && (!!r.local.unpushed || r.local.dirty);
+  const keepsWork = (r) => notOnGitHub(r) && !!r.local.work;
+  function localTags(r) {
+    const l = r.local;
+    if (!l) return '';
+    return (l.unpushed ? ` · <span class="lc" title="${esc(`GitHub’s ${l.branch || 'branch'} doesn’t have ${l.unpushed === 1 ? 'it' : 'them'} yet`)}">${plural(l.unpushed, 'commit', 'commits')} not pushed</span>` : '')
+      + (l.dirty ? ` · <span class="lc unc" title="${esc(`${l.work ? 'Its working copy' : 'The folder'} has changes not committed`)}">changes not committed</span>` : '');
+  }
+  const workState = (l) => [l.unpushed ? `${plural(l.unpushed, 'commit', 'commits')} not pushed` : '', l.dirty ? 'changes not committed' : ''].filter(Boolean).join(' · ') || 'all on GitHub';
+
   function row(r) {
     const sel = S.sel === r.id, on = S.opened.has(r.id);
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
@@ -254,8 +266,8 @@
     const l2 = r.older ? `${esc(r.repo)} · started by an untangle from before this page`
       : r.twin ? `${esc(r.repo)} · a second untangle of this review`
       : r.status === 'running'
-      ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}${size}`
-      : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}`;
+      ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}${size}${localTags(r)}`
+      : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}${localTags(r)}`;
     const ev = r.status === 'running' ? events(r) : '';
     // One started here that untangle doesn't list yet has nothing to open or close.
     return `<div class="rw${on ? ' open' : ''}${sel ? ' sel' : ''}" data-id="${esc(r.id)}">
@@ -299,13 +311,14 @@
       + (midTurn ? `<button type="button" class="mi" data-act="close-now" data-id="${esc(r.id)}">${ICON.stop}Close now, mid-turn</button>` : '')
       + (r.status === 'paused' && r.chat ? `<button type="button" class="mi" data-act="resume-bare" data-id="${esc(r.id)}">${ICON.play}Resume without the agent</button>` : '');
     // Close, by Open review and Pause, or by Resume: a second untangle has its own.
-    const close = r.twin ? '' : `<button type="button" class="btn sm ghost" data-act="close" data-id="${esc(r.id)}"${r.closing ? ' disabled' : ''} title="Close the review: its tab and its chat’s terminal close, its space is freed, and its notes and marks stay">${r.closing ? 'Closing' : 'Close'}</button>`;
+    const close = r.twin ? '' : `<button type="button" class="btn sm ghost" data-act="close" data-id="${esc(r.id)}"${r.closing ? ' disabled' : ''} title="${keepsWork(r) ? 'Close the review: its tab and its chat’s terminal close, and its space is freed but for its working copy, which has work GitHub doesn’t. Its notes and marks stay' : 'Close the review: its tab and its chat’s terminal close, its space is freed, and its notes and marks stay'}">${r.closing ? 'Closing' : 'Close'}</button>`;
     const res = `<div class="pk-h"><b>This review</b><span class="sp"></span>${r.url ? `<a class="ib" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ICON.open}</a>` : ''}${more ? `<button type="button" class="ib" data-act="more" data-id="${esc(r.id)}" aria-label="More" aria-expanded="${S.menu === 'more:' + r.id}">${ICON.more}</button>` : ''}</div>
       ${S.menu === 'more:' + r.id && more ? `<div class="pop" style="right:8px;top:40px;width:236px">${more}</div>` : ''}
       ${running ? `<div class="kv"><span>untangle</span><span></span><b>${r.memory ? bytes(r.memory.untangle) : '—'}</b></div>
       <div class="kv"><span>Language server</span>${r.memory && r.memory.lsp && !r.id.startsWith('run:') ? `<button type="button" class="btn" data-act="lsp" data-id="${esc(r.id)}" title="Start the language server over: it lets go of what it loaded">Free</button>` : '<span></span>'}<b>${r.memory && r.memory.lsp ? bytes(r.memory.lsp) : 'not running'}</b></div>` : ''}
       <div class="kv"><span>On disk</span><span></span><b>${r.disk != null ? bytes(r.disk) : r.id.startsWith('run:') ? '—' : 'measuring…'}</b></div>
       <div class="kv"><span>Head</span><span></span><b>${esc(r.head.slice(0, 7))}</b></div>
+      ${r.local && r.local.work ? `<div class="kv"><span>Working copy</span><span></span><b title="${esc(r.local.work)}">${esc(workState(r.local))}</b></div>` : ''}
       ${running ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="open" data-id="${esc(r.id)}">Open review<kbd>⏎</kbd></button>${r.twin ? `<button type="button" class="btn sm" data-act="close" data-id="${esc(r.id)}">${ICON.stop}Close this one</button>` : r.build || r.older ? '' : `<button type="button" class="btn sm" data-act="pause" data-id="${esc(r.id)}"${r.pausing || r.closing ? ' disabled' : ''}>${ICON.pause}${r.pausing ? 'Pausing' : 'Pause'}<kbd>P</kbd></button>`}${close}</div>` : ''}
       ${r.status === 'paused' ? `<div class="pk-act"><button type="button" class="btn sm primary" data-act="resume" data-id="${esc(r.id)}">${ICON.play}Resume<kbd>R</kbd></button>${close}</div>` : ''}`;
     return `<div class="peek"><div class="pk">${chat}</div><div class="pk">${notes}</div><div class="pk res">${res}</div></div>`;
@@ -357,7 +370,7 @@
     const when = r.github ? `${r.github.state === 'merged' ? 'merged' : 'closed on GitHub'} ${day(r.github.at)}` : `closed ${day(r.closed)}`;
     return `<div class="crow${on ? ' picked' : ''}${r.freed ? ' freed' : ''}" data-act="pick" data-id="${esc(r.id)}">
       <button type="button" class="cb${on ? ' on' : ''}" data-act="pick" data-id="${esc(r.id)}" aria-pressed="${on}" aria-label="Pick ${esc(r.name)}"></button>
-      <span class="main"><span class="l1">${numTag(num(r))}${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span><span class="l2">${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · ${when}${r.freed ? ` · space freed ${day(r.freed)}` : ''}</span></span>
+      <span class="main"><span class="l1">${numTag(num(r))}${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span><span class="l2">${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''} · ${when}${r.freed ? ` · space freed ${day(r.freed)}${keepsWork(r) ? ' but for its working copy' : ''}` : ''}${localTags(r)}</span></span>
       ${progCell(r)}
       <span class="cnotes">${r.notes.open ? `<b>${r.notes.open}</b> open note${r.notes.open === 1 ? '' : 's'}` : 'no open notes'}</span>
       <span class="sz"><b>${r.disk != null ? bytes(r.disk) : '…'}</b><small>${parts}</small></span>
@@ -398,7 +411,8 @@
       const m = merged();
       act = m.length ? `<button type="button" class="btn sm primary" data-act="free-merged">${ICON.free}Free the space of ${m.every((r) => r.github && r.github.state === 'merged') ? 'merged reviews' : plural(m.length, 'closed review', 'closed reviews')} · ${bytes(freeable(new Set(m.map((r) => r.id))))}</button>` : closedRows().length ? '<span class="sub">Only notes and marks are left</span>' : '';
     }
-    const confirm = S.confirm && picked.length ? `<div class="confirm"><span>Forget ${plural(picked.length, 'review', 'reviews')}? Their notes, marks and records go too, and that can’t be undone.</span><span class="sp"></span><button type="button" class="btn sm" data-act="forget-cancel">Cancel</button><button type="button" class="btn sm warn" data-act="forget">Forget ${picked.length}</button></div>` : '';
+    const kept = picked.filter(keepsWork).length;
+    const confirm = S.confirm && picked.length ? `<div class="confirm"><span>Forget ${plural(picked.length, 'review', 'reviews')}? Their notes, marks and records go too, and that can’t be undone.${kept ? ` ${kept === 1 ? 'A working copy' : `${kept} working copies`} with work GitHub doesn’t have ${kept === 1 ? 'stays' : 'stay'}.` : ''}</span><span class="sp"></span><button type="button" class="btn sm" data-act="forget-cancel">Cancel</button><button type="button" class="btn sm warn" data-act="forget">Forget ${picked.length}</button></div>` : '';
     const body = !S.data ? '<p class="empty">Loading your reviews…</p>'
       : (closedRows().length ? `${confirm}<div class="cols"><span></span><span>Review</span><span>Reviewed</span><span>Notes</span><span>Space</span><span></span></div>${list.map(crow).join('') || '<p class="empty">Nothing here now.</p>'}` : '<p class="empty">No closed reviews. A review you close, or whose pull request merges while it’s paused, is listed here with what it holds on disk.</p>')
         + (S.filter === 'all' ? sharedRows() : '');
@@ -698,7 +712,7 @@
       post('close', { id, now: name === 'close-now' }).then((d) => {
         const a = r.agents[0];
         if (d.waiting) { toast(`${short(r)} closes when ${a ? a.name : 'its agent'}’s turn ends`); return poll(); }
-        toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : d.freed ? `Closed ${short(r)} and freed its space: its notes and marks stay` : `Closed ${short(r)}: its space is freed in a moment`);
+        toast(r.older ? `Closed ${short(r)}` : r.twin ? `Closed ${short(r)}’s second untangle: the other one stays` : id.startsWith('run:') ? `Stopped ${short(r)} before it was built` : keepsWork(r) ? `Closed ${short(r)}: its working copy stays, with work GitHub doesn’t have, and so do its notes and marks` : d.freed ? `Closed ${short(r)} and freed its space: its notes and marks stay` : `Closed ${short(r)}: its space is freed in a moment`);
         if (S.sel === id) S.sel = null;
         S.opened.delete(id);
         poll();
@@ -795,8 +809,8 @@
       case 'free-picked':
       case 'free-merged': {
         const ids = b.dataset.act === 'free-picked' ? [...S.picked] : merged().map((r) => r.id);
-        const back = freeable(new Set(ids));
-        post('free', { ids }).then((d) => { toast(`Freed the space of ${plural(d.freed, 'review', 'reviews')}: ${bytes(back)} back. Their notes and marks stay`); S.picked.clear(); poll(); }, (e) => toast(e.message, true));
+        const back = freeable(new Set(ids)), kept = closedRows().filter((r) => ids.includes(r.id) && keepsWork(r)).length;
+        post('free', { ids }).then((d) => { toast(`Freed the space of ${plural(d.freed, 'review', 'reviews')}: ${bytes(back)} back. Their notes and marks stay${kept ? `, and so ${kept === 1 ? 'does a working copy' : `do ${kept} working copies`} with work GitHub doesn’t have` : ''}`); S.picked.clear(); poll(); }, (e) => toast(e.message, true));
         break;
       }
       case 'forget-ask':

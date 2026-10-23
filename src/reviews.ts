@@ -3,6 +3,7 @@
 // others say what they hold on disk.
 import '../viewer/core.js';
 import { call } from './client.js';
+import type { LocalSummary } from './local.js';
 import { openPage } from './open.js';
 import type { Status, StepStatus } from './narrate.js';
 import type { AgentView } from './notes.js';
@@ -32,6 +33,7 @@ export interface Summary {
   active: number;
   /** A newer head being built, when it's refreshing. */
   refreshing: unknown;
+  local: LocalSummary | null;
 }
 
 /** The summary of each running review, by its process, asked of them all at once. */

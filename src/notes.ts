@@ -8,7 +8,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cacheRoot } from './cache.js';
+import { cacheRoot, tilde } from './cache.js';
 import { bell as chatBell, type Bell, type Chat } from './chats.js';
 import { gitMaybe } from './exec.js';
 import { writeAtomic } from './server.js';
@@ -114,6 +114,7 @@ export interface NotesContext {
   branch: string | null;
   /** The head's checkout untangle made, reviewing a pull request from its link: an agent reads the code there. */
   checkout: string | null;
+  work?: { dir: string; branch: string } | null;
   /** The change a line is in: its chain's name and the commit that started it. */
   change(path: string, side: Side, line: number): { name: string; sha: string | null } | null;
   /** The pull request on GitHub, to post to; null without one, or without gh. */
@@ -558,6 +559,8 @@ export class Notes {
   // no copy of the repository reads and searches it there, instead of through GitHub.
   private checkedOut(): string {
     const at = this.ctx?.checkout;
+    const work = this.ctx?.work;
+    if (at && work) return ` That commit is checked out at ${tilde(at)}, for reading only. The pull request’s branch, ${work.branch}, is checked out at ${tilde(work.dir)}, for changes: commit there, and push when asked.`;
     return at ? ` That commit is checked out at ${at}, for reading only, since untangle builds the review from it: propose any change in a reply.` : '';
   }
 

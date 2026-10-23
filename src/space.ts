@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cacheRoot, cloneDir, reviewDir, worktreeDir } from './cache.js';
 import { linkOf } from './checkouts.js';
-import { gitMaybe } from './exec.js';
+import { gitAsync, gitMaybe } from './exec.js';
+import { recordedLocal } from './local.js';
 import { notesFile } from './notes.js';
 import { listRecords, readRecord, recordDirs, recordFile, recordId, writeRecord, type Listed } from './records.js';
 import { listRuns, olderRuns, type RunInfo } from './runs.js';
@@ -24,9 +25,10 @@ const STATE = 'state.json';
 
 /** The folders a review keeps: an open one its current checkouts and its analyses, a closed one all it names until it's freed. */
 export function keptDirs(r: Listed): string[] {
-  if (r.freed) return [];
-  if (r.status === 'closed') return [...new Set(recordDirs(r))];
-  return [...new Set([worktreeDir(r.repoKey, r.base), worktreeDir(r.repoKey, r.head), ...r.analyses.map(([b, h]) => reviewDir(r.repoKey, b, h))])];
+  const work = r.local?.work ? [r.local.work] : [];
+  if (r.freed) return work;
+  if (r.status === 'closed') return [...new Set([...recordDirs(r), ...work])];
+  return [...new Set([...work, worktreeDir(r.repoKey, r.base), worktreeDir(r.repoKey, r.head), ...r.analyses.map(([b, h]) => reviewDir(r.repoKey, b, h))])];
 }
 
 /**
@@ -171,29 +173,40 @@ function guard(list: Listed[]): string[] {
  * Frees closed reviews' space: the folders no other review keeps go, but for the marks in their
  * analyses, and their records say they're freed. Their ids, and the folders removed.
  */
-export function free(ids: Set<string>, list: Listed[] = listRecords()): { freed: string[]; removed: string[] } {
+export async function free(ids: Set<string>, list: Listed[] = listRecords()): Promise<{ freed: string[]; removed: string[] }> {
   const unrecorded = guard(list);
-  const going = list.filter((r) => r.status === 'closed' && !r.freed && ids.has(recordId(r)));
+  const going = list.filter((r) => r.status === 'closed' && (!r.freed || r.local?.work) && ids.has(recordId(r)));
   const staying = new Set([...list.filter((r) => !going.includes(r)).flatMap(keptDirs), ...unrecorded]);
-  const removed = [...new Set(going.flatMap(keptDirs))].filter((d) => !staying.has(d));
-  removed.forEach(remove);
+  const candidates = [...new Set(going.flatMap(keptDirs))].filter((d) => !staying.has(d));
+  const removed: string[] = [];
+  for (const dir of candidates) {
+    const r = going.find((r) => r.local?.work === dir);
+    if (r) {
+      const state = await recordedLocal(r);
+      // Unknown is kept too: a failed read is no evidence that work has reached GitHub.
+      if (!state || state.dirty || state.unpushed === null || state.unpushed.length) continue;
+      // No force: git gets the last word if files changed while we were looking.
+      if (!(await gitAsync(r.repo, ['worktree', 'remove', dir]).then(() => true, () => false))) continue;
+    } else remove(dir);
+    removed.push(dir);
+  }
   const at = new Date().toISOString();
   for (const r of going) {
     const file = recordFile(r.repoKey, r.key), now = readRecord(file);
     // Opened again meanwhile: it keeps what it has.
     if (!now || now.pid !== r.pid || !now.closed) continue;
     // Its analyses keep their state.json: Forget removes it.
-    writeRecord({ ...now, checkouts: [], freed: at, updated: at });
+    writeRecord({ ...now, local: now.local?.work && removed.includes(now.local.work) ? null : now.local, checkouts: [], freed: at, updated: at });
   }
   return { freed: going.map(recordId), removed };
 }
 
 /** Closed reviews past FREE_AFTER since their pull request merged or closed, or since they closed, are freed. Paused ones never are. */
-export function freeOld(list: Listed[] = listRecords()): { freed: string[]; removed: string[] } {
+export async function freeOld(list: Listed[] = listRecords()): Promise<{ freed: string[]; removed: string[] }> {
   const due = list.filter((r) => r.status === 'closed' && !r.freed && Date.now() - Date.parse(r.github?.at ?? r.closed!) > FREE_AFTER);
   if (!due.length) return { freed: [], removed: [] };
   try {
-    return free(new Set(due.map(recordId)), list);
+    return await free(new Set(due.map(recordId)), list);
   } catch (e) {
     if (e instanceof Building) return { freed: [], removed: [] };
     throw e;
@@ -212,9 +225,9 @@ export function removeOld(list: Listed[] = listRecords()): string[] {
  * state.json) and records go. A clone goes too, with its checkouts, once no review of its
  * repository is left. The ids forgotten, and the folders removed.
  */
-export function forget(ids: Set<string>, list: Listed[] = listRecords()): { forgot: string[]; removed: string[] } {
+export async function forget(ids: Set<string>, list: Listed[] = listRecords()): Promise<{ forgot: string[]; removed: string[] }> {
   const going = list.filter((r) => r.status === 'closed' && ids.has(recordId(r)));
-  const { removed } = free(new Set(going.map(recordId)), list);
+  const { removed } = await free(new Set(going.map(recordId)), list);
   // What's left of their analyses, unless another review names the same commits.
   const others = new Set(list.filter((r) => !going.includes(r)).flatMap(recordDirs));
   for (const d of new Set(going.flatMap((r) => r.analyses.map(([b, h]) => reviewDir(r.repoKey, b, h))))) {
@@ -236,6 +249,8 @@ export function forget(ids: Set<string>, list: Listed[] = listRecords()): { forg
     if (!fs.existsSync(clone) || left.some((r) => r.repo === clone) || runs.some(reviewed)) continue;
     // Reviews from before records keep their marks in it, and their notes beside it.
     if (gitMaybe(clone, 'for-each-ref', '--count=1', MARKS, 'refs/heads/untangle/')?.trim() || notesLeft(repoKey)) continue;
+    // Forgotten working copies still own their objects, even without a review record.
+    if (subdirs(path.join(cacheRoot(), 'work', repoKey)).length) continue;
     const real = fs.realpathSync(clone);
     for (const d of checkoutsOnDisk()) {
       if (path.dirname(d) !== path.join(cacheRoot(), 'worktrees', repoKey)) continue;

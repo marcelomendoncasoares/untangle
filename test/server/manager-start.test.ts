@@ -264,7 +264,7 @@ describe('Given the manager, and a pull request GitHub asks you to review, whose
       assert.equal(r.status, 200, r.text);
       pid = (r.data as { pid: number }).pid;
       const row = (await rows()).find((x) => x.id === `run:${pid}`);
-      assert.deepEqual(row && [row.name, row.kind, row.title, row.repo, row.author, row.build?.phase], ['app#12', 'feat', 'Retry calls', 'Acme/App', 'ada', 'starting']);
+      assert.deepEqual(row && [row.name, row.kind, row.title, row.repo, row.author, row.build?.phase], ['app#12', 'feat', 'Retry calls', 'Acme/App', 'ada', 'building']);
     },
   );
 });

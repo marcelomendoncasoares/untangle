@@ -15,6 +15,9 @@ export const cloneDir = (repoKey: string) => path.join(cacheRoot(), 'repos', rep
 /** A checkout of one commit. */
 export const worktreeDir = (repoKey: string, sha: string) => path.join(cacheRoot(), 'worktrees', repoKey, sha.slice(0, 12));
 
+/** The pull request's branch, where the agent makes changes. */
+export const workDir = (repoKey: string, number: number) => path.join(cacheRoot(), 'work', repoKey, String(number));
+
 /** untangle's own clone: untangle upgrade pulls it, builds it and links it. */
 export const selfDir = () => path.join(cacheRoot(), 'untangle');
 

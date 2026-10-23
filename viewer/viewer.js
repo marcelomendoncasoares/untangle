@@ -280,10 +280,16 @@
   // review, the head before a force push), which a diff from it says. Lines outside it fade, and
   // the counts, the pill, the minimap and the keys go through what's in it. Under a commit's
   // lens, marking a change marks the lines that commit wrote; since a head, the whole change.
-  // state.lens: { kind: 'commits', shas } or { kind: 'since', from, why: 'review' | 'push' }.
+  // state.lens: { kind: 'commits', shas, why?: 'unpushed' } or { kind: 'since', from, why: 'review' | 'push' }.
   const HX = HISTORY && HISTORY.commits && HISTORY.commits.length
     ? { index: new Map(HISTORY.commits.map((c, i) => [c.sha, i])), live: null, liveAt: 0, loading: null, since: new Map(), brought: new Map(), open: new Set(), detail: null, closed: new Set() }
     : null;
+  // What isn't on GitHub yet (setLocal, by the refresh): the commits GitHub doesn't have, by sha.
+  const LOCAL = { now: null, key: '', np: new Set(), style: null };
+  // Of those, the ones this review shows, newest first.
+  const unpushedHere = () => (HISTORY ? HISTORY.commits.filter((c) => LOCAL.np.has(c.sha)).map((c) => c.sha) : []);
+  // GitHub is on other commits because it doesn't have this review's yet.
+  const ghBehind = () => LOCAL.np.has(CONFIG.head);
   let lensMemo = null;
   const lensOn = () => !!state.lens;
   function lensData() {
@@ -2765,7 +2771,7 @@
     h += nt.file.filter((n) => !inThread(n)).map((n) => noteHtml(n, { head: '<b>On the file</b>' })).join('');
     if (e.away.length) {
       const open = GH.away.has(f.p);
-      h += `<button type="button" class="th-away" data-act="away-toggle" data-p="${esc(f.p)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${e.away.length} thread${e.away.length > 1 ? 's' : ''} on code this version doesn’t have (outdated${GH.stale ? ', or on newer commits' : ''})</button>`;
+      h += `<button type="button" class="th-away" data-act="away-toggle" data-p="${esc(f.p)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${e.away.length} thread${e.away.length > 1 ? 's' : ''} on code this version doesn’t have (outdated${GH.stale && !ghBehind() ? ', or on newer commits' : ''})</button>`;
       if (open) h += e.away.map((t) => hunkSnippet(t) + threadHtml(t, { head: `<b>${t.outdated ? 'Outdated' : 'On a newer commit'}</b>` })).join('');
     }
     // Notes whose lines went, or left the diff, stay open here until folded.
@@ -3093,7 +3099,7 @@
     const d = GH.data;
     let h = `<div class="sb-gh">${GH.error ? `<span class="d">${esc(GH.error)}</span>` : !d ? 'Loading the conversation from GitHub…' : GH.loading ? 'Refreshing…' : `From GitHub, ${ago(new Date(GH.at).toISOString())}`}<span class="sp"></span>${iconBtn(ICON.refresh, 'Refresh from GitHub', 'data-act="gh-refresh"')}</div>`;
     if (!d) return h;
-    if (GH.stale) h += `<div class="sb-warn">GitHub has newer commits (<code>${esc(d.pr.head.slice(0, 7))}</code>). Comments on lines wait for this review to be on them. <button type="button" class="linkish" data-act="refresh">Refresh</button></div>`;
+    if (GH.stale) h += ghBehind() ? `<div class="sb-warn">GitHub doesn’t have this review’s commits yet (<code>${esc(CONFIG.head.slice(0, 7))}</code>). Comments on lines wait for them to be pushed.</div>` : `<div class="sb-warn">GitHub has newer commits (<code>${esc(d.pr.head.slice(0, 7))}</code>). Comments on lines wait for this review to be on them. <button type="button" class="linkish" data-act="refresh">Refresh</button></div>`;
     if (d.pending) h += `<button type="button" class="sb-pend" data-act="review-toggle">${d.pending.comments} pending comment${d.pending.comments === 1 ? '' : 's'} · Finish your review</button>`;
     const order = new Map(M().files.map((f, i) => [f.p, i]));
     const sorted = d.threads.slice().sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.at || x.originalLine || 0) - (y.at || y.originalLine || 0));
@@ -3141,7 +3147,7 @@
         const opt = (ev, label, note, off) => `<label class="rv-opt${off ? ' off' : ''}"><input type="radio" name="rv-event" value="${ev}"${GH.event === ev ? ' checked' : ''}${off ? ' disabled' : ''}><span><b>${label}</b><span class="muted">${note}</span></span></label>`;
         const kept = NT.data ? NT.data.notes.length : 0;
         h += `<div class="rv-h"><b>Finish your review</b><span class="muted">${n ? `${n} pending comment${n === 1 ? '' : 's'}` : 'no pending comments'}</span></div>`
-          + (GH.stale ? `<div class="sb-warn">GitHub has newer commits than this review (<code>${esc(d.pr.head.slice(0, 7))}</code>). <button type="button" class="linkish" data-act="refresh">Refresh</button></div>` : '')
+          + (GH.stale ? (ghBehind() ? `<div class="sb-warn">GitHub doesn’t have this review’s commits yet (<code>${esc(CONFIG.head.slice(0, 7))}</code>): they’re not pushed.</div>` : `<div class="sb-warn">GitHub has newer commits than this review (<code>${esc(d.pr.head.slice(0, 7))}</code>). <button type="button" class="linkish" data-act="refresh">Refresh</button></div>`) : '')
           + composerHtml('review', {
             placeholder: 'Leave a comment', rows: 4,
             extra: `<div class="rv-opts">${opt('COMMENT', 'Comment', 'General feedback, without approving.', false)}${opt('APPROVE', 'Approve', mine ? 'Not for your own pull request.' : 'Feedback, and approval to merge.', mine)}${opt('REQUEST_CHANGES', 'Request changes', mine ? 'Not for your own pull request.' : 'Feedback that must be addressed before merging.', mine)}</div>`,
@@ -5115,7 +5121,7 @@
     const stub = c.brought ? stubSvg(g) : null;
     const svg = laneSvg(vm, g, dotSvg(st.state), own ? (x, y) => (stub ? stub(x, y) : '') + `<circle class="ring" cx="${x}" cy="${y}" r="8"/>` : stub);
     const cnt = st.state === 'left' ? `<span class="cm-n left">${st.open}</span>` : st.state === 'done' ? `<span class="cm-n ok">${ICON.check}</span>` : '<span class="cm-n">—</span>';
-    const meta = (c.brought ? `<code>${shortSha(c.sha)}</code> · brings ${plural(c.brought, 'commit')} from ${esc(baseName())}` : `<code>${shortSha(c.sha)}</code> · ${dayOf(c.at)}`) + (w ? ` · <b>${w.changes} here</b>` : '');
+    const meta = (c.brought ? `<code>${shortSha(c.sha)}</code> · brings ${plural(c.brought, 'commit')} from ${esc(baseName())}` : LOCAL.np.has(c.sha) ? `<code>${shortSha(c.sha)}</code> <span class="np-tag">Not pushed</span>` : `<code>${shortSha(c.sha)}</code> · ${dayOf(c.at)}`) + (w ? ` · <b>${w.changes} here</b>` : '');
     const left = st.total ? `${plural(st.total, 'change')}${st.open ? `, ${st.open} to review` : ', all reviewed'}` : 'Nothing of it is left at the head';
     const here = !chain ? '' : w ? `\n${own ? 'The open chain’s commit. ' : ''}Its lines are in ${w.changes} of the open chain’s changes.` : '\nNone of its lines are in the open chain.';
     return `<button type="button" class="cm-row${on ? ' in' : ''}${st.state === 'gone' ? ' gone' : ''}${w ? ' mine' : ''}" data-commit="${c.sha}" data-ci="${it.i}" aria-pressed="${on}" title="${esc(`${c.subject}\n${shortSha(c.sha)} · ${c.author} · ${whenOf(c.at)}\n${left}.${here}\n\nClick for its changes; Shift-click for a range.`)}">${svg}<span class="cm-s">${kindTag(sub.kind)}${esc(sub.text)}</span><span class="cm-m">${meta}</span>${commitDiff(c)}${cnt}</button>`;
@@ -5226,7 +5232,7 @@
     (facts ? facts.reviews : []).forEach((r) => { if (r.sha !== c.sha) return; const k = r.author.login + ' ' + r.state; if (!reviews.has(k)) reviews.set(k, { ...r, n: 0 }); reviews.get(k).n++; });
     const rv = [...reviews.values()].map((r) => `<a class="hs-rev ${r.state === 'APPROVED' ? 'ok' : r.state === 'CHANGES_REQUESTED' ? 'bad' : ''}" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" title="${esc(r.author.login)} ${REVIEW_WORD[r.state] || r.state.toLowerCase()} on this commit${r.n > 1 ? `, ${r.n} times` : ''}">${r.author.avatar ? `<img src="${esc(r.author.avatar)}&s=32" alt="" width="16" height="16">` : ''}<span>${esc(`${r.author.login} ${REVIEW_WORD[r.state] || ''}${r.n > 1 ? ` ×${r.n}` : ''}`.trim())}</span></a>`).join('');
     const what = c.brought ? `brings ${plural(c.brought, 'commit')} from ${esc(baseName())}` : st.total ? `${plural(st.total, 'change')} ${perChain.size ? 'in ' + plural(perChain.size, 'chain') : 'outside chains'}` : 'nothing of it left at the head';
-    const meta = `<code>${shortSha(c.sha)}</code> · ${esc(c.author)} · ${dayOf(c.at)} · ${what}`;
+    const meta = `<code>${shortSha(c.sha)}</code>${LOCAL.np.has(c.sha) ? ' <span class="np-tag">Not pushed</span>' : ''} · ${esc(c.author)} · ${dayOf(c.at)} · ${what}`;
     const cnt = st.state === 'left' ? `<span class="hs-n left" title="${st.open} of its changes to review">${st.open}</span>` : st.state === 'done' ? `<span class="hs-n ok" title="All of it reviewed">${ICON.check}</span>` : '<span class="hs-n">—</span>';
     const open = HX.open.has(c.sha), shown = HX.detail === c.sha;
     const more = c.brought && CONFIG.served ? `<button type="button" class="btn xs" data-act="brought" data-sha="${c.sha}" aria-expanded="${open}">${open ? 'Hide them' : 'Show them'}</button>` : '';
@@ -5365,6 +5371,7 @@
       if (ln.why === 'review') return k ? `Since your review · ${plural(k, 'commit')}` : 'Since your review';
       return `Since ${shortSha(ln.from)}, before the force push`;
     }
+    if (ln.why === 'unpushed') return `Not pushed · ${plural(ln.shas.length, 'commit')}`;
     if (ln.shas.length === 1) { const c = HISTORY.commits[HX.index.get(ln.shas[0])]; return `${shortSha(ln.shas[0])} · ${trunc(subjectOf(c).text, 30)}`; }
     return `${ln.shas.length} commits`;
   }
@@ -6329,6 +6336,7 @@
     const title = CONFIG.url ? `<a class="t-pr" href="${esc(CONFIG.url)}" target="_blank" rel="noopener noreferrer" title="${esc(raw)}: open on GitHub">${name}</a>` : `<span class="t-pr" title="${esc(raw)}">${name}</span>`;
     const facts = (st ? `<span class="t-state ${esc(st)}">${{ open: 'Open', merged: 'Merged', closed: 'Closed', draft: 'Draft' }[st] || esc(st)}</span>` : '')
       + `<span class="t-commit" title="${esc(CONFIG.where || M().raw.label || '')}">${hxOn() ? `<button type="button" class="t-head${state.lens ? ' on' : ''}" data-act="menu" data-menu="lens" aria-haspopup="dialog" aria-expanded="${MENU.open === 'lens'}" title="${state.lens ? `Only these changes count: ${esc(lensLabel())}. Pick others, or all of them` : 'Changes from every commit: pick some to review only theirs'}"><span>${state.lens ? esc(lensLabel()) : esc(sha)}</span>${ICON.chevronDown}</button>` : esc(sha)}${CONFIG.served ? iconBtn(ICON.refresh, 'Look for new commits, and review them here', 'data-act="refresh"') : ''}</span>`
+      + localHtml()
       + `<span class="t-unsaved" title="${esc(unsavedWhy)}">Marks not saved</span>`;
     return head ? `<div class="sb-pr-row">${facts}</div>${title}` : title + facts;
   }
@@ -6581,7 +6589,7 @@
   }
   // c: a comment on the line you're on.
   function commentHere() {
-    if (!canCommentLines()) { if (localMode()) toast('The notes aren’t loaded yet.'); else if (GH.on) toast(GH.stale ? 'GitHub has newer commits: refresh to comment on lines.' : 'Comments aren’t loaded yet.'); return; }
+    if (!canCommentLines()) { if (localMode()) toast('The notes aren’t loaded yet.'); else if (GH.on) toast(GH.stale ? (ghBehind() ? 'GitHub doesn’t have this review’s commits yet: comments on lines wait for them to be pushed.' : 'GitHub has newer commits: refresh to comment on lines.') : 'Comments aren’t loaded yet.'); return; }
     const el = currentMark();
     let row = el && !el.matches(FOLDS) ? rowOf(el) : null;
     if (!row) { const ref = readY(); row = [...main.querySelectorAll('.code[data-p] .ln[data-c], .code[data-p] .sl')].find((r) => r.getBoundingClientRect().bottom > ref) || null; }
@@ -6819,6 +6827,51 @@
   window.addEventListener('resize', () => { fitBoxes(viewer); if (MN.ta) mentionDraw(); });
   main.addEventListener('scroll', () => { if (MN.ta) mentionDraw(); }, { passive: true });
 
+  // ---------- what isn't on GitHub yet, as untangle says with each look for new commits: the
+  // commits GitHub's branch doesn't have (their lines marked, the top bar counting them), whether
+  // there are changes not committed, and the commits GitHub has that the branch doesn't.
+  function setLocal(l) {
+    const key = JSON.stringify(l || null);
+    if (key === LOCAL.key) return;
+    const was = [...LOCAL.np].join();
+    Object.assign(LOCAL, { now: l || null, key, np: new Set((l && l.unpushed) || []) });
+    markUnpushed();
+    if ([...LOCAL.np].join() !== was) {
+      // Their lens follows them: once they're pushed, it's off.
+      if (state.lens && state.lens.why === 'unpushed') {
+        const shas = unpushedHere();
+        state.lens = shas.length ? { kind: 'commits', shas, why: 'unpushed' } : null;
+        lensMemo = null;
+        navAt = null;
+      }
+      render();
+    } else renderTop();
+    renderFresh();
+  }
+  // The lines they wrote: one rule on the rows' data-w (as hovering a commit dims the others), so
+  // no row is drawn again when a push takes the marks away.
+  function markUnpushed() {
+    if (!LOCAL.style) LOCAL.style = document.head.appendChild(document.createElement('style'));
+    const idx = HX ? unpushedHere().map((s) => HX.index.get(s)) : [];
+    LOCAL.style.textContent = idx.length ? `${idx.map((i) => `.vw-main .ln[data-w="${i}"] > .no, .vw-main .half[data-w="${i}"] > .no`).join(', ')} { color: var(--accent-ink); box-shadow: inset 3px 0 0 var(--accent); }` : '';
+  }
+  // By the commit reviewed: how many commits GitHub doesn't have (their lens, clicked, which then
+  // names itself on the commit), and changes not committed. What's new on GitHub is in the pill.
+  function localHtml() {
+    const l = LOCAL.now;
+    if (!l) return '';
+    const n = l.unpushed ? l.unpushed.length : 0;
+    const branch = l.branch ? `GitHub’s ${l.branch}` : 'GitHub';
+    const h = (n && !(state.lens && state.lens.why === 'unpushed') ? `<button type="button" class="t-np" data-act="lens-unpushed" title="${esc(`${plural(n, 'commit')} not pushed: ${branch} doesn’t have ${n === 1 ? 'it' : 'them'} yet. Click to review only ${n === 1 ? 'its' : 'their'} changes.`)}">${n} not pushed</button>` : '')
+      + (l.dirty ? `<span class="t-unc" title="${esc(`${l.work ? 'The working copy' : 'Your folder'} has changes not committed: the review shows them once they’re committed.`)}">Not committed</span>` : '');
+    return h ? `<span class="t-local">${h}</span>` : '';
+  }
+  // What GitHub has that the branch doesn't: the pill says it while nothing else is new.
+  function behindTitle(l) {
+    const n = l.behind, it = n === 1 ? 'it' : 'them';
+    return l.work ? `The pull request has ${plural(n, 'commit')} the working copy doesn’t: your agent brings ${it} in when you ask.` : `GitHub’s ${l.branch || 'branch'} has ${plural(n, 'commit')} your branch doesn’t: pull ${it} to review ${it}.`;
+  }
+
   // ---------- refreshing in place
   // untangle looks up the pull request again; when it moved, it builds the new review while this
   // page keeps working, and the page then reloads on the same view. New commits show as a banner.
@@ -6832,6 +6885,7 @@
   }
   function onFresh(j) {
     clearTimeout(FRESH.timer);
+    if ('local' in j) setLocal(j.local);
     if (j.state === 'current') { Object.assign(FRESH, { state: null, latest: null }); renderFresh(); return toast(`Up to date: ${String(j.head).slice(0, 7)} is the latest`); }
     // Why it failed is said once, in full: the pill only says it didn't.
     if (j.state === 'failed' && FRESH.state !== 'failed') toast(`Couldn’t update: ${j.error || 'unknown error'}`);
@@ -6844,6 +6898,7 @@
   function freshCheck() {
     if (!CONFIG.served || FRESH.state) return;
     api('refresh?check=1').then((r) => r.json()).then((j) => {
+      if ('local' in j) setLocal(j.local);
       const newer = j.latest && j.latest !== CONFIG.head ? j.latest : null;
       if (newer !== FRESH.latest) { FRESH.latest = newer; renderFresh(); }
     }).catch(() => {});
@@ -6890,6 +6945,7 @@
       h = `<span class="spin" aria-hidden="true"></span><span class="fr-t">Updating to <code>${short(FRESH.head)}</code></span>${p == null ? '' : `<b class="fr-pct" aria-hidden="true">${Math.round(p * 100)}%</b><span class="fr-bar" aria-hidden="true"><i style="width:${(p * 100).toFixed(1)}%"></i></span>`}`;
     } else if (FRESH.state === 'failed') { h = '<span class="fr-t d">Couldn’t update</span><button type="button" class="btn xs" data-act="refresh">Try again</button>'; title = FRESH.error || ''; }
     else if (FRESH.latest) h = `<span class="fr-t">New commits: <code>${short(FRESH.latest)}</code></span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>`;
+    else if (LOCAL.now && LOCAL.now.behind) { h = `<span class="fr-t">${plural(LOCAL.now.behind, 'new commit')} on GitHub</span>`; title = behindTitle(LOCAL.now); }
     const was = el.hidden;
     el.hidden = !h;
     el.innerHTML = h;
@@ -7719,6 +7775,16 @@
       return;
     }
     if (act === 'refresh') return startRefresh();
+    if (act === 'lens-unpushed') {
+      if (state.lens && state.lens.why === 'unpushed') return setLens(null);
+      const shas = unpushedHere();
+      // Committed since this review was built: it reviews them once refreshed.
+      if (!shas.length) return startRefresh();
+      state.lens = { kind: 'commits', shas, why: 'unpushed' };
+      lensMemo = null;
+      navAt = null;
+      return lensGo();
+    }
     if (act === 'feedback') { closeMenu(); return feedback(); }
     if (act === 'fb-report') return feedback();
     if (act === 'fb-draft') return feedback({ draft: FB.draft });

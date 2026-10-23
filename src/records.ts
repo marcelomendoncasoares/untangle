@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
 import { call, Gone } from './client.js';
+import type { LocalSource } from './local.js';
 import { pidAlive, removeRun, type RunInfo } from './runs.js';
 
 /** A chat that held a review: what resumes it, and where it ran. */
@@ -68,6 +69,8 @@ export interface ReviewRecord {
   /** The commits checked out for it, and the pairs of commits it was analysed at (base, head). */
   checkouts: string[];
   analyses: Array<[string, string]>;
+  /** The working copy or folder, and the ref last fetched from GitHub. */
+  local?: LocalSource | null;
   /** When its space was freed: its checkouts and analyses went, and opening it again builds them. */
   freed?: string | null;
 }

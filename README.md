@@ -135,6 +135,10 @@ through its changes. After a new push, "Since your review" shows what changed si
 looked. History shows each commit with its files, checks and reviews, and the heads a force push
 replaced.
 
+What isn't on GitHub yet shows by the commit reviewed: how many commits GitHub's branch doesn't
+have (their lines marked, and clicked, their lens), and whether there are changes not committed,
+which the review leaves out until they're committed.
+
 ![The lens of commit 9c69d53: its lines bright, the rest faded, and 9 changes to review](docs/images/lens.png)
 
 ### The pull request's conversation
@@ -154,6 +158,10 @@ When an agent wrote the code, keep your comments as local notes for it. With the
 opens, your notes reach the agent as you write them, and it answers in their threads, commits and
 resolves what it fixed. Ask for its review too, and it writes notes of its own. It works with
 Claude and Codex, and *Copy for agent* takes the notes to any other chat.
+
+An open pull request reviewed from its link gets a working copy of its branch, set up to push to
+it. The agent makes the changes your notes ask for there and commits them, the review follows its
+commits, and it pushes when you ask.
 
 A talk with the agent can end in a comment on the pull request, in the same thread:
 
@@ -270,7 +278,8 @@ untangle watch | reply | note | notes | stop | skill | upgrade | reviews ...
 one, it reviews what the branch adds to the default branch (in a fork whose origin is behind,
 upstream's or your own), or to `-base <branch>`.
 - **A pull request URL** (`https://github.com/<owner>/<repo>/pull/<number>`) is cloned into the
-cache first; the next pull request of the same repository only fetches.
+cache first; the next pull request of the same repository only fetches. An open one also gets a
+working copy of its branch, where its agent changes it, and the review follows that copy's commits.
 
 ### Where it opens
 
@@ -459,6 +468,9 @@ versions kept marks on move to it when their review starts.
 - **The cache** is `~/.cache/untangle` (`$XDG_CACHE_HOME`, `~/Library/Caches` on macOS,
 `%LOCALAPPDATA%` on Windows; `UNTANGLE_CACHE` overrides it):
   - `repos/`: clones made for pull request URLs (bare, blobs on demand).
+  - `work/`: the working copies of pull requests' branches (`work/github.com/<owner>/<repo>/<number>`),
+  where agents change them. One with commits or changes GitHub doesn't have is never deleted, even
+  when its review's space is freed.
   - `worktrees/`: checkouts of base and head commits. Each is a repository of its own that borrows
   your repository's objects, so your repository doesn't list it, or a worktree of a clone:
   untangle's, or a partial clone of yours. Deleting one is safe, and the reviews page removes the

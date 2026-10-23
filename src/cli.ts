@@ -15,6 +15,7 @@ import { readHistory } from './history.js';
 import { gitMaybe } from './exec.js';
 import { Feedback, feedbackCommand, reviewFeedbackRepo } from './feedback.js';
 import { LiveSession } from './live.js';
+import { LocalChanges, localSummary } from './local.js';
 import { rss } from './metrics.js';
 import { Narrator, type Status } from './narrate.js';
 import { NoteError, Notes, notesFile, type NoteAction, type Scope } from './notes.js';
@@ -28,7 +29,7 @@ import { findRun, holder, listRuns, prKey, removeRun, wantedDir, wantedUrl, writ
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
 import { skill } from './skill.js';
-import { isPrUrl, latestHead, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
+import { isPrUrl, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
 import { upgrade, upgradeNotice } from './upgrade.js';
 import { VERSION } from './version.js';
 
@@ -98,6 +99,7 @@ async function review(opts: Options): Promise<number> {
   let server: ReviewServer | null = null;
   let live: LiveSession | null = null;
   let target: Target | null = null;
+  let local: LocalChanges | null = null;
   let buildingTarget: Target | null = null;
   const feedback = new Feedback({
     review: () => reviewFeedbackRepo(target ?? buildingTarget, byUrl ? opts.target : dir, opts.base),
@@ -196,6 +198,7 @@ async function review(opts: Options): Promise<number> {
   }
 
   const stop = async (why: StopReason, close = false) => {
+    local?.stop();
     if (record) {
       const at = new Date().toISOString();
       record.stopped = { at, why };
@@ -248,6 +251,7 @@ async function review(opts: Options): Promise<number> {
       pages: server?.pageCount ?? 0,
       active,
       refreshing: refreshing ? refreshView() : null,
+      local: localSummary(local?.local ?? null),
     };
   };
 
@@ -263,6 +267,7 @@ async function review(opts: Options): Promise<number> {
     if (session && notes && target) {
       record.progress = session.progress();
       record.notes = notes.counts();
+      record.local = local?.source ?? record.local ?? null;
       for (const { agent: name, chat } of notes.chats()) {
         const was = record.chats.find((c) => c.id === chat.id);
         const c: ChatRecord = { agent: name, kind: chat.kind, id: chat.id, folder: chatFolder(chat) ?? was?.folder ?? null, home: chat.home, orca: chat.orca ? { handle: chat.orca.handle, pane: chat.orca.pane } : was?.orca ?? null, at: now };
@@ -324,7 +329,8 @@ async function review(opts: Options): Promise<number> {
       const book: Notes = new Notes(file, () => { server?.broadcast({ notes: book.revision }); active = Date.now(); recordSoon(); }, undefined, byAgent);
       notes = book;
     }
-    notes.attach(s.notesContext(t.pr ? `${t.pr.owner}/${t.pr.repo}#${t.pr.number}` : t.repoKey.startsWith('local/') ? path.basename(t.repo) : n.repoName, t.pr ? t.pr.headRefName : n.branch, byUrl ? worktreeDir(t.repoKey, t.headSha) : null));
+    const context = s.notesContext(t.pr ? `${t.pr.owner}/${t.pr.repo}#${t.pr.number}` : t.repoKey.startsWith('local/') ? path.basename(t.repo) : n.repoName, t.pr ? t.pr.headRefName : n.branch, byUrl ? worktreeDir(t.repoKey, t.headSha) : null);
+    notes.attach({ ...context, work: t.work });
     if (run) writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: run.key === n.snapshotKey ? run.claimed : new Date().toISOString(), branch: t.pr ? t.pr.headRefName : n.branch, title: n.title, head: t.headSha });
     // The record carries over what an earlier run of the review kept: when it started, its chats,
     // its checkouts and analyses. Opening a closed review opens it again.
@@ -358,7 +364,10 @@ async function review(opts: Options): Promise<number> {
       checkouts: was?.checkouts ?? [],
       analyses: [...(was?.analyses ?? []).filter(([b, h]) => b !== pair[0] || h !== pair[1]), pair],
       freed: null,
+      local: t.work ? { work: t.work.dir, branch: t.work.githubBranch, ref: t.work.ref } : was?.local ?? null,
     };
+    local?.stop();
+    local = new LocalChanges(t, byUrl, () => notes?.watched() ?? false, recordSoon);
     recordNow();
   };
 
@@ -406,14 +415,10 @@ async function review(opts: Options): Promise<number> {
   // Refreshing: the pull request (or the branch) is looked up again. When it moved, the new review
   // is built while the page keeps working on the current one, and then replaces it.
   let refreshing: { state: 'checking' | 'building' | 'ready' | 'failed'; head: string; status: Status; error?: string } | null = null;
-  let latest = { at: 0, head: null as string | null };
   const refreshView = () => (refreshing ? { state: refreshing.state, head: refreshing.head, steps: refreshing.status.steps, plan: refreshing.status.plan ?? null, error: refreshing.error } : { state: 'idle', head: target?.headSha || null });
   const check = async (ask: boolean) => {
-    // Asking GitHub at most twice a minute, however many pages ask. While an agent holds the review,
-    // its commits show within seconds: the branch is asked every few, GitHub every 15.
-    const every = notes?.watched() ? (byUrl ? 15_000 : 2_000) : 30_000;
-    if (ask && target && Date.now() - latest.at > every) latest = { at: Date.now(), head: await latestHead(target, byUrl).catch(() => latest.head) };
-    return { data: { ...refreshView(), latest: ask ? latest.head : undefined, watched: notes?.watched() || false } };
+    await local?.check(true);
+    return { data: { ...refreshView(), latest: ask ? local?.latest ?? null : undefined, watched: notes?.watched() || false, local: local?.local ?? null } };
   };
   const refresh = async (): Promise<{ status?: number; data: unknown }> => {
     if (!target) return { status: 503, data: { error: 'the review is still being built' } };
@@ -434,9 +439,10 @@ async function review(opts: Options): Promise<number> {
       Object.assign(r, { state: 'failed', error: (e as Error).message });
       return { data: refreshView() };
     }
-    latest = { at: Date.now(), head: t.headSha };
     if (t.headSha === target.headSha && t.baseSha === target.baseSha) {
       refreshing = null;
+      target = t;
+      attachNotes(t, session!);
       progress.note('up to date');
       return { data: { state: 'current', head: t.headSha } };
     }

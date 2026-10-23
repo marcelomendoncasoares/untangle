@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cloneDir } from './cache.js';
 import { CommandError, git, gitAsync, gitMaybe, has, run, runAsync } from './exec.js';
+import { fetchTip, followGitHub, workingCopy, type WorkingCopy } from './work.js';
 
 export interface PullRequest {
   owner: string;
@@ -18,6 +19,10 @@ export interface PullRequest {
   baseRefOid: string;
   headRefName: string;
   headRefOid: string;
+  /** The head repository and its owner, null when the repository was deleted. */
+  headRepository?: string | null;
+  headRepositoryOwner?: string | null;
+  isCrossRepository?: boolean;
   /** Who opened it: GitHub's login. */
   author?: string | null;
 }
@@ -28,6 +33,8 @@ export interface Target {
   /** github.com/owner/name, or local/<name>-<hash> for a repository without a GitHub remote. */
   repoKey: string;
   pr: PullRequest | null;
+  /** A branch in the cache for changes, only when opened from a link. */
+  work?: WorkingCopy | null;
   /** The branch the review compares with, and the commit it starts from (the merge base). */
   baseRef: string;
   /** The remote whose branch was selected as the base, or null for a local branch. */
@@ -45,7 +52,7 @@ const PR_URL = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:
 export const isPrUrl = (arg: string) => PR_URL.test(arg);
 
 /** owner/name of a GitHub remote URL, or null. */
-function githubRepo(url: string): { owner: string; repo: string } | null {
+export function githubRepo(url: string): { owner: string; repo: string } | null {
   const m = /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url.trim());
   return m ? { owner: m[1], repo: m[2] } : null;
 }
@@ -60,9 +67,13 @@ export function upstreamOf(dir: string): string | null {
   return g ? `${g.owner}/${g.repo}` : null;
 }
 
-const GH_FIELDS = 'number,title,url,state,baseRefName,baseRefOid,headRefName,headRefOid,author';
+const GH_FIELDS = 'number,title,url,state,baseRefName,baseRefOid,headRefName,headRefOid,author,headRepository,headRepositoryOwner,isCrossRepository';
 // gh says who opened it as { login }.
-const fromGh = (j: Omit<PullRequest, 'owner' | 'repo' | 'author'> & { author?: { login?: string } | null }) => ({ ...j, author: j.author?.login ?? null });
+const fromGh = (j: Omit<PullRequest, 'owner' | 'repo' | 'author' | 'headRepository' | 'headRepositoryOwner'> & {
+  author?: { login?: string } | null;
+  headRepository?: { name: string } | null;
+  headRepositoryOwner?: { login: string } | null;
+}) => ({ ...j, author: j.author?.login ?? null, headRepository: j.headRepository?.name ?? null, headRepositoryOwner: j.headRepositoryOwner?.login ?? null });
 
 async function prFromApi(owner: string, repo: string, number: number, ghError: string | null): Promise<PullRequest> {
   const headers: Record<string, string> = { accept: 'application/vnd.github+json', 'user-agent': 'untangle' };
@@ -71,21 +82,19 @@ async function prFromApi(owner: string, repo: string, number: number, ghError: s
   const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, { headers });
   if (res.status === 404) throw new Error(`cannot find ${owner}/${repo}#${number}${ghError ? `: ${ghError}` : ' (for a private repository, log in with gh or set GITHUB_TOKEN)'}`);
   if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${owner}/${repo}#${number}${ghError ? ` (gh: ${ghError})` : ''}`);
-  const j = (await res.json()) as { number: number; title: string; html_url: string; state: string; merged_at: string | null; base: { ref: string; sha: string }; head: { ref: string; sha: string }; user?: { login?: string } | null };
-  return { owner, repo, number: j.number, title: j.title, url: j.html_url, state: j.merged_at ? 'MERGED' : j.state.toUpperCase(), baseRefName: j.base.ref, baseRefOid: j.base.sha, headRefName: j.head.ref, headRefOid: j.head.sha, author: j.user?.login ?? null };
+  const j = (await res.json()) as { number: number; title: string; html_url: string; state: string; merged_at: string | null; base: { ref: string; sha: string }; head: { ref: string; sha: string; repo: { name: string; owner: { login: string } } | null }; user?: { login?: string } | null };
+  return { owner, repo, number: j.number, title: j.title, url: j.html_url, state: j.merged_at ? 'MERGED' : j.state.toUpperCase(), baseRefName: j.base.ref, baseRefOid: j.base.sha, headRefName: j.head.ref, headRefOid: j.head.sha, author: j.user?.login ?? null, headRepository: j.head.repo?.name ?? null, headRepositoryOwner: j.head.repo?.owner.login ?? null, isCrossRepository: !!j.head.repo && (j.head.repo.owner.login !== owner || j.head.repo.name !== repo) };
 }
 
 /** A pull request by owner, name and number: through gh when it's there, else the REST API. */
-async function fetchPr(owner: string, repo: string, number: number): Promise<PullRequest> {
+export async function fetchPr(owner: string, repo: string, number: number): Promise<PullRequest> {
   let ghError: string | null = null;
-  if (has('gh')) {
-    try {
-      const j = JSON.parse(run('gh', ['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', GH_FIELDS]));
-      return { owner, repo, ...fromGh(j) };
-    } catch (e) {
-      // Not logged in, say: the public API may still answer.
-      ghError = e instanceof CommandError ? e.stderr.trim().split('\n')[0] || null : null;
-    }
+  try {
+    const j = JSON.parse(await runAsync('gh', ['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', GH_FIELDS]));
+    return { owner, repo, ...fromGh(j) };
+  } catch (e) {
+    // Not installed or logged in, say: the public API may still answer.
+    ghError = e instanceof CommandError ? e.stderr.trim().split('\n')[0] || null : null;
   }
   return prFromApi(owner, repo, number, ghError);
 }
@@ -107,17 +116,9 @@ function branchPr(dir: string): PullRequest | null {
  * (through gh, else GitHub's API), or the directory's HEAD.
  */
 export async function latestHead(t: Target, byUrl: boolean): Promise<string | null> {
-  if (!byUrl) return gitMaybe(t.repo, 'rev-parse', 'HEAD')?.trim() || null;
+  if (t.work || !byUrl) return gitAsync(t.work?.dir ?? t.repo, ['rev-parse', 'HEAD']).then((s) => s.trim(), () => null);
   if (!t.pr) return null;
-  const { owner, repo, number } = t.pr;
-  if (has('gh')) {
-    try {
-      return JSON.parse(await runAsync('gh', ['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', 'headRefOid'])).headRefOid;
-    } catch {
-      // The public API may still answer.
-    }
-  }
-  return (await prFromApi(owner, repo, number, null)).headRefOid;
+  return (await fetchPr(t.pr.owner, t.pr.repo, t.pr.number)).headRefOid;
 }
 
 const hasCommit = (repo: string, sha: string) => gitMaybe(repo, 'cat-file', '-e', `${sha}^{commit}`) !== null;
@@ -178,16 +179,28 @@ export async function resolveUrl(url: string, say: (line: string) => void): Prom
   }
   say(`fetching #${pr.number}`);
   await gitAsync(repo, ['fetch', '--quiet', '--no-tags', 'origin', `+refs/pull/${pr.number}/head:refs/untangle/pull/${pr.number}`]);
-  const headSha = git(repo, 'rev-parse', `refs/untangle/pull/${pr.number}`).trim();
+  let headSha = (await gitAsync(repo, ['rev-parse', `refs/untangle/pull/${pr.number}`])).trim();
   const notes: string[] = [];
   if (pr.state !== 'OPEN') notes.push(`#${pr.number} is ${pr.state.toLowerCase()}: comparing with ${pr.baseRefName} as it was then`);
   if (headSha !== pr.headRefOid) notes.push(`GitHub reports ${pr.headRefOid.slice(0, 7)} as the head; the fetched head is ${headSha.slice(0, 7)}`);
+  let work: WorkingCopy | null = null;
+  try {
+    work = await workingCopy(repo, repoKey, pr, say);
+    if (work) {
+      const github = await fetchTip(repo, work.remote, `refs/heads/${pr.headRefName}`, work.ref).catch(() => null);
+      if (github) await followGitHub(work.dir, github).catch(() => {});
+      headSha = (await gitAsync(work.dir, ['rev-parse', 'HEAD'])).trim();
+    }
+  } catch (e) {
+    work = null;
+    notes.push(`could not open the working copy: ${(e as Error).message.split('\n')[0]}`);
+  }
   say(`fetching ${pr.baseRefName}`);
   const ref = `refs/untangle/base/${pr.baseRefName}`;
   const tip = await prBaseTip(repo, 'origin', pr, () => gitAsync(repo, ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${pr.baseRefName}:${ref}`]).then(() => git(repo, 'rev-parse', ref).trim(), () => null));
   const baseSha = git(repo, 'merge-base', tip, headSha).trim();
   if (baseSha === headSha) throw new Error(`#${pr.number} adds nothing to ${pr.baseRefName}: there is nothing to review`);
-  return { repo, repoKey, pr, baseRef: pr.baseRefName, baseSha, headSha, headDir: null, notes };
+  return { repo, repoKey, pr, work, baseRef: pr.baseRefName, baseSha, headSha, headDir: null, notes };
 }
 
 export async function resolveDirectory(dir: string, baseOverride: string | null, say: (line: string) => void): Promise<Target> {

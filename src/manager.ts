@@ -18,6 +18,7 @@ import { childPids, rss } from './metrics.js';
 import { feedbackPanel, fonts, managerPage } from './page.js';
 import { Feedback } from './feedback.js';
 import { notesFile } from './notes.js';
+import { localSummary, recordedLocal, type LocalSummary } from './local.js';
 import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, serves, writeRecord, type Listed, type ReviewRecord } from './records.js';
 import { shortName, summaries, titleOf, type Summary } from './reviews.js';
 import { findRun, listRuns, olderRuns, pidAlive, runDir, wantedDir, wantedUrl, type RunInfo, type Wanted } from './runs.js';
@@ -160,6 +161,7 @@ export interface Row {
    * holds its record, and this one is to close.
    */
   twin: boolean;
+  local: LocalSummary | null;
 }
 
 const idOf = recordId;
@@ -192,7 +194,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
     memory: old ? memoryOf(run.pid) : s?.memory ?? null,
     build: old || s?.phase === 'ready' ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false,
+    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false, local: s?.local ?? null,
   };
 }
 
@@ -292,14 +294,16 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     parts: r.status === 'closed' && !r.freed ? partsOf(r, h) : null,
     older: false,
     twin: false,
+    local: s?.local ?? null,
   };
 }
 
 /** The checkouts and analyses only a closed review holds, as its size counts them, and how many it shares. */
 function partsOf(r: Listed, h: Holdings): Row['parts'] {
   const dirs = keptDirs(r).filter((d) => fs.existsSync(d));
-  const own = dirs.filter((d) => !h.shared.has(d)), checkouts = path.join(cacheRoot(), 'worktrees') + path.sep;
-  return { checkouts: own.filter((d) => d.startsWith(checkouts)).length, analyses: own.filter((d) => !d.startsWith(checkouts)).length, shared: dirs.length - own.length };
+  const own = dirs.filter((d) => !h.shared.has(d));
+  const checkout = (d: string) => isCheckout(d) || d === r.local?.work;
+  return { checkouts: own.filter(checkout).length, analyses: own.filter((d) => !checkout(d)).length, shared: dirs.length - own.length };
 }
 
 /** What a freed review still holds: its notes, its record, and the marks its analyses keep. */
@@ -369,6 +373,24 @@ export class Manager {
   /** Its own page's link, once it serves one: the reviews it opens go beside it. */
   url: string | null = null;
   private readonly sizes = new Sizes();
+  private readonly locals = new Map<string, { source: string; at: number; reading: boolean; value: LocalSummary | null }>();
+
+  /** Paused reviews are read in the background too: one slow folder cannot hold up the page. */
+  private localOf(r: Listed): LocalSummary | null {
+    const id = idOf(r), source = JSON.stringify([r.dir, r.local, r.freed]);
+    let known = this.locals.get(id);
+    if (!known || known.source !== source) {
+      known = { source, at: 0, reading: false, value: null };
+      this.locals.set(id, known);
+    }
+    if (!known.reading && Date.now() - known.at >= 30_000) {
+      const next = known;
+      next.at = Date.now();
+      next.reading = true;
+      void recordedLocal(r).then((s) => { next.value = localSummary(s); }).finally(() => { next.reading = false; });
+    }
+    return known.value;
+  }
   // Reviews pausing or closing once their agent's turn ends: Pause and Close wait for it, Pause now
   // and Close now don't.
   private readonly stopping = new Map<string, 'pause' | 'close'>();
@@ -581,7 +603,7 @@ export class Manager {
     if (Date.now() - this.hourlyAt < 3600_000) return;
     this.hourlyAt = Date.now();
     if (has('gh')) await this.github();
-    this.sizes.gone(freeOld().removed);
+    this.sizes.gone((await freeOld()).removed);
   }
 
   /**
@@ -607,7 +629,7 @@ export class Manager {
         // GitHub didn't answer: next time.
       }
     }
-    this.freeClosed();
+    await this.freeClosed();
   }
 
   /**
@@ -615,7 +637,7 @@ export class Manager {
    * One whose process is still stopping waits for it, and all of them for a review being built.
    * The ids freed.
    */
-  private freeClosed(): string[] {
+  private async freeClosed(): Promise<string[]> {
     if (!this.toFree.size) return [];
     const list = listRecords();
     const of = (id: string) => list.find((r) => idOf(r) === id);
@@ -624,7 +646,7 @@ export class Manager {
     const ready = new Set([...this.toFree].filter((id) => { const r = of(id)!; return r.pid == null || !pidAlive(r.pid) || Date.now() - Date.parse(r.stopped?.at ?? r.closed!) > 30_000; }));
     if (!ready.size) return [];
     try {
-      const r = free(ready, list);
+      const r = await free(ready, list);
       this.sizes.gone(r.removed);
       ready.forEach((id) => this.toFree.delete(id));
       return r.freed;
@@ -680,7 +702,7 @@ export class Manager {
     }
     const id = idOf(f.record);
     this.toFree.add(id);
-    return { data: { closed: true, freed: this.freeClosed().includes(id) } };
+    return { data: { closed: true, freed: (await this.freeClosed()).includes(id) } };
   }
   // The tabs the manager opened for reviews whose own tab it couldn't bring back, by process.
   private readonly pages = new Map<number, string>();
@@ -700,7 +722,7 @@ export class Manager {
 
   /** The reviews, as the page shows them, with memory and disk (a review's Reviews menu skips disk). */
   async view(o: { disk: boolean } = { disk: true }) {
-    this.freeClosed();
+    await this.freeClosed();
     const list = listRecords();
     const live = await summaries(list);
     const sizeOf = (dirs: string[]) => {
@@ -718,7 +740,8 @@ export class Manager {
     const fresh = runs.filter((run) => !recorded.has(run.pid));
     const asked = fresh.length ? await summariesOf(fresh) : new Map<number, Summary>();
     const h = holdings(list, runs);
-    const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, r.freed ? leftOf(r) : sizeOf(r.status === 'closed' ? h.own.get(idOf(r)) ?? [] : keptDirs(r)), h));
+    const rows = list.map((r) => row(r, r.pid != null ? live.get(r.pid) : undefined, r.freed ? (r.local?.work ? sizeOf(keptDirs(r)) : leftOf(r)) : sizeOf(r.status === 'closed' ? h.own.get(idOf(r)) ?? [] : keptDirs(r)), h));
+    rows.forEach((x, i) => { if (list[i].status !== 'running') x.local = this.localOf(list[i]); });
     rows.forEach((x) => { x.pausing = this.stopping.get(x.id) === 'pause'; x.closing = this.stopping.get(x.id) === 'close'; });
     if (fresh.length) {
       for (const run of fresh) {
@@ -804,11 +827,11 @@ export class Manager {
       if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) return { status: 400, data: { error: 'which reviews?' } };
       try {
         if (route === 'free') {
-          const r = free(new Set(ids));
+          const r = await free(new Set(ids));
           this.sizes.gone(r.removed);
           return { data: { freed: r.freed.length } };
         }
-        const r = forget(new Set(ids));
+        const r = await forget(new Set(ids));
         this.sizes.gone(r.removed);
         return { data: { forgot: r.forgot.length } };
       } catch (e) {
