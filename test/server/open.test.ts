@@ -196,4 +196,32 @@ describe('Given a repository, in an Orca terminal whose CLI is a stub, ', () => 
       assert.deepEqual(calls[0], ['tab', 'create', '--url', run!.url, '--worktree', 'id:wt-9', '--json']);
     });
   });
+
+  describe('when it is reviewed from a terminal of Orca’s floating workspace, ', () => {
+    let run: UntangleRun | undefined;
+    let calls: string[][] = [];
+
+    before(async () => {
+      fs.writeFileSync(log, '');
+      run = await startUntangle(repo!.dir, {
+        base: 'main',
+        cacheDir: cache,
+        gh,
+        open: true,
+        quiet: false,
+        args: ['-verbose'],
+        env: { ORCA_CLI_COMMAND: stub, ORCA_WORKTREE_ID: 'global-floating-terminal' },
+      });
+      await said(run, 'opened in Orca’s browser');
+      calls = fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    });
+
+    after(async () => {
+      await run?.stop();
+    });
+
+    it('then Orca is asked for a tab without naming that workspace, which its CLI can’t, so that Orca picks the worktree.', () => {
+      assert.deepEqual(calls, [['tab', 'create', '--url', run!.url, '--json'], ['tab', 'switch', '--page', 'page-7', '--focus']]);
+    });
+  });
 });

@@ -26,6 +26,9 @@ if (a === 'repo' && b === 'add') {
 } else if (a === 'worktree' && b === 'show') {
   const known = state.repos.some((r) => `id:${r.id}::${r.path}` === flag('--worktree'));
   known ? ok({ worktree: { id: flag('--worktree').slice(3) } }) : fail('worktree_not_found');
+} else if (a === 'tab' && b === 'create' && flag('--worktree') === 'id:global-floating-terminal') {
+  // Orca's CLI can't name its floating workspace: a tab there comes from a page of its own.
+  fail('selector_not_found');
 } else if (a === 'tab' && b === 'create') {
   state.tabs++;
   const worktree = args.includes('--worktree') ? flag('--worktree').replace(/^id:/, '') : 'wt-active';

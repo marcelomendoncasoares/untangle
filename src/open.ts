@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { has } from './exec.js';
-import { orcaHere } from './orca.js';
+import { FLOATING, orcaHere } from './orca.js';
 
 const isWsl = () => {
   try {
@@ -58,13 +58,14 @@ const pageOf = (json: string): string | null => {
 
 // Inside Orca, its CLI opens a tab in Orca's browser, in the terminal's worktree (or the one asked
 // for). Orca opens it behind the tab in front, so it's then brought to the front of that worktree:
-// on screen when the worktree is, and waiting there when another is. The tab's page, which brings it
-// back later; false when Orca isn't there or didn't open it.
+// on screen when the worktree is, and waiting there when another is. Its CLI can't name the floating
+// workspace: from a terminal there, Orca picks the worktree, the folder's or the one in front. The
+// tab's page, which brings it back later; false when Orca isn't there or didn't open it.
 async function inOrca(url: string, at: Beside = {}): Promise<{ page: string | null } | false> {
   const cli = at.cli || orcaHere();
   if (!cli || !has(cli)) return false;
   const id = at.worktree || process.env.ORCA_WORKTREE_ID;
-  const worktree = id ? ['--worktree', 'id:' + id] : [];
+  const worktree = id && id !== FLOATING ? ['--worktree', 'id:' + id] : [];
   const created = await orca(cli, ['tab', 'create', '--url', url, ...worktree, '--json']);
   if (created == null) return false;
   const page = pageOf(created);

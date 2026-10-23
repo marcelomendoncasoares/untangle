@@ -9,7 +9,7 @@ import { stubGh, type GhStub } from '../helpers/gh.ts';
 import { reviewClient } from '../helpers/http.ts';
 import { pubspec } from '../helpers/review.ts';
 import { TempRepo, type Person } from '../helpers/repo.ts';
-import { startUntangle, stopRuns, untangleCommand, type UntangleRun } from '../helpers/run.ts';
+import { runsIn, startUntangle, stopRuns, untangleCommand, type UntangleRun } from '../helpers/run.ts';
 
 const skip = e2eSkip();
 const ada = (date: string): Person => ({ name: 'Ada Review', email: 'ada@example.com', date });
@@ -116,6 +116,24 @@ describe('Given a review no agent holds, in the manager inside Orca, ', { skip, 
       assert.match(created.at(-1)!, / And the docs\.'$/);
       await page.until(`!document.querySelector('.pal') && !!document.querySelector('.toast')`);
       assert.equal(await page.eval(`document.querySelector('.toast').textContent`), 'Claude is starting, in Orca');
+    },
+  );
+
+  it(
+    'when the review is opened from its row, with this page in Orca’s floating workspace, '
+    + 'then this page opens the review’s link, which Orca opens beside it.',
+    async () => {
+      // This page, as a tab of the floating workspace, where Orca's CLI can't open one beside it.
+      const file = orcaLog + '.state';
+      const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+      state.open = [...(state.open ?? []), { browserPageId: 'pg_reviews', url: String(await page.eval('location.origin + location.pathname')), worktreeId: 'global-floating-terminal', active: true }];
+      fs.writeFileSync(file, JSON.stringify(state));
+      await page.eval(`window.open = (u) => { (window.__opened ??= []).push(String(u)); return null; }`);
+      if (!(await page.eval(`!!document.querySelector('[data-act="open"]')`))) await page.click('.row.running');
+      await page.until(`!!document.querySelector('[data-act="open"]')`);
+      await page.click('[data-act="open"]');
+      await page.until(`(window.__opened || []).length === 1`);
+      assert.deepEqual(await page.eval('window.__opened'), [runsIn(cache)[0].url]);
     },
   );
 });

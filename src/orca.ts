@@ -53,10 +53,17 @@ export function orca(args: string[], cli: string | null = orcaCli()): Promise<Or
 }
 
 /**
- * Where a page of untangle's is open in Orca: the worktree of a tab that shows it, the one in front
- * first. A tab shows the page's address without the token of untangle's link. Null when none does.
+ * What Orca's floating workspace has for a worktree: in its tabs, and in its terminals'
+ * ORCA_WORKTREE_ID. Orca's CLI can't name it for a tab: a tab there comes from a page there.
  */
-export async function pageWorktree(url: string, cli = orcaCli()): Promise<string | null> {
+export const FLOATING = 'global-floating-terminal';
+
+/**
+ * Where a page of untangle's is open in Orca: a tab that shows it, in a worktree or in any, the one
+ * in front first, with its worktree. A tab shows the page's address without the token of untangle's
+ * link. Null when none does.
+ */
+export async function tabShowing(url: string, cli = orcaCli(), worktree?: string): Promise<{ page: string; worktree: string } | null> {
   let want: URL;
   try {
     want = new URL(url);
@@ -64,7 +71,7 @@ export async function pageWorktree(url: string, cli = orcaCli()): Promise<string
     return null;
   }
   const r = await orca(['tab', 'list', '--worktree', 'all'], cli);
-  const tabs = ((r.result as { tabs?: Array<{ url?: string; worktreeId?: string; active?: boolean }> } | null)?.tabs) ?? [];
+  const tabs = ((r.result as { tabs?: Array<{ browserPageId?: string; url?: string; worktreeId?: string; active?: boolean }> } | null)?.tabs) ?? [];
   const local = new Set(['127.0.0.1', 'localhost', '[::1]']);
   const shows = (address = '') => {
     try {
@@ -74,7 +81,8 @@ export async function pageWorktree(url: string, cli = orcaCli()): Promise<string
       return false;
     }
   };
-  return tabs.filter((t) => t.worktreeId && shows(t.url)).sort((a, b) => Number(!!b.active) - Number(!!a.active))[0]?.worktreeId ?? null;
+  const tab = tabs.filter((t) => t.browserPageId && t.worktreeId && (!worktree || t.worktreeId === worktree) && shows(t.url)).sort((a, b) => Number(!!b.active) - Number(!!a.active))[0];
+  return tab ? { page: tab.browserPageId!, worktree: tab.worktreeId! } : null;
 }
 
 /** Brings a browser tab to the front: false when it's gone. */

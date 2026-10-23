@@ -122,6 +122,12 @@
     }));
   }
   const post = (path, body) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  // In Orca's floating workspace, where Orca's CLI can't open a tab, untangle hands this page the
+  // review's link: a tab it opens goes right beside it.
+  const openBeside = (d) => {
+    if (d && d.open) window.open(d.open);
+    return d;
+  };
 
   const rows = () => {
     const list = S.data ? S.data.reviews : [];
@@ -596,7 +602,7 @@
     const key = prKey(it.target);
     const mine = key && { key, row: startingRow(it), answered: 0 };
     if (mine) S.pending.set(key, mine);
-    post('start', { target: it.target, agent }).then((d) => {
+    post('start', { target: it.target, agent }).then(openBeside).then((d) => {
       if (mine) mine.answered = Date.now();
       said(d);
     }, (e) => {
@@ -634,7 +640,7 @@
     const key = c.id || c.target;
     S.starting.add(key);
     toast(c.again ? `Resuming ${c.num}…` : `Starting the review of ${c.num}…`);
-    post('start', body).then((d) => { toast(d.already ? `${c.num} is open already` : c.again ? `${c.num} is starting again` : `The review of ${c.num} is starting`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(key); render(); });
+    post('start', body).then(openBeside).then((d) => { toast(d.already ? `${c.num} is open already` : c.again ? `${c.num} is starting again` : `The review of ${c.num} is starting`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(key); render(); });
     render();
   }
 
@@ -684,7 +690,7 @@
   function act(name, id) {
     const r = byId(id);
     if (!r || r.pending) return;
-    if (name === 'open') post('open', { id }).then((d) => toast(d.where === 'orca' ? `${short(r)} is in front, in Orca` : `Opened ${short(r)} in the browser`), (e) => toast(e.message, true));
+    if (name === 'open') post('open', { id }).then(openBeside).then((d) => toast(d.where === 'orca' ? `${short(r)} is in front, in Orca` : `Opened ${short(r)} in the browser`), (e) => toast(e.message, true));
     if (name === 'chat') post('chat', { id }).then(() => toast(`${r.chat.agent}’s chat is in front, in Orca`), (e) => toast(e.message, true));
     if (name === 'lsp') post('lsp', { id }).then(() => { toast(`${short(r)}’s language server starts over`); poll(); }, (e) => toast(e.message, true));
     if (name === 'close' || name === 'close-now') {
@@ -710,7 +716,7 @@
       S.menu = null;
       S.starting.add(id);
       render();
-      post('resume', { id, agent: name === 'resume' }).then((d) => {
+      post('resume', { id, agent: name === 'resume' }).then(openBeside).then((d) => {
         if (d.command && navigator.clipboard) navigator.clipboard.writeText(d.command).then(() => toast(`${short(r)} is starting again. Copied ${r.chat.agent}’s command: paste it in a terminal`), () => toast(`Run this in a terminal: ${d.command}`));
         else toast(`${short(r)} is starting again${name === 'resume' && r.chat ? `, with ${r.chat.agent}’s chat` : ''}`);
         poll();
@@ -719,7 +725,7 @@
     if (name === 'start') {
       S.starting.add(id);
       render();
-      post('start', { id }).then(() => { toast(`${short(r)} is starting again`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(id); render(); });
+      post('start', { id }).then(openBeside).then(() => { toast(`${short(r)} is starting again`); poll(); }, (e) => toast(e.message, true)).finally(() => { S.starting.delete(id); render(); });
     }
   }
 

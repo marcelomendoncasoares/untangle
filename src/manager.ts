@@ -13,7 +13,7 @@ import { has, runAsync } from './exec.js';
 import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
-import { newTerminal, orca, orcaCli, pageWorktree, reviewsWorkspace, showTab, showTerminal } from './orca.js';
+import { FLOATING, newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTerminal, tabShowing } from './orca.js';
 import { childPids, rss } from './metrics.js';
 import { feedbackPanel, fonts, managerPage } from './page.js';
 import { Feedback } from './feedback.js';
@@ -426,14 +426,17 @@ export class Manager {
       // One of it that runs is the one; one that's stopping (paused or closed a moment ago) is let go first.
       const running = w && findRun(w);
       if (running && (await serves(running))) return { data: { already: true, pid: running.pid } };
-      // In Orca, its page opens beside the manager's, and its chat runs in the Reviews workspace.
+      // In Orca, its page opens beside the manager's, and its chat runs in the Reviews workspace. In
+      // the floating workspace, where Orca's CLI can't open a tab, the manager's page opens it.
       const cli = orcaCli();
       const [beside, ws] = await Promise.all([cli ? this.beside(cli) : null, cli && agent ? reviewsWorkspace(cacheRoot(), cli) : null]);
-      const env = beside && cli ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: beside } : process.env;
-      const { pid, log } = launch(['-autoclose=false', '--', target], env);
+      const floating = !!cli && beside === FLOATING;
+      const env = beside && cli && !floating ? { ...process.env, ORCA_CLI_COMMAND: cli, ORCA_WORKTREE_ID: beside } : process.env;
+      const { pid, log } = launch(['-autoclose=false', ...(floating ? ['-no-open'] : []), '--', target], env);
       if (id && pid > 0) this.launched.set(pid, id);
       for (let i = 0; pid > 0 && i < 300; i++) {
-        if (listRuns().some((r) => r.pid === pid)) return { data: { started: true, pid, ...(agent ? await this.chat(target, agent, ws) : {}) } };
+        const run = listRuns().find((r) => r.pid === pid);
+        if (run) return { data: { started: true, pid, ...(floating ? this.openHere(run, cli!) : {}), ...(agent ? await this.chat(target, agent, ws) : {}) } };
         if (!pidAlive(pid)) break;
         await new Promise((r) => setTimeout(r, 100));
       }
@@ -462,10 +465,30 @@ export class Manager {
 
   /**
    * The worktree a review's page opens in, in Orca: beside the manager's own page, where a tab shows
-   * it, or else the one the manager runs in. Null outside Orca.
+   * it, or else the one the manager runs in. Null outside Orca, and when the manager runs in the
+   * floating workspace with its page outside Orca: Orca picks the worktree then.
    */
   private async beside(cli: string): Promise<string | null> {
-    return (this.url ? await pageWorktree(this.url, cli) : null) ?? process.env.ORCA_WORKTREE_ID ?? null;
+    const shown = this.url ? await tabShowing(this.url, cli) : null;
+    if (shown) return shown.worktree;
+    const own = process.env.ORCA_WORKTREE_ID;
+    return own && own !== FLOATING ? own : null;
+  }
+
+  /**
+   * A review's link, for the manager's page to open in Orca's floating workspace, where Orca's CLI
+   * can't open a tab: Orca puts the tab beside that page. Once Orca lists the tab, the manager
+   * brings it back and closes it with the review, as a tab it opened.
+   */
+  private openHere(run: RunInfo, cli: string): { open: string } {
+    void (async () => {
+      for (let i = 0; i < 20 && !this.pages.has(run.pid); i++) {
+        const tab = await tabShowing(run.url, cli, FLOATING);
+        if (tab) this.pages.set(run.pid, tab.page);
+        else await new Promise((r) => setTimeout(r, 500));
+      }
+    })();
+    return { open: run.url };
   }
 
   /** Whether the manager has something to finish: a pause or a close waiting for a turn to end. */
@@ -665,8 +688,11 @@ export class Manager {
   /** Brings a review's page to the front: its own tab, the one the manager opened for it, or a new one beside the manager's. */
   private async show(run: RunInfo): Promise<{ status?: number; data: unknown }> {
     for (const page of [run.page, this.pages.get(run.pid)]) if (page && (await showTab(page))) return { data: { where: 'orca' } };
+    // The tab the manager opened for it, if any, is gone.
+    this.pages.delete(run.pid);
     const cli = orcaCli();
     const beside = cli ? await this.beside(cli) : null;
+    if (cli && beside === FLOATING) return { data: { where: 'orca', ...this.openHere(run, cli) } };
     const p = await openPage(run.url, beside ? { cli, worktree: beside } : undefined);
     if (p?.page) this.pages.set(run.pid, p.page);
     return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
