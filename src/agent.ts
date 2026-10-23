@@ -172,7 +172,7 @@ export async function watch(o: { target: string; given: boolean; forward: string
     if (a.text) {
       process.stdout.write(String(a.text).replace(/\n*$/, '\n\n'));
       if (a.first) how();
-      else say(`answer a note with ${reply} <N> '<text>' (add -resolve once it’s done), and ${brief ? 'untangle will put a line in this chat when there’s more' : `run ${again} again for what comes next`}.`);
+      else say(`answer a note with ${reply} <N> '<text>'. After making a change a note asked for, add -resolve. ${brief ? 'untangle puts a line in this chat when there’s more' : `Run ${again} again for what comes next`}.`);
       return 0;
     }
     if (brief) {
@@ -190,10 +190,10 @@ export async function watch(o: { target: string; given: boolean; forward: string
 
 /** The first watch from a chat says how the review works, so asking for a review is all the setup it needs. */
 function explain(chat: Chat | null, url: string, reply: string, again: string) {
-  say(`you hold this code review. The person reviewing writes notes on the code in its page (${url}), and your answers show under them at once.`);
-  if (chat?.kind === 'codex') say(`when there are notes or replies you haven’t read, untangle puts a line in this chat: run ${again} then, and it prints them.`);
-  else say(`each ${again} waits for the notes and replies you haven’t read, prints them and exits: run it again after each answer, in the background${chat ? '' : ' if you can'}.`);
-  say(`answer in a note’s thread with ${reply} N2 'your answer'; add -resolve once you’ve made the change. Commit as you go: the page shows your commits, and the notes follow their lines.`);
+  say(`this chat holds the code review. The person reviewing writes notes on the code in its page (${url}), and answers show under them at once.`);
+  if (chat?.kind === 'codex') say(`when there are unread notes or replies, untangle puts a line in this chat; ${again} then prints them.`);
+  else say(`each ${again} waits for unread notes and replies, prints them and exits. After each answer, run it again in the background${chat ? '' : ', if possible'}.`);
+  say(`answer in a note’s thread with ${reply} N2 'the answer'. Follow the line the notes open with: by default, change code only where a note explicitly asks for it. After making such a change, commit it and add -resolve.`);
   say(`untangle notes prints the open notes again; untangle stop closes the review.`);
   const old = chat && outdatedSkill(chat.kind);
   if (old) say(`the untangle skill in ${old} is from another untangle: untangle skill -install updates it.`);

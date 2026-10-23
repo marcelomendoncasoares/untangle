@@ -102,7 +102,7 @@ describe('Given a review no agent holds, in the manager inside Orca, ', { skip, 
       await page.eval(`(() => { const t = document.querySelector('#f-msg'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); })()`);
       await page.type(' And the docs.');
       await page.until(`document.querySelector('#f-cmd').textContent.endsWith(' And the docs.\\'')`);
-      assert.match(String(await page.eval(`document.querySelector('#f-cmd').textContent`)), new RegExp(`^claude --session-id [0-9a-f-]{36} -n 'Review ${path.basename(repo.dir)}' '/untangle ${fs.realpathSync(repo.dir)} Do an initial review of this branch\\. Read the whole change`));
+      assert.match(String(await page.eval(`document.querySelector('#f-cmd').textContent`)), new RegExp(`^claude --session-id [0-9a-f-]{36} -n 'Review ${path.basename(repo.dir)}' '/untangle ${fs.realpathSync(repo.dir)} Do an initial review of this branch\\. Read the change`));
     },
   );
 

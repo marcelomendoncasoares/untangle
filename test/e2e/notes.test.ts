@@ -241,7 +241,7 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
       assert.deepEqual([copied, copied], [printed, [
         `My review notes on acme/sample#7 (branch feature, at ${head.slice(0, 7)}). Line numbers are on that commit.`,
         '',
-        'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
+        'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.',
         '',
         `N1 · lib/app.dart:${callLine} (resolved)`,
         'In the change "greet(name)"',

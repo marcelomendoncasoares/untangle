@@ -10,75 +10,73 @@ import { has } from './exec.js';
 
 export const SKILL = `---
 name: untangle
-description: Hold a code review with the user in untangle, a review page for this branch or a pull request, where they write notes on the code and you answer in each note's thread, or write notes of your own from your review of the change. Use when the user asks for a review in untangle, to review a change in untangle, to open or continue the untangle review, or when a message or a command's output says there are new notes on the untangle review.
+description: Hold a code review with the user in untangle, a review page for this branch or a pull request, where the user writes notes on the code and the agent answers in each note's thread, or writes notes of its own from a review of the change. Use when the user asks for a review in untangle, to review a change in untangle, to open or continue the untangle review, or when a message or a command's output says there are new notes on the untangle review.
 allowed-tools: Bash(untangle:*)
 ---
 
 # Hold an untangle review
 
-The user writes notes on the code in untangle's page. You read them with \`untangle watch\` and
-answer in their threads with \`untangle reply\`. When the user asks you to review the change, you
-write notes too, with \`untangle note\`, and the user answers in their threads.
+The user writes notes on the code in untangle's page. Read them with \`untangle watch\` and answer
+each in its thread with \`untangle reply\`. When asked for a review of the change, write notes with
+\`untangle note\`, and the user answers in their threads.
 
 ## Start
 
-Run \`untangle watch\` in the repository, or \`untangle watch <pr-url>\` for a pull request. It
-starts the review if it isn't running and opens its page. For a pull request, untangle clones its
-repository, and the watch says where the head is checked out: read and search the code there
-(\`rg\`, \`git log\`) rather than through \`gh api\`, and change nothing in it.
+Run \`untangle watch\` in the repository, or \`untangle watch <pr-url>\` for a pull request. It starts
+the review if needed and opens its page.
 
-- Claude: run it in the background (the Bash tool's \`run_in_background\`). It ends when there are
-  notes or replies you haven't read and prints them, and its end wakes you.
-- Codex: it returns at once. untangle then puts a line in this chat each time there's something
-  new: "untangle: 2 new notes on the review of ...". untangle runs outside the sandbox: it writes
-  its cache and serves the page.
+- Claude: run it in the background (the Bash tool's \`run_in_background\`). It ends when there is
+  something new, starting a new turn.
+- Codex: it returns at once, and from then on untangle puts a line in this chat when there is
+  something new.
 
-When the user asked you to review the change, review it now (Your own review, below). Then tell
-the user the review is open, and end your turn.
+For a pull request opened from its link, the watch names untangle's checkout of it, which is for
+reading only, since untangle builds the review from it. When a note asks for a change there,
+propose it in the reply instead. When asked for a review of the change, do it now, as described
+below. Then tell the user the review is open and end the turn.
 
-## Your own review
+## Reviewing the change
 
-Read the change (its diff against the review's base: \`git diff <base>...HEAD\` for a branch,
-\`gh pr diff\` for a pull request), and write each comment as a note on its lines:
-\`untangle note lib/a.dart:42 'your comment'\`. A range is \`lib/a.dart:40-42\`, a path alone
-is a note on the whole file, and \`-removed\` puts it on lines the change removed, numbered as on
-the base. Lines are numbered as on the review's commit: \`untangle note\` prints the lines it put
-the note on. Write one note per point, where it applies, and say what you'd change and why. A
-point that isn't about a line (a summary, a question, or that you found nothing to change) goes in
-a note on the review itself: \`untangle note 'your note'\`, its text alone. The user answers in
-each note's thread, and \`untangle watch\` brings the answers.
+Read the change against the review's base: \`git diff <base>...HEAD\` for a branch, or \`gh pr diff\`
+for a pull request. For a big change, start from the files it touches and read the parts that
+matter most. Write one note per point on the lines it's about, saying what to change and why.
+
+- For lines, run \`untangle note lib/a.dart:42 'the note'\`; a range is \`lib/a.dart:40-42\`, and a
+  path alone is the whole file. Lines are numbered as on the review's commit. For lines the change
+  removed, add \`-removed\` and number them as on the base.
+- For a point that isn't about any line (a summary, a question, or that nothing needs changing),
+  write a note on the review itself: \`untangle note 'the note'\`.
 
 ## Each round
 
-When \`untangle watch\` prints notes, or a line from untangle says there are new ones (run
-\`untangle watch\` to read them):
+When \`untangle watch\` prints notes, or untangle says there are new ones (run \`untangle watch\` to
+read them):
 
-1. Read them all. The review's opening line comes first: follow it. By default it says to make
-   the changes the notes ask for, and to answer a note that asks a question, or isn't clear,
-   before changing anything.
-2. Answer each note in its thread: \`untangle reply N2 'your answer'\`. An answer with quotes or
-   backticks reads from stdin instead: \`untangle reply N2 - <<'EOF'\`, the answer, then \`EOF\`
-   (\`untangle note\` takes \`-\` too). Once you've made the change a note asks for, add
-   \`-resolve\`. Commit as you go: the page shows your commits, and the notes follow their lines.
-3. A note that asks for a draft comment (the watch says so) wants the comment for GitHub. Answer
-   it with \`untangle reply\` and the comment alone, as you'd post it, in a natural tone: no
-   preamble, no quotes around it. untangle posts your answer to GitHub as it is, pending in the
-   user's review, for them to edit and send. Asked again while your draft is pending, the watch
-   shows that draft as it is now: write the comment again from both. Never post to GitHub yourself.
-4. Claude: start the next \`untangle watch\` in the background before you end your turn.
+1. Read them all, starting with the line they open with, and follow it. Unless it says otherwise,
+   change code only where a note explicitly asks for it, and discuss everything else first.
+2. Answer each note in its thread: \`untangle reply N2 'the answer'\`. For an answer with quotes or
+   backticks, pass it through stdin: \`untangle reply N2 - <<'EOF'\`, the answer, then \`EOF\`
+   (\`untangle note\` takes \`-\` too). After making a change a note asked for, commit it and add
+   \`-resolve\`.
+3. When a note asks for a draft comment (the watch says so), reply with the comment alone, as it
+   should read on GitHub: no preamble, no quotes around it. untangle posts it as a pending comment
+   for the user to edit and send, so don't post it.
+4. Claude: before ending the turn, start the next \`untangle watch\` in the background.
+
+When the user explicitly asks to post something on GitHub, post it with \`gh\`. Otherwise, don't
+post to GitHub.
 
 ## The end
 
-- When \`untangle watch\` says the review closed, or that another chat took it over, tell the user
-  and stop watching.
+- When the watch says the review closed, or another chat took it over, tell the user and stop
+  watching.
 - \`untangle notes\` prints the open notes again.
-- Run \`untangle stop\` only when the user asks to close the review.
+- When the user asks to close the review, run \`untangle stop\`, and not before.
 
 ## When untangle misbehaves
 
-If an untangle command hangs or fails, run \`untangle feedback '<what you saw>'\`. It drafts
-a bug report with what untangle was running, for the user to check and send. Tell the user, and
-never file the issue yourself.
+If an untangle command hangs or fails, run \`untangle feedback '<what happened>'\`. It drafts a bug
+report for the user to check and send; tell them about it.
 `;
 
 export const RULE = `# untangle runs outside Codex's sandbox: it writes its cache, serves the review's page and puts

@@ -213,13 +213,13 @@ interface Holder {
 }
 
 /**
- * The line the notes open with, for the agent, unless the review says otherwise: a note that asks
- * for a change gets it, and one that asks or isn't clear gets an answer first. It once said to
- * discuss everything first, which held agents back from changes the notes asked for: a review that
- * kept that default takes this one.
+ * The line the notes open with, for the agent, unless the review says otherwise: a change only
+ * where a note explicitly asks for one, and a talk about the rest first. A review that kept an
+ * earlier default takes this one: to discuss everything first, or to make any change a note asked
+ * for, which pushed agents into changes no one had asked for outright.
  */
-export const DEFAULT_OPENING = 'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.';
-const FORMER_OPENING = 'Discuss these with me before changing anything.';
+export const DEFAULT_OPENING = 'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.';
+const FORMER_OPENINGS = ['Discuss these with me before changing anything.', 'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.'];
 /**
  * What a draft ask asks when you wrote nothing in it: the agent reads this instead, and the page
  * shows the ask alone.
@@ -349,7 +349,7 @@ export class Notes {
     this.data = { version: 1, mode: null, live: true, opening: DEFAULT_OPENING, scope: 'open', base: null, head: null, next: 1, seq: 0, notes: [], events: [], agents: {} };
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<Stored>;
-      if (saved && saved.version === 1 && Array.isArray(saved.notes)) this.data = { ...this.data, ...saved, opening: saved.opening === FORMER_OPENING || typeof saved.opening !== 'string' ? DEFAULT_OPENING : saved.opening };
+      if (saved && saved.version === 1 && Array.isArray(saved.notes)) this.data = { ...this.data, ...saved, opening: typeof saved.opening !== 'string' || FORMER_OPENINGS.includes(saved.opening) ? DEFAULT_OPENING : saved.opening };
     } catch {
       // No notes yet.
     }
@@ -549,7 +549,7 @@ export class Notes {
   // no copy of the repository reads and searches it there, instead of through GitHub.
   private checkedOut(): string {
     const at = this.ctx?.checkout;
-    return at ? ` That commit is checked out at ${at}: read and search its code there, and change nothing (untangle uses it).` : '';
+    return at ? ` That commit is checked out at ${at}, for reading only, since untangle builds the review from it: propose any change in a reply.` : '';
   }
 
   /** Where a note is, as a thread's first line says it: on the review, or its file and lines. */

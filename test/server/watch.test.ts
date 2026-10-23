@@ -76,7 +76,7 @@ describe('Given a branch no review is running for, and an agent that watches it,
       assert.ok(out.includes([
         `untangle: 1 note you haven’t read, on ${path.basename(repo!.dir)} at ${head.slice(0, 7)}. Line numbers are on that commit.`,
         '',
-        'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
+        'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.',
         '',
         'N1 · lib/a.dart:2',
         `In the change "Say hello" (${head.slice(0, 7)})`,
@@ -86,7 +86,7 @@ describe('Given a branch no review is running for, and an agent that watches it,
         'Why hello?',
         '',
       ].join('\n')), out);
-      assert.match(out, /\nuntangle: answer in a note’s thread with untangle reply -agent Codex N2 'your answer'; add -resolve once you’ve made the change\./);
+      assert.match(out, /\nuntangle: answer in a note’s thread with untangle reply -agent Codex N2 'the answer'\. Follow the line the notes open with: by default, change code only where a note explicitly asks for it\. After making such a change, commit it and add -resolve\./);
     },
   );
 
@@ -106,7 +106,7 @@ describe('Given a branch no review is running for, and an agent that watches it,
     + 'then they print as Copy for agent gives them.',
     async () => {
       const r = await command(['notes', '-all']);
-      assert.deepEqual([r.code, r.out.split('\n').slice(0, 5)], [0, [`My review notes on ${path.basename(repo!.dir)} (branch feature, at ${head.slice(0, 7)}). Line numbers are on that commit.`, '', 'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.', '', 'N1 · lib/a.dart:2 (resolved)']]);
+      assert.deepEqual([r.code, r.out.split('\n').slice(0, 5)], [0, [`My review notes on ${path.basename(repo!.dir)} (branch feature, at ${head.slice(0, 7)}). Line numbers are on that commit.`, '', 'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.', '', 'N1 · lib/a.dart:2 (resolved)']]);
     },
   );
 
@@ -279,7 +279,7 @@ describe('Given a Codex chat that asks for a review, ', { timeout: 300_000 }, ()
     + 'then it returns at once, saying untangle will put a line in the chat, and how the review works for Codex.',
     () => {
       const lines = first.out.split('\n');
-      assert.deepEqual([first.code, lines[2], lines[4]], [0, 'untangle: nothing to read yet: untangle will put a line in this chat when there is.', 'untangle: when there are notes or replies you haven’t read, untangle puts a line in this chat: run untangle watch then, and it prints them.']);
+      assert.deepEqual([first.code, lines[2], lines[4]], [0, 'untangle: nothing to read yet: untangle will put a line in this chat when there is.', 'untangle: when there are unread notes or replies, untangle puts a line in this chat; untangle watch then prints them.']);
     },
   );
 
@@ -299,7 +299,7 @@ describe('Given a Codex chat that asks for a review, ', { timeout: 300_000 }, ()
     + 'then the note prints, and the watch says the next line will come.',
     async () => {
       const r = await command(['watch']);
-      assert.match(r.out, /\nN1 · lib\/a\.dart:2\n[\s\S]*\nWhy hello\?\n\nuntangle: answer a note with untangle reply <N> '<text>' \(add -resolve once it’s done\), and untangle will put a line in this chat when there’s more\.\n$/);
+      assert.match(r.out, /\nN1 · lib\/a\.dart:2\n[\s\S]*\nWhy hello\?\n\nuntangle: answer a note with untangle reply <N> '<text>'\. After making a change a note asked for, add -resolve\. untangle puts a line in this chat when there’s more\.\n$/);
     },
   );
 });
@@ -333,7 +333,7 @@ describe('Given two Claude chats in Orca’s terminals, ', { timeout: 300_000 },
       await until('Claude to listen', async () => (await client.call('notes')).status === 200 && (await view()).agents.some((a) => a.state === 'listening'));
       await f.note(client, 2, 'Why hello?');
       const r = await watching;
-      assert.match(r.out, /\nuntangle: each untangle watch waits for the notes and replies you haven’t read, prints them and exits: run it again after each answer, in the background\.\n/);
+      assert.match(r.out, /\nuntangle: each untangle watch waits for unread notes and replies, prints them and exits\. After each answer, run it again in the background\.\n/);
       assert.deepEqual((await view()).agents.map((a) => [a.name, a.state, a.chat]), [['Claude', 'working', chats.a]]);
     },
   );
@@ -363,7 +363,7 @@ describe('Given two Claude chats in Orca’s terminals, ', { timeout: 300_000 },
       const first = await waiting;
       assert.match(caught.out, /\nN2 · lib\/a\.dart:1\n/);
       assert.deepEqual([first.code, first.out.trim().split('\n').pop()], [0, 'untangle: another Claude chat took over this review: there’s nothing more to watch here.']);
-      assert.match(second.out, /\nuntangle: you hold this review now: another Claude chat held it\. Here are its 2 open notes, on .+ at [0-9a-f]{7}\. Line numbers are on that commit\.\n[\s\S]*\nuntangle: you hold this code review\./);
+      assert.match(second.out, /\nuntangle: you hold this review now: another Claude chat held it\. Here are its 2 open notes, on .+ at [0-9a-f]{7}\. Line numbers are on that commit\.\n[\s\S]*\nuntangle: this chat holds the code review\./);
       assert.deepEqual((await view()).agents.map((a) => [a.name, a.chat]), [['Claude', chats.b]]);
     },
   );

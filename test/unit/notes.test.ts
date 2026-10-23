@@ -168,7 +168,7 @@ describe('Given notes on the greeting’s message and print, and a note on a fil
     assert.equal(notes.exportText('open'), [
       `My review notes on acme/app#7 (branch feature, at ${short(g.head)}). Line numbers are on that commit.`,
       '',
-      'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
+      'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.',
       '',
       'N1 · lib/app.dart:3',
       `In the change "Greet by name" (${short(g.head)})`,
@@ -281,7 +281,7 @@ describe('Given notes an agent watches, ', () => {
     const got = await waiting;
     assert.ok('text' in got);
     assert.deepEqual([got.notes, got.replies, got.first], [2, 0, true]);
-    assert.equal(got.text.split('\n').slice(0, 3).join('\n'), `untangle: 2 notes you haven’t read, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.\n\nWhere a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.`);
+    assert.equal(got.text.split('\n').slice(0, 3).join('\n'), `untangle: 2 notes you haven’t read, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.\n\nWhere a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.`);
     assert.match(got.text, /\nN1 · lib\/app\.dart:3\n[\s\S]*\nN2 · lib\/app\.dart:4\n/);
   });
 
@@ -465,7 +465,7 @@ describe('Given notes a Claude chat holds, in an Orca terminal, ', () => {
     assert.equal(second.text.split('\n').slice(0, 5).join('\n'), [
       `untangle: you hold this review now: another Claude chat held it. Here are its 2 open notes, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.`,
       '',
-      'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
+      'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.',
       '',
       'N1 · lib/app.dart:3',
     ].join('\n'));
@@ -661,7 +661,7 @@ describe('Given a note on a pull request reviewed from its link, ', () => {
     await add(notes, 3, 'Why a local?');
     const got = await notes.watch('Claude', { timeout: 5_000 });
     assert.ok('text' in got);
-    const there = ` That commit is checked out at ${checkout}: read and search its code there, and change nothing (untangle uses it).`;
+    const there = ` That commit is checked out at ${checkout}, for reading only, since untangle builds the review from it: propose any change in a reply.`;
     assert.deepEqual([got.text.split('\n')[0], notes.exportText('open').split('\n')[0]], [
       `untangle: 1 note you haven’t read, on acme/app#7 at ${short(g.head)}. Line numbers are on that commit.${there}`,
       `My review notes on acme/app#7 (branch feature, at ${short(g.head)}). Line numbers are on that commit.${there}`,
@@ -685,9 +685,10 @@ describe('Given notes kept with the opening line untangle once gave them, and no
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('when they are read, then the former default gives way to today’s, which lets a note ask for a change, and yours stays.', () => {
-    assert.deepEqual([kept('Discuss these with me before changing anything.'), kept('Only answer: change nothing.')], [
-      'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
+  it('when they are read, then the former defaults give way to today’s, which changes code only where a note explicitly asks, and yours stays.', () => {
+    assert.deepEqual([kept('Discuss these with me before changing anything.'), kept('Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.'), kept('Only answer: change nothing.')], [
+      'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.',
+      'Where a note explicitly asks for a change, make it. Otherwise, discuss it with me before changing anything.',
       'Only answer: change nothing.',
     ]);
   });

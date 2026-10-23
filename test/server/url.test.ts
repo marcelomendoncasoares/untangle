@@ -203,7 +203,7 @@ describe('Given a served review of a pull request, ', () => {
 
     it('then they say where untangle checked the head out, to read its code there.', () => {
       const checkout = path.join(cache, 'worktrees', 'github.com', 'acme', 'sample', sample!.head.slice(0, 12));
-      assert.equal(header, `My review notes on acme/sample#7 (branch feature, at ${sample!.head.slice(0, 7)}). Line numbers are on that commit. That commit is checked out at ${checkout}: read and search its code there, and change nothing (untangle uses it).`);
+      assert.equal(header, `My review notes on acme/sample#7 (branch feature, at ${sample!.head.slice(0, 7)}). Line numbers are on that commit. That commit is checked out at ${checkout}, for reading only, since untangle builds the review from it: propose any change in a reply.`);
     });
   });
 
