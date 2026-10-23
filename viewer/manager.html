@@ -286,6 +286,13 @@ kbd { font: 500 10.5px/1 var(--ui); color: var(--text-3); background: var(--rais
 .pal-r .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-r .h { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .pal-r .h.res { color: var(--local-ink); }
+/* The folders in a path typed: repositories, which Enter reviews, and the others, which Tab goes into. */
+.pal-g.path { font: 400 11.5px/1.4 var(--code); overflow-wrap: anywhere; }
+.pal-r.sub { grid-template-columns: 18px minmax(0, 1fr) auto; }
+.pal-r .num.ic { display: grid; place-items: center; color: var(--text-2); }
+.pal-r .num.ic svg { width: 14px; height: 14px; }
+.pal-r.plain .num.ic { color: var(--text-4); }
+.pal-r.plain .t { color: var(--text-2); }
 .pal-note { padding: 14px 16px; font-size: 12.5px; color: var(--text-3); }
 .pal-f { flex: none; display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; border-top: 1px solid var(--hair); font-size: 11.5px; color: var(--text-3); }
 .pal-f kbd { margin-right: 3px; }

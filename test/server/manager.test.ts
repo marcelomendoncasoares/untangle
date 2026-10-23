@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,6 +34,7 @@ interface View { reviews: Row[]; memory: { manager: number }; disk: { open: numb
 
 describe('Given a review Claude holds from a chat in Orca, and the manager, ', { timeout: 300_000 }, () => {
   let repo: TempRepo;
+  let project: TempRepo;
   let gh: GhStub;
   let cache = '', bin = '', orcaLog = '', opened = '';
   let head = '';
@@ -62,7 +64,17 @@ describe('Given a review Claude holds from a chat in Orca, and the manager, ', {
     opened = path.join(bin, 'opened.log');
     fs.writeFileSync(path.join(bin, 'browser.sh'), `#!/bin/sh\necho "$1" >> ${JSON.stringify(opened)}\n`, { mode: 0o755 });
     orcaLog = path.join(bin, 'orca.log');
-    fs.writeFileSync(path.join(bin, 'orca-ide'), `#!/usr/bin/env node\nrequire('fs').appendFileSync(${JSON.stringify(orcaLog)}, JSON.stringify(process.argv.slice(2)) + '\\n');\nprocess.stdout.write('{"ok":true,"result":{}}');\n`, { mode: 0o755 });
+    // Orca's projects: one on a branch of its own, and untangle's Reviews workspace, in its cache.
+    project = TempRepo.create();
+    project.write('README.md', 'A project.\n');
+    project.commit({ subject: 'start', author: ada('2020-06-01T00:00:00Z'), committer: ada('2020-06-01T00:00:00Z') });
+    project.branch('wip');
+    const workspace = path.join(cache, 'chats', 'Reviews');
+    fs.mkdirSync(workspace, { recursive: true });
+    execFileSync('git', ['init', '-q', '-b', 'reviews'], { cwd: workspace });
+    execFileSync('git', ['-c', 'user.name=Ada', '-c', 'user.email=ada@example.com', 'commit', '-q', '--allow-empty', '-m', 'start'], { cwd: workspace });
+    const projects = JSON.stringify({ ok: true, result: { repos: [{ path: project.dir, kind: 'git' }, { path: workspace, kind: 'git' }] } });
+    fs.writeFileSync(path.join(bin, 'orca-ide'), `#!/usr/bin/env node\nconst args = process.argv.slice(2);\nrequire('fs').appendFileSync(${JSON.stringify(orcaLog)}, JSON.stringify(args) + '\\n');\nprocess.stdout.write(args[0] === 'repo' && args[1] === 'list' ? ${JSON.stringify(projects)} : '{"ok":true,"result":{}}');\n`, { mode: 0o755 });
     // Claude's session, in the folder it runs in, and the transcript of its chat.
     fs.mkdirSync(path.join(claude(), 'sessions'), { recursive: true });
     fs.writeFileSync(path.join(claude(), 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: chat, cwd: '/work/app', status: 'idle', statusUpdatedAt: Date.now() }));
@@ -96,6 +108,7 @@ describe('Given a review Claude holds from a chat in Orca, and the manager, ', {
     await stopRuns(cache);
     gh.remove();
     repo.remove();
+    project.remove();
     fs.rmSync(cache, { recursive: true, force: true });
     fs.rmSync(bin, { recursive: true, force: true });
   });
@@ -173,6 +186,16 @@ describe('Given a review Claude holds from a chat in Orca, and the manager, ', {
       const r = await until('the review paused', async () => (await view()).reviews.find((x) => x.status === 'paused'));
       assert.deepEqual([r.memory, r.agents, r.chat && r.chat.id], [null, [], chat]);
       assert.ok(r.disk && r.disk > 0);
+    },
+  );
+
+  it(
+    'when the page asks for the folders, '
+    + 'then it gets the worktrees on a branch of the repositories it knows: the one its review is of, and Orca’s projects, but not untangle’s own.',
+    async () => {
+      const { folders } = (await manager.call('folders')).data as { folders: Array<{ dir: string; name: string; branch: string }> };
+      assert.deepEqual(folders.map((f) => `${f.name} ${f.branch}`).sort(), [`${path.basename(repo.dir)} feature`, `${path.basename(project.dir)} wip`].sort());
+      assert.ok(calls().some((c) => c[0] === 'repo' && c[1] === 'list'));
     },
   );
 });

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,7 +33,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
   let other: TempRepo;
   let third: TempRepo;
   let gh: GhStub;
-  let cache = '', bin = '', opened = '';
+  let cache = '', bin = '', opened = '', nav = '';
   let run: UntangleRun;
   let client: ReviewClient;
   let page: Browser;
@@ -55,6 +56,13 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     branch(other, 'hey');
     third = TempRepo.create();
     branch(third, 'howdy');
+    // Folders to go through: a repository on feature, and a plain folder holding another on deep-work, and one more.
+    nav = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-nav-'));
+    for (const [dir, on] of [['alpha', 'feature'], ['beta/deep', 'deep-work']]) {
+      fs.mkdirSync(path.join(nav, dir), { recursive: true });
+      execFileSync('git', ['init', '-q', '-b', on], { cwd: path.join(nav, dir) });
+    }
+    fs.mkdirSync(path.join(nav, 'beta', 'notes'));
     const found = { number: 12, title: 'feat: Retry calls', url: 'https://github.com/acme/app/pull/12', updatedAt: '2026-10-21T10:00:00Z', isDraft: false, repository: { nameWithOwner: 'acme/app' }, author: { login: 'ada' } };
     gh = stubGh([{ match: ['search', 'prs', '--review-requested=@me'], stdout: [found] }, { match: ['search', 'prs', '--author=@me'], stdout: [] }]);
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
@@ -101,6 +109,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     repo.remove();
     other.remove();
     third.remove();
+    fs.rmSync(nav, { recursive: true, force: true });
     fs.rmSync(cache, { recursive: true, force: true });
     fs.rmSync(bin, { recursive: true, force: true });
   });
@@ -240,14 +249,18 @@ describe('Given a review Claude answered in, another paused, and the manager ope
 
   it(
     'when Ctrl K is pressed, '
-    + 'then the palette opens on the pull requests asked of you, and the paused review to resume; typing narrows it.',
+    + 'then the palette opens on the pull requests asked of you, the paused review to resume, and the folders of the repositories untangle reviewed, each with its review; typing narrows it.',
     async () => {
       await page.click('.nr[data-key="all"]');
       await page.key('k', { ctrl: true });
-      await page.until(`!!document.querySelector('.pal') && document.querySelectorAll('.pal-r').length === 2`);
+      await page.until(`!!document.querySelector('.pal') && document.querySelectorAll('.pal-r').length === 4`);
+      // The two folders' branches moved at the same time: they're in the order of their folders.
+      const folders = [[repo, 'running · Open'], [other, 'paused · Resume']] as const;
+      const byDir = [...folders].sort((a, b) => fs.realpathSync(a[0].dir).localeCompare(fs.realpathSync(b[0].dir)));
       assert.deepEqual(await page.eval(`[...document.querySelectorAll('.pal-g, .pal-r')].map((e) => e.className === 'pal-g' ? '[' + e.textContent + ']' : [...e.children].map((c) => c.textContent).join(' | '))`), [
         '[Asked to review you1]', '#12 | feat: Retry calls | ada · app',
         '[Paused]', `${path.basename(other.dir)} | feature against main | Resume`,
+        '[Folders2]', ...byDir.map(([r, hint]) => `${path.basename(fs.realpathSync(r.dir))} | feature against main | ${hint}`),
       ]);
       await page.type('retry');
       await page.until(`document.querySelectorAll('.pal-r').length === 1`);
@@ -282,7 +295,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
       // The start waits in the page: what shows meanwhile, untangle hasn't heard of.
       await page.eval(`(() => { const f = window.fetch; window.__fetch = f; window.fetch = (u, i) => (String(u) === 'api/start' ? new Promise((r) => { window.__start = r; }) : f(u, i)); })()`);
       await page.key('k', { ctrl: true });
-      await page.until(`document.querySelectorAll('.pal-r').length === 2`);
+      await page.until(`document.querySelectorAll('.pal-r').length === 4`);
       await page.key('Enter');
       await page.until(`!!document.querySelector('.pal [data-act="f-start"]')`);
       await page.key('Enter');
@@ -299,7 +312,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
 
   it(
     'when a folder’s path is pasted in the palette, '
-    + 'then it offers the review of the repository the folder is in, on its branch, which opens the form; a folder under review offers its review, and a path with no folder says so.',
+    + 'then it offers the review of the repository the folder is in, on its branch, which opens the form, above the folders it lists; a folder under review offers its review, and a path to nothing says so.',
     async () => {
       const shown = `[...document.querySelectorAll('.pal-g, .pal-r, .pal-note')].map((e) => e.classList.contains('pal-r') ? [...e.children].map((c) => c.textContent).join(' | ') : '[' + e.textContent + ']')`;
       const top = fs.realpathSync(third.dir);
@@ -307,7 +320,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
       await page.until(`!!document.querySelector('#pal-in')`);
       await page.type(path.join(third.dir, 'lib'));
       await page.until(`!!document.querySelector('.pal-r') && document.querySelector('.pal-g').textContent === 'Folder'`);
-      assert.deepEqual(await page.eval(shown), ['[Folder]', `${path.basename(top)} | feature | ${top}`]);
+      assert.deepEqual(await page.eval(shown), ['[Folder]', `${path.basename(top)} | feature | ${top}`, `[${third.dir}/]`, ' | lib | ']);
       await page.key('Enter');
       await page.until(`!!document.querySelector('.pal [data-act="f-start"]')`);
       assert.deepEqual(await page.eval(`[document.querySelector('.pal .sh .l1').textContent, document.querySelector('.pal .sh .l2').textContent, document.querySelector('.pal .chk').textContent]`), [`${path.basename(top)}feature`, top, 'Request an initial review from Claude']);
@@ -318,8 +331,39 @@ describe('Given a review Claude answered in, another paused, and the manager ope
       await page.until(`(document.querySelector('.pal-r .h') || {}).textContent === 'running · Open'`);
       await page.eval(`(() => { const i = document.querySelector('#pal-in'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
       await page.type(path.join(third.dir, 'gone'));
-      await page.until(`(document.querySelector('.pal-note') || {}).textContent === ${JSON.stringify(`There’s no folder at ${path.join(third.dir, 'gone')}`)}`);
+      await page.until(`(document.querySelector('.pal-note') || {}).textContent === ${JSON.stringify(`No folder in ${third.dir}/ starts with “gone”`)}`);
       assert.equal(await page.eval(`document.querySelectorAll('.pal-r').length`), 0);
+      await page.key('Escape');
+      await page.until(`!document.querySelector('.pal')`);
+    },
+  );
+
+  it(
+    'when a folder’s path is typed, '
+    + 'then the palette lists the folders in it, a repository with its branch: Tab goes into the folder chosen and Shift Tab back out, a click goes into one, and Enter starts the review of a repository only.',
+    async () => {
+      const shown = `[...document.querySelectorAll('.pal-g, .pal-r, .pal-note')].map((e) => e.classList.contains('pal-r') ? (e.classList.contains('plain') ? '(folder)' : '(repository)') + [...e.children].map((c) => c.textContent).join(' | ') : '[' + e.textContent + ']')`;
+      const at = (q: string) => `document.querySelector('#pal-in').value === ${JSON.stringify(q)} && (document.querySelector('.pal-g') || {}).textContent === ${JSON.stringify(q)} && document.querySelectorAll('.pal-r').length === 2`;
+      await page.key('k', { ctrl: true });
+      await page.until(`!!document.querySelector('#pal-in')`);
+      await page.type(nav + '/');
+      await page.until(at(nav + '/'));
+      assert.deepEqual(await page.eval(shown), [`[${nav}/]`, '(repository) | alpha | feature', '(folder) | beta | ']);
+      // Enter, on a folder that isn't a repository, says so and starts nothing.
+      await page.key('ArrowDown');
+      await page.key('Enter');
+      await page.until(`(document.querySelector('.pal-note') || {}).textContent === 'beta isn’t a git repository: Tab goes into it'`);
+      assert.equal(await page.eval(`!!document.querySelector('.pal [data-act="f-start"]')`), false);
+      await page.key('Tab');
+      await page.until(at(nav + '/beta/'));
+      assert.deepEqual(await page.eval(shown), [`[${nav}/beta/]`, '(repository) | deep | deep-work', '(folder) | notes | ']);
+      await page.key('Tab', { shift: true });
+      await page.until(at(nav + '/'));
+      await page.click('.pal-r.plain');
+      await page.until(at(nav + '/beta/'));
+      await page.key('Enter');
+      await page.until(`!!document.querySelector('.pal [data-act="f-start"]')`);
+      assert.deepEqual(await page.eval(`[document.querySelector('.pal .sh .l1').textContent, document.querySelector('.pal .sh .l2').textContent]`), ['deepdeep-work', `${nav}/beta/deep`]);
       await page.key('Escape');
       await page.until(`!document.querySelector('.pal')`);
     },
@@ -330,7 +374,7 @@ describe('Given a review Claude answered in, another paused, and the manager ope
     + 'then it starts again, and is listed running.',
     async () => {
       await page.key('k', { ctrl: true });
-      await page.until(`document.querySelectorAll('.pal-r').length === 2`);
+      await page.until(`document.querySelectorAll('.pal-r').length === 4`);
       await page.key('ArrowDown');
       await page.key('Enter');
       await page.until(`!document.querySelector('.pal') && [...document.querySelectorAll('.row.running')].length === 2 && !document.querySelector('.st.build')`, 120_000);

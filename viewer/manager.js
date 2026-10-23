@@ -30,6 +30,7 @@
     spark: svg('<path d="M8 1.8l1.5 4.7 4.7 1.5-4.7 1.5L8 14.2l-1.5-4.7L1.8 8l4.7-1.5z" fill="currentColor"/>'),
     pause: svg('<path d="M5.5 3.5v9M10.5 3.5v9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'),
     repo: svg(`<path d="M3.5 13V3.5a1 1 0 0 1 1-1h8v9h-8a1 1 0 0 0-1 1.5M5.5 13.5h7" ${LN}/>`),
+    folder: svg(`<path d="M2 4.5a1 1 0 0 1 1-1h3.2l1.4 1.6H13a1 1 0 0 1 1 1v5.4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" ${LN}/>`),
     term: svg(`<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" ${LN}/><path d="M4.5 6.2 6.6 8 4.5 9.8M8.4 10.2h3" ${LN}/>`),
     open: svg(`<path d="M6.5 3.5h6v6M12.5 3.5 4 12" ${LN}/>`),
     done: svg(`<path d="M3.5 8.5l3 3 6-7" ${LN}/>`),
@@ -53,7 +54,7 @@
   const S = { data: null, tab: 'open', filter: 'all', sel: null, opened: new Set(), tails: new Map(), menu: null, toast: null, starting: new Set(), picked: new Set(), confirm: false, pending: new Map() };
   // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
   // then the review picked, and how its agent starts (the form), or the review an agent joins.
-  const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null, folder: null };
+  const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null, folder: null, seen: null, folders: null, notice: '' };
   const TEMPLATE = (pr) => `Do an initial review of this ${pr ? 'pull request' : 'branch'}. Read the change, then post your findings to untangle as notes on the lines they’re about, one note per point: bugs and edge cases first, then missing tests, then design and naming. Say what you’d change and why, and leave out style nits. If you find nothing to change, say so in a note on the review. Then tell me how many notes you posted, and keep watching the review for mine.`;
   const AGENT = { claude: 'Claude', codex: 'Codex' };
   // Quoted for a shell, as untangle types it into the terminal.
@@ -451,43 +452,82 @@
   const sameUrl = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
   const reviewOf = (url) => rows().find((r) => r.status !== 'closed' && !r.twin && (sameUrl(r.url, url) || sameUrl(r.target, url)));
   const openHint = (r) => (r.status === 'paused' ? 'paused · Resume' : r.build ? 'starting · Open' : 'running · Open');
-  // A folder's path, pasted: from /, ~ or a drive. untangle says which repository and branch it holds.
+  // A folder's path, typed or pasted: from /, ~ or a drive. untangle lists the folders in it, for
+  // Tab to go into, and says which repository it's in, for Enter to review.
   const FOLDER = /^(?:~(?:[\\/]|$)|\/|[A-Za-z]:[\\/])/;
-  // What untangle said of the folder typed: undefined for no path, null while it's asked.
-  const folderSaid = () => {
+  // A path as typed, cut where Tab goes on: the folder it's in, and the start of a name.
+  const cutPath = (q) => {
+    const p = q === '~' ? '~/' : q;
+    const at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return { at: p.slice(0, at + 1), part: p.slice(at + 1) };
+  };
+  // What untangle said of the path typed: undefined for no path, null while it's asked. Typing on in
+  // the same folder, the last answer narrows here until the next one comes.
+  const pathSaid = () => {
     const q = P.q.trim();
     if (!FOLDER.test(q)) return undefined;
-    return P.folder && P.folder.q === q ? P.folder.d : null;
+    if (P.folder && P.folder.q === q && P.folder.d) return P.folder.d;
+    const { at, part } = cutPath(q), low = part.toLowerCase();
+    if (!P.seen || P.seen.at !== at) return null;
+    return { ...P.seen, folder: null, more: 0, folders: P.seen.folders.filter((b) => b.name.toLowerCase().startsWith(low) && (part.startsWith('.') || !b.name.startsWith('.'))) };
   };
-  // Asked once the typing stops.
+  // Asked once the typing stops; at once for Tab.
   let folderTimer = 0;
-  function lookFolder() {
+  function lookFolder(now) {
     const q = P.q.trim();
     if (!FOLDER.test(q) || (P.folder && P.folder.q === q)) return;
     P.folder = { q, d: null };
     clearTimeout(folderTimer);
-    folderTimer = setTimeout(() => api('folder?path=' + encodeURIComponent(q)).catch((e) => ({ error: e.message })).then((d) => {
+    folderTimer = setTimeout(() => api('folder?path=' + encodeURIComponent(q)).catch((e) => ({ at: cutPath(q).at, folders: [], more: 0, folder: null, error: e.message })).then((d) => {
       if (!P.folder || P.folder.q !== q) return;
       P.folder.d = d;
+      P.seen = d;
       if (P.open && P.stage === 'pick') palette();
-    }), 150);
+    }), now ? 0 : 100);
   }
+  // Tab: the path goes into a folder, and the palette lists what's in it. Shift Tab goes back out.
+  function goTo(q) {
+    P.q = q;
+    P.hl = 0;
+    P.notice = '';
+    const input = $('#pal-in');
+    if (input) input.value = q;
+    lookFolder(true);
+    palette();
+  }
+  const into = (b) => goTo(b.path + (b.path.includes('\\') && !b.path.includes('/') ? '\\' : '/'));
+  const outOf = () => {
+    const { at } = cutPath(P.q.trim());
+    const up = at.replace(/[^\\/]+[\\/]$/, '');
+    if (up && up !== at) goTo(up);
+  };
+  // A folder's choice: its review when one is open or paused, else a new one from it.
+  const folderChoice = (group, f, hint) => {
+    const open = rows().find((r) => r.status !== 'closed' && !r.twin && r.dir === f.dir);
+    return { group, num: f.name, title: open ? open.title : f.branch || 'No branch checked out', hint: open ? openHint(open) : hint || f.repo || f.where, target: open ? null : f.dir, id: open ? open.id : null, again: !!open && open.status === 'paused', folder: f };
+  };
+  // A folder in the path typed: a repository's top folder is reviewed from it; any other, Tab goes into.
+  const belowChoice = (at, b) => (b.dir
+    ? { ...folderChoice(at, { dir: b.dir, name: b.name, where: b.path, repo: null, branch: b.branch }, b.branch || 'No branch checked out'), icon: ICON.repo, title: b.name, below: b }
+    : { group: at, icon: ICON.folder, title: b.name, hint: '', below: b });
 
-  // What the palette offers, in its groups: a link or a folder you pasted, what's asked of you, what you paused, your own.
+  // What the palette offers, in its groups: a link you pasted, what's asked of you, what you paused,
+  // your folders and your own pull requests; or, for a path, the repository it's in and the folders in it.
   function choices() {
     const q = P.q.trim().toLowerCase();
     const hit = (...texts) => !q || texts.some((t) => String(t).toLowerCase().includes(q));
     const out = [];
+    const v = pathSaid();
+    if (v !== undefined) {
+      if (v && v.folder) out.push(folderChoice('Folder', v.folder));
+      if (v) out.push(...v.folders.map((b) => belowChoice(v.at, b)));
+      return out;
+    }
     const link = PR_URL.exec(P.q.trim());
     if (link) {
       const url = `https://github.com/${link[1]}/${link[2]}/pull/${link[3]}`;
       const open = reviewOf(url);
       out.push({ group: 'Link', num: '#' + link[3], title: open ? open.title : `Start the review of ${link[1]}/${link[2]}#${link[3]}`, hint: open ? openHint(open) : '', target: open ? null : url, id: open ? open.id : null, again: !!open && open.status === 'paused' });
-    }
-    const f = folderSaid();
-    if (f && f.dir) {
-      const open = rows().find((r) => r.status !== 'closed' && !r.twin && r.target === f.dir);
-      out.push({ group: 'Folder', num: f.name, title: open ? open.title : f.branch || 'No branch checked out', hint: open ? openHint(open) : f.repo || f.where, target: open ? null : f.dir, id: open ? open.id : null, again: !!open && open.status === 'paused', folder: f });
     }
     const pull = (group) => (p) => {
       const open = reviewOf(p.url);
@@ -495,6 +535,12 @@
     };
     if (P.pulls) out.push(...P.pulls.asked.filter((p) => hit(p.number, p.title, p.repo, p.author)).map(pull('Asked to review you')));
     out.push(...open().filter((r) => r.status === 'paused' && hit(r.name, r.title, r.repo)).map((r) => ({ group: 'Paused', num: r.name.replace(/^[^#]*#/, '#'), title: r.title, hint: r.chat ? `Resume · ${r.chat.agent}’s chat kept` : 'Resume', id: r.id, again: true })));
+    // The worktrees on a branch, the branch last moved first: the first few, or all that match.
+    if (P.folders) {
+      const all = P.folders.filter((w) => hit(w.name, w.branch, w.repo || '', w.where));
+      const shown = q ? all : all.slice(0, 8);
+      out.push(...shown.map((w) => ({ ...folderChoice('Folders', w, [w.repo && w.repo.split('/').pop(), ago(w.at)].filter(Boolean).join(' · ')), of: shown.length < all.length ? `${shown.length} of ${all.length}` : String(all.length) })));
+    }
     if (P.pulls) out.push(...P.pulls.yours.filter((p) => hit(p.number, p.title, p.repo)).map(pull('Yours')));
     return out;
   }
@@ -557,20 +603,31 @@
     list.forEach((c, i) => {
       if (c.group !== group) {
         group = c.group;
-        h += `<div class="pal-g">${esc(group)}${group === 'Asked to review you' && P.pulls ? `<span>${P.pulls.asked.length}</span>` : ''}</div>`;
+        const n = group === 'Asked to review you' && P.pulls ? String(P.pulls.asked.length) : c.of;
+        h += `<div class="pal-g${c.below ? ' path' : ''}">${esc(group)}${n ? `<span>${esc(n)}</span>` : ''}</div>`;
       }
-      h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}${longName(c.num) ? ' dir' : ''}" data-act="choose" data-i="${i}">${numTag(c.num)}<span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
+      const cls = c.below ? ' sub' + (c.below.dir ? '' : ' plain') : longName(c.num) ? ' dir' : '';
+      h += `<button type="button" class="pal-r${i === P.hl ? ' on' : ''}${cls}" data-act="choose" data-i="${i}">${c.icon ? `<span class="num ic">${c.icon}</span>` : numTag(c.num)}<span class="t">${md(c.title)}</span><span class="h${c.again ? ' res' : ''}">${esc(c.hint)}</span></button>`;
     });
-    const f = folderSaid();
-    const note = f !== undefined ? (f ? f.error || '' : 'Looking for the folder…') : P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link, or a folder’s path, to start its review.' : 'Nothing waits for you on GitHub.') : '';
+    const v = pathSaid(), part = v === undefined ? '' : cutPath(P.q.trim()).part;
+    const note = P.notice || (v !== undefined
+      ? (!v ? 'Looking in the folder…' : v.error || (!list.length ? (part ? `No folder in ${v.at} starts with “${part}”` : `${v.at} has no folders in it`) : v.more ? `${v.more} more in it: type the start of a name` : ''))
+      : P.loading ? 'Asking GitHub for the pull requests that wait for you…' : P.pulls && P.pulls.error ? P.pulls.error : !list.length ? (P.q ? 'Nothing matches. Paste a pull request’s link, or type a folder’s path, to start its review.' : 'Nothing waits for you on GitHub.') : '');
+    const items = `${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}`;
+    const foot = v !== undefined
+      ? '<span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>Tab</kbd>into a folder</span><span><kbd>Shift</kbd><kbd>Tab</kbd>out of it</span><span><kbd>⏎</kbd>review a repository</span>'
+      : '<span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>⏎</kbd>choose</span><span>Paste any pull request’s link, or type a folder’s path from / or ~</span>';
     const body = `<div class="scrim" data-act="close-pal"></div><div class="pal pick" role="dialog" aria-label="Start a review">
       <div class="pal-in">${ICON.plus}<input id="pal-in" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a pull request’s link or a folder’s path, or search" value="${esc(P.q)}"><kbd>Esc</kbd></div>
-      <div class="pal-list">${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}</div>
-      <div class="pal-f"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>⏎</kbd>choose</span><span>Any pull request’s link works too, or a folder’s path</span></div>
+      <div class="pal-list">${items}</div>
+      <div class="pal-f">${foot}</div>
     </div>`;
     if (box) {
-      // Typing stays where it is: only the list is drawn again.
-      box.querySelector('.pal-list').innerHTML = `${h}${note ? `<p class="pal-note">${esc(note)}</p>` : ''}`;
+      // Typing stays where it is: only the list and the keys are drawn again.
+      box.querySelector('.pal-list').innerHTML = items;
+      box.querySelector('.pal-f').innerHTML = foot;
+      const on = box.querySelector('.pal-r.on');
+      if (on) on.scrollIntoView({ block: 'nearest' });
       return;
     }
     const div = document.createElement('div');
@@ -586,10 +643,13 @@
     P.open = true;
     P.q = '';
     P.hl = 0;
+    P.notice = '';
     P.stage = 'pick';
     P.addFor = null;
     S.menu = null;
     if (!P.agents) api('agents').then((d) => { P.agents = d; if (P.stage === 'start') palette(); }, () => {});
+    // The folders, each time: untangle keeps them a few seconds.
+    if (!addFor) api('folders').then((d) => { P.folders = d.folders; if (P.open && P.stage === 'pick') palette(); }, () => {});
     if (addFor) {
       const r = byId(addFor);
       if (r) return startForm({ target: r.target, num: r.name.replace(/^[^#]*#/, '#'), name: r.name, title: r.title, kind: r.kind, sub: `${r.repo}${r.author ? ' · ' + r.author : ''} · running` }, addFor);
@@ -669,8 +729,13 @@
 
   function choose(c) {
     if (!c) return;
+    // Only a repository is reviewed: any other folder, Tab goes into.
+    if (c.below && !c.below.dir) {
+      P.notice = `${c.below.name} isn’t a git repository: Tab goes into it`;
+      return palette();
+    }
     if (c.target && !c.id) {
-      if (c.folder) return startForm({ target: c.target, num: c.num, name: c.num, title: c.title, kind: null, sub: `${c.folder.repo ? c.folder.repo + ' · ' : ''}${c.folder.where}` });
+      if (c.folder) return startForm({ target: c.target, num: c.folder.name, name: c.folder.name, title: c.folder.branch || 'No branch checked out', kind: null, sub: [c.folder.repo, c.folder.where].filter(Boolean).join(' · ') });
       const m = PR_URL.exec(c.target);
       const pull = P.pulls ? [...P.pulls.asked, ...P.pulls.yours].find((p) => p.url === c.target) : null;
       const kt = /^([a-z]+)(?:\([^)]*\))?!?: (.+)$/.exec(pull ? pull.title : '');
@@ -893,9 +958,13 @@
       case 'close-pal':
         closePalette();
         break;
-      case 'choose':
-        choose(choices()[Number(b.dataset.i)]);
+      case 'choose': {
+        // A click goes into a folder that isn't a repository.
+        const c = choices()[Number(b.dataset.i)];
+        if (c && c.below && !c.below.dir) into(c.below);
+        else choose(c);
         break;
+      }
       case 'pal-back':
         P.stage = 'pick';
         $('#palette').remove();
@@ -951,6 +1020,7 @@
     if (e.target.id !== 'pal-in') return;
     P.q = e.target.value;
     P.hl = 0;
+    P.notice = '';
     lookFolder();
     palette();
   });
@@ -968,6 +1038,12 @@
       else if (e.key === 'ArrowDown') { e.preventDefault(); P.hl = Math.min(list.length - 1, P.hl + 1); palette(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); P.hl = Math.max(0, P.hl - 1); palette(); }
       else if (e.key === 'Enter') { e.preventDefault(); choose(list[P.hl]); }
+      else if (e.key === 'Tab' && pathSaid() !== undefined) {
+        e.preventDefault();
+        if (e.shiftKey) return outOf();
+        const c = list[P.hl] && list[P.hl].below ? list[P.hl] : list.find((x) => x.below);
+        if (c) into(c.below);
+      }
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;

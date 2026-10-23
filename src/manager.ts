@@ -2,15 +2,15 @@
 // while the page is open, asks each running review how it's doing. Reviews stay their own
 // processes: the manager only reads them, and does what the page asks with them.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
 import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
-import { cacheRoot, reviewDir, tilde, worktreeDir } from './cache.js';
+import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
 import { rehomeCheckouts } from './checkouts.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
+import { orcaFolder, pathView, worktreesOf, type Worktree } from './folders.js';
 import { launch, logTail } from './launcher.js';
 import { Narrator } from './narrate.js';
 import { openPage } from './open.js';
@@ -116,6 +116,8 @@ export interface Row {
   id: string;
   /** What starts it again: the pull request's link, or the directory. */
   target: string;
+  /** For a review of a folder, its repository's top folder. */
+  dir: string | null;
   name: string;
   title: string;
   kind: string | null;
@@ -186,6 +188,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
   return {
     id: `run:${run.pid}`,
     target: run.pr && m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : run.dir || '',
+    dir: run.pr ? null : run.dir,
     name: m ? `${m[2]}#${m[3]}` : (run.dir || '').split(/[\\/]/).pop() || 'review',
     title, kind,
     repo: pull?.repo ?? (m ? `${m[1]}/${m[2]}` : repoName(run.repoKey || '', run.dir)),
@@ -243,25 +246,6 @@ function nameOf(target: string): string {
   return m ? `${m[1]}#${m[2]}` : path.basename(target);
 }
 
-/** A folder the palette was given: the repository a review of it reads, by its top folder, and its branch. */
-export type Folder = { dir: string; name: string; where: string; repo: string | null; branch: string | null } | { error: string };
-
-/** The folder at a path pasted in the palette, ~ for your home, or why there's no review of it. */
-export function folderAt(p: string, home = os.homedir()): Folder {
-  const full = p.replace(/^~(?=$|[\\/])/, home);
-  if (!path.isAbsolute(full)) return { error: 'A folder’s whole path, from / or ~' };
-  let isDir = false;
-  try {
-    isDir = fs.statSync(full).isDirectory();
-  } catch {
-    // Nothing there, or nothing to read.
-  }
-  if (!isDir) return { error: `There’s no folder at ${p}` };
-  const w = wantedDir(full);
-  if (!w?.dir) return { error: `${p} isn’t in a git repository` };
-  return { dir: w.dir, name: path.basename(w.dir), where: tilde(w.dir), repo: w.repoKey ? w.repoKey.replace(/^github\.com\//, '') : null, branch: w.branch };
-}
-
 /** A pull request the palette offers: its repository, number, title and author, and when it last moved. */
 export interface Pull { repo: string; number: number; title: string; author: string; url: string; updated: string; draft: boolean }
 
@@ -282,6 +266,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
   return {
     id: idOf(r),
     target: r.target,
+    dir: r.pr ? null : r.dir,
     name: shortName(r),
     title,
     kind,
@@ -445,6 +430,32 @@ export class Manager {
     }
     this.pullsKept = { at: Date.now(), value };
     return value;
+  }
+
+  // The worktrees for the palette, looked for at most every 15 seconds; Orca's projects among
+  // them, asked of Orca at most every 5 minutes, as its answer takes a few seconds.
+  private worktreesKept: { at: number; value: Promise<Worktree[]> } | null = null;
+  private projectsKept: { at: number; value: Promise<string[]> } | null = null;
+
+  /**
+   * The worktrees on a branch of the repositories untangle knows: those it reviewed folders of,
+   * the one it was started in, and Orca's projects, when Orca is here.
+   */
+  async folders(): Promise<{ folders: Worktree[] }> {
+    if (!this.worktreesKept || Date.now() - this.worktreesKept.at > 15_000) {
+      const known = [...listRecords().map((r) => r.dir), ...listRuns().map((r) => r.dir), process.cwd()].filter((d): d is string => !!d);
+      this.worktreesKept = { at: Date.now(), value: this.projects().then((more) => worktreesOf([...known, ...more], cacheRoot())) };
+    }
+    return { folders: await this.worktreesKept.value };
+  }
+
+  private projects(): Promise<string[]> {
+    const cli = orcaCli();
+    if (!cli) return Promise.resolve([]);
+    if (!this.projectsKept || Date.now() - this.projectsKept.at > 300_000) {
+      this.projectsKept = { at: Date.now(), value: orca(['repo', 'list'], cli).then((a) => ((a.result?.repos ?? []) as Array<{ path?: unknown; kind?: unknown }>).filter((r) => typeof r.path === 'string' && r.kind !== 'folder').map((r) => orcaFolder(r.path as string)).filter((d): d is string => !!d)) };
+    }
+    return this.projectsKept.value;
   }
 
   /** A pull request the palette listed, by the key run files keep: owner/repo#n. */
@@ -835,7 +846,8 @@ export class Manager {
     if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid, built: BUILT, busy: this.busy } };
     if (route === 'reviews' && method === 'GET') return { data: await this.view() };
     if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
-    if (route === 'folder' && method === 'GET') return { data: folderAt(query.get('path') ?? '') };
+    if (route === 'folder' && method === 'GET') return { data: pathView(query.get('path') ?? '') };
+    if (route === 'folders' && method === 'GET') return { data: await this.folders() };
     if (route === 'agents' && method === 'GET') return { data: { ...agentOptions(), orca: !!orcaCli() } };
     if (route === 'start' && method === 'POST' && typeof (b as { target?: unknown }).target === 'string') return this.start((b as { target: string }).target.trim(), agentFrom((b as { agent?: unknown }).agent));
     if (route === 'tail' && method === 'GET') {

@@ -190,11 +190,13 @@ when one needs you.
 
 ### Start a review with its agent
 
-New review lists the pull requests GitHub asks you to review and your own. Pick one, or paste any
-pull request's link or a folder's path, and choose Claude or Codex: the review opens, and the agent's chat starts
-next to it, already holding the review. Ask for an initial review, and the agent's findings come
-in as notes on the lines they're about. Inside Orca, the review opens beside the reviews page,
-and the agent's chat in a workspace of its own, Reviews.
+New review lists the pull requests GitHub asks you to review and your own, and your worktrees: those
+of the repositories you reviewed folders of, and of Orca's projects. Pick one, or paste any pull
+request's link. Or type a folder's path, from / or ~/: it lists the folders in it, Tab goes into
+one, and Enter reviews a repository. Then choose Claude or Codex: the review opens, and the agent's
+chat starts next to it, already holding the review. Ask for an initial review, and the agent's
+findings come in as notes on the lines they're about. Inside Orca, the review opens beside the
+reviews page, and the agent's chat in a workspace of its own, Reviews.
 
 ![New review: #125 picked, to start with Claude in a new chat, with an initial review requested](docs/images/new-review.png)
 
