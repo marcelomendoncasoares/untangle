@@ -1087,8 +1087,11 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
 .th-talk[aria-expanded="true"] { background: none; padding-left: 4px; }
 .th-talk:hover { color: var(--text); }
 /* An agent's draft, pending and as it wrote it: it asks to be made yours. The thread's gutter turns
-   amber beside it, and back. */
-.cm.drafted::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: linear-gradient(transparent, var(--accent) 8px, var(--accent) calc(100% - 8px), transparent); pointer-events: none; }
+   amber beside it, drawn as the thread's blue is and over a strip of the thread's ground, so that no
+   blue shows at its edge at any zoom; at the thread's ends it rounds with it. */
+.cm.drafted { box-shadow: inset 2px 0 0 var(--accent), inset 3px 0 0 var(--raised); }
+.th > .cm.drafted:first-child { border-top-left-radius: 10px; }
+.th > .cm.drafted:last-child { border-bottom-left-radius: 10px; }
 .cm-tag.draft { color: var(--accent-ink); background: transparent; box-shadow: inset 0 0 0 1px rgba(233, 180, 76, .6); }
 .cm-tag.ask { color: var(--gh); background: var(--gh-soft); }
 /* Comment this, and Ask: the tools that cross between a note and GitHub, with their words. */
@@ -1255,7 +1258,6 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
 .cm.folded .cm-folded { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv > .cm.cv-sum { box-shadow: inset 0 0 0 1px rgba(233, 180, 76, .3); }
 .conv > .cm.cv-sum.drafted { box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px rgba(233, 180, 76, .3); }
-.conv > .cm.cv-sum.drafted::before { content: none; }
 .cv-sum-f { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .cv-sum .muted { font-size: 12px; }
 .th.note.gh { box-shadow: inset 2px 0 0 var(--gh); }
