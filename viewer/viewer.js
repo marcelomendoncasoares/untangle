@@ -3258,6 +3258,24 @@
     }
     return h + composerHtml('agent', { local: true, rows: 2, placeholder: `Write to ${a.name} about the review`, buttons: [['Add note', 'data-act="nt-review-add"', true]] });
   }
+  // The tab's icon while an agent works on the review: untangle's square with a circle going round
+  // in it, so the tab says so from behind others. A browser doesn't play an SVG icon, so its frames
+  // take turns; with less motion asked for, the circle stays still.
+  const TAB_ICON = document.querySelector('link[rel="icon"]');
+  const TAB_REST = TAB_ICON ? TAB_ICON.getAttribute('href') : '';
+  const TAB_FRAMES = Array.from({ length: 12 }, (_, i) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='#0B0B0D'/><circle cx='16' cy='16' r='9' fill='none' stroke='#E9B44C' stroke-opacity='.3' stroke-width='3'/><path d='M16 7A9 9 0 0 1 23.79 20.5' fill='none' stroke='#E9B44C' stroke-width='3' stroke-linecap='round' transform='rotate(${i * 30} 16 16)'/></svg>`));
+  const TAB_STILL = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+  let tabWorks = false, tabTurning = 0, tabFrame = 0;
+  function tabIcon(works) {
+    if (!TAB_ICON || works === tabWorks) return;
+    tabWorks = works;
+    clearInterval(tabTurning);
+    tabTurning = 0;
+    if (!works) { TAB_ICON.setAttribute('href', TAB_REST); return; }
+    const turn = () => { tabFrame = (tabFrame + 1) % TAB_FRAMES.length; TAB_ICON.setAttribute('href', TAB_FRAMES[tabFrame]); };
+    turn();
+    if (!TAB_STILL.matches) tabTurning = setInterval(turn, 100);
+  }
   // The bar's labels, one per agent holding the review: where its chat is. Each opens its menu.
   let agentDrawn = '';
   function renderAgent() {
@@ -3265,6 +3283,8 @@
     if (!el) return;
     sheetTouch(el);
     const list = agentsNow();
+    // In a turn: working, or busy with a line from untangle waiting for its next one.
+    tabIcon(list.some((a) => a.state === 'working' || (a.state === 'queued' && a.busy === true)));
     el.hidden = !list.length;
     if (NT.agentOpen && !list.some((a) => a.name === NT.agentOpen)) NT.agentOpen = null;
     const h = list.map((a) => {

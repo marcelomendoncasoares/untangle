@@ -17,6 +17,8 @@ const ada = (date: string): Person => ({ name: 'Ada Review', email: 'ada@example
 // The bar's label for the agent, and its menu when it's open: its title, what it says, its line and
 // its buttons, then what its box for a note on the review asks.
 const label = `(() => { const b = document.querySelector('.vw-agent'); return b ? b.className.replace('vw-agent ', '') + ' | ' + b.textContent.trim() : 'none'; })()`;
+// The tab's icon: untangle's, or the circle that goes round while an agent works.
+const tabIcon = `document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle') ? 'working' : 'untangle'`;
 const menu = `(() => { const m = document.querySelector('.ag-pop'); return m ? [m.querySelector('h4').textContent, m.querySelector('.ag-line')?.textContent ?? '', ...[...m.querySelectorAll('.rv-f button')].map((b) => b.textContent), m.querySelector('textarea[data-draft="agent"]')?.placeholder ?? 'no box'].join(' | ') : 'none'; })()`;
 
 describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, timeout: 300_000 }, () => {
@@ -80,11 +82,11 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
       session(chat, 'busy');
       watching = watch();
       await page!.until(`document.querySelector('.vw-agent')?.textContent.includes('listening')`, 30_000);
-      shown = await read(page!, label);
+      shown = await read(page!, `${label} + ' | ' + (${tabIcon})`);
     });
 
-    it('then the bar says Claude is listening.', () => {
-      assert.equal(shown, 'st-listening | Claude is listening');
+    it('then the bar says Claude is listening, and the tab shows untangle’s icon.', () => {
+      assert.equal(shown, 'st-listening | Claude is listening | untangle');
     });
 
     describe('and the watch brings a note while its chat is busy, ', () => {
@@ -92,11 +94,11 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
         await note(2, 'Say hello, not hi?');
         await watching;
         await page!.until(`document.querySelector('.vw-agent')?.textContent.includes('working')`, 10_000);
-        shown = await read(page!, label);
+        shown = await read(page!, `${label} + ' | ' + (${tabIcon})`);
       });
 
-      it('then Claude is working on it.', () => {
-        assert.equal(shown, 'st-working | Claude is working on N1');
+      it('then Claude is working on it, and the tab’s icon is a circle going round.', () => {
+        assert.equal(shown, 'st-working | Claude is working on N1 | working');
       });
     });
   });
@@ -107,7 +109,7 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
     before(async () => {
       session(chat, 'idle');
       await page!.until(`document.querySelector('.vw-agent')?.classList.contains('st-deaf')`, 10_000);
-      deaf = await read(page!, label);
+      deaf = await read(page!, `${label} + ' | ' + (${tabIcon})`);
       await page!.click('[data-tab="files"]');
       await page!.until(`!!document.querySelector('[data-open="lib/app.dart"]')`);
       await page!.click('[data-open="lib/app.dart"]');
@@ -126,7 +128,7 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
 
     it('then the bar says Claude isn’t listening, the note reaches no one, and the menu opens, offering to wake Claude with the line for its chat.', () => {
       assert.deepEqual([deaf, saved, opened], [
-        'st-deaf | Claude isn’t listening',
+        'st-deaf | Claude isn’t listening | untangle',
         'Note saved. Claude isn’t listening | no one is listening',
         'Claude isn’t listening | Wake types into its chat, in Orcauntangle: 1 new note on the review of feature. Run untangle watch to read it. | Copy for agent | Wake Claude | Write to Claude about the review',
       ]);
