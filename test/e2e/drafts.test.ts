@@ -58,7 +58,7 @@ async function fill(page: Browser, selector: string, text: string): Promise<void
 
 // A thread or note as the page shows it: each comment's mark (N1, GitHub's), tags and text, and
 // the folded talk's line.
-const shown = (selector: string) => `(() => { const th = document.querySelector(${JSON.stringify(selector)}); if (!th) return 'none'; return [...th.children].filter((el) => el.matches('.cm, .th-talk')).map((el) => el.matches('.th-talk') ? 'talk: ' + el.textContent.replace(/\\s+/g, ' ').trim() : [el.querySelector('.nt-n')?.textContent ?? '', el.querySelector('.cm-who')?.textContent ?? '', ...[...el.querySelectorAll('.cm-tag')].map((tag) => '(' + tag.textContent + ')'), el.matches('.drafted') ? '[dashed]' : '', '- ' + (el.querySelector('.cm-body')?.textContent ?? '').trim()].filter(Boolean).join(' ')).join(' / '); })()`;
+const shown = (selector: string) => `(() => { const th = document.querySelector(${JSON.stringify(selector)}); if (!th) return 'none'; return [...th.children].filter((el) => el.matches('.cm, .th-talk')).map((el) => el.matches('.th-talk') ? 'talk: ' + el.textContent.replace(/\\s+/g, ' ').trim() : [el.querySelector('.nt-n')?.textContent ?? '', el.querySelector('.cm-who')?.textContent ?? '', ...[...el.querySelectorAll('.cm-tag')].map((tag) => '(' + tag.textContent + ')'), getComputedStyle(el, '::before').backgroundImage.includes('gradient') ? '[amber gutter]' : '', '- ' + (el.querySelector('.cm-body')?.textContent ?? '').trim()].filter(Boolean).join(' ')).join(' / '); })()`;
 
 function posted(gh: GhStub, mutation: string): string {
   const call = [...gh.calls()].reverse().find((item) => item.stdin.includes(`${mutation}(input:`));
@@ -179,8 +179,8 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
       ]);
     });
 
-    it('then the thread holds the talk, folded, and the draft, pending, marked a draft and dashed.', () => {
-      assert.equal(thread, `talk: N1 · 3 notes with Claude · only here / grace (Author) (Pending) (Draft) [dashed] - ${draft}`);
+    it('then the thread holds the talk, folded, and the draft, pending, marked a draft, the gutter amber beside it.', () => {
+      assert.equal(thread, `talk: N1 · 3 notes with Claude · only here / grace (Author) (Pending) (Draft) [amber gutter] - ${draft}`);
     });
   });
 
