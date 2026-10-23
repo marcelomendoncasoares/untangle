@@ -226,16 +226,19 @@ a.t-pr:hover { text-decoration: underline; text-decoration-color: var(--text-3);
 .st-deaf .dot { background: none; box-shadow: inset 0 0 0 1.5px var(--text-3); }
 .vw-agent.st-left { background: var(--raised); color: var(--text-3); }
 .st-left .dot { background: var(--text-4); }
-/* An agent's menu: where its chat is, what reaches it, and Wake while nothing listens there. */
-.ag-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); padding: 14px; border-radius: 10px; background: var(--raised); box-shadow: var(--float); color: var(--text-2); font: 400 12.5px/1.5 var(--ui); white-space: normal; text-align: left; }
+/* An agent's menu: where its chat is, what reaches it, Wake while nothing listens there, and a box
+   for a note on the review. Taller than the window has room for, it scrolls. */
+.ag-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); overflow-y: auto; overscroll-behavior: contain; padding: 14px; border-radius: 10px; background: var(--raised); box-shadow: var(--float); color: var(--text-2); font: 400 12.5px/1.5 var(--ui); white-space: normal; text-align: left; }
 .ag-pop h4 { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--text); font: 600 13px/1.3 var(--ui); }
-.ag-pop p { margin: 0; }
-.ag-pop code { padding: .1em .3em; border-radius: 4px; background: var(--hover); color: var(--text); font: 500 11.5px var(--code); }
+.ag-pop > p { margin: 0; }
+.ag-pop > p code { padding: .1em .3em; border-radius: 4px; background: var(--hover); color: var(--text); font: 500 11.5px var(--code); }
 .ag-pop .ag-who { color: var(--text-3); font: 500 11.5px/1.45 var(--code); }
 .ag-line { padding: 8px 10px; border-radius: 8px; background: var(--sheet); color: var(--text); font: 400 11.5px/1.5 var(--code); box-shadow: inset 2px 0 0 var(--local); overflow-wrap: anywhere; }
 .ag-line small { display: block; margin-bottom: 5px; color: var(--text-3); font: 600 10px/1 var(--ui); letter-spacing: .07em; text-transform: uppercase; }
 .ag-pop .cmp-err { margin: 0; }
 .ag-pop .rv-f .btn:not(.primary) { background: var(--hover); }
+/* The box for a note on the review starts at two lines, and grows with what's written. */
+.ag-pop .cmp-ta, .ag-pop .cmp-pre { min-height: 60px; }
 .vw-review[hidden] { display: none; }
 .vw-body { display: grid; grid-template-columns: var(--side-w) 0 minmax(0, 1fr); min-height: 0; }
 .vw.side-off .vw-body { grid-template-columns: 0 0 minmax(0, 1fr); }

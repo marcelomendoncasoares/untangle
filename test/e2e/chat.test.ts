@@ -14,9 +14,10 @@ import { read } from './page.ts';
 const skip = e2eSkip();
 const ada = (date: string): Person => ({ name: 'Ada Review', email: 'ada@example.com', date });
 
-// The bar's label for the agent, and its menu when it's open: its title, what it says, its line and its buttons.
+// The bar's label for the agent, and its menu when it's open: its title, what it says, its line and
+// its buttons, then what its box for a note on the review asks.
 const label = `(() => { const b = document.querySelector('.vw-agent'); return b ? b.className.replace('vw-agent ', '') + ' | ' + b.textContent.trim() : 'none'; })()`;
-const menu = `(() => { const m = document.querySelector('.ag-pop'); return m ? [m.querySelector('h4').textContent, m.querySelector('.ag-line')?.textContent ?? '', ...[...m.querySelectorAll('button')].map((b) => b.textContent)].join(' | ') : 'none'; })()`;
+const menu = `(() => { const m = document.querySelector('.ag-pop'); return m ? [m.querySelector('h4').textContent, m.querySelector('.ag-line')?.textContent ?? '', ...[...m.querySelectorAll('.rv-f button')].map((b) => b.textContent), m.querySelector('textarea[data-draft="agent"]')?.placeholder ?? 'no box'].join(' | ') : 'none'; })()`;
 
 describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, timeout: 300_000 }, () => {
   let repo: TempRepo | undefined;
@@ -127,7 +128,7 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
       assert.deepEqual([deaf, saved, opened], [
         'st-deaf | Claude isn’t listening',
         'Note saved. Claude isn’t listening | no one is listening',
-        'Claude isn’t listening | Wake types into its chat, in Orcauntangle: 1 new note on the review of feature. Run untangle watch to read it. | Copy for agent | Wake Claude',
+        'Claude isn’t listening | Wake types into its chat, in Orcauntangle: 1 new note on the review of feature. Run untangle watch to read it. | Copy for agent | Wake Claude | Write to Claude about the review as a whole',
       ]);
     });
 
@@ -177,6 +178,30 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
 
     it('then its words are on the clipboard as Claude wrote them, and a toast says so.', () => {
       assert.equal(copied, 'Name the parameter person? | Claude’s note, N3, copied');
+    });
+  });
+
+  describe('when its label is clicked, and a note written in the menu’s box, ', () => {
+    let typing = '', saved = '', note: unknown;
+
+    before(async () => {
+      await page!.click('.vw-agent');
+      await page!.until(`document.activeElement?.dataset.draft === 'agent'`);
+      typing = await read(page!, `document.activeElement.placeholder`);
+      await page!.type('Start from the tests, then the greeting?');
+      await page!.key('Enter', { ctrl: true });
+      await page!.until(`(document.querySelector('#vw-toast')?.textContent ?? '').startsWith('Note saved') && document.querySelector('.ag-pop textarea')?.value === ''`, 10_000);
+      saved = await read(page!, `[document.querySelector('#vw-toast').textContent, document.activeElement?.dataset.draft ?? 'no focus', document.querySelector('.ag-pop') ? 'open' : 'closed'].join(' | ')`);
+      const n4 = ((await client.call('notes')).data as { notes: Array<{ n: number; review?: boolean; comments: Array<{ by: string | null; body: string }> }> }).notes.find((x) => x.n === 4);
+      note = n4 && { review: n4.review, comments: n4.comments.map((c) => [c.by, c.body]) };
+    });
+
+    it('then the box takes the keys as the menu opens, and the note is on the review, yours, with the menu open and its box empty for the next.', () => {
+      assert.deepEqual([typing, saved, note], [
+        'Write to Claude about the review as a whole',
+        'Note saved, queued to Claude | agent | open',
+        { review: true, comments: [[null, 'Start from the tests, then the greeting?']] },
+      ]);
     });
   });
 

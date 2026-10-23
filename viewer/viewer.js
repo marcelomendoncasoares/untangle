@@ -2221,6 +2221,8 @@
     // Runs of talk in a thread, opened though a comment follows them.
     unfold: new Set(),
     reveal: null, opening: null, openingTimer: null, seenAgents: new Set(), agentOpen: null,
+    // An agent's menu just opened from its label: its box takes the keys.
+    agentFocus: false,
   };
   // GitHub can take comments: the review has a pull request, and gh answered (or hasn't yet).
   const ghCan = () => GH.on && !(GH.error && !GH.data);
@@ -3227,7 +3229,8 @@
       + `<button type="button" class="btn sm primary" data-act="nt-copy"${ntScoped(d.scope).length ? '' : ' disabled'}>Copy for agent</button></div>`;
     return h;
   }
-  // An agent's menu: where its chat is and what reaches it, and Wake while nothing listens there.
+  // An agent's menu: where its chat is and what reaches it, Wake while nothing listens there, and a
+  // box for a note on the review, which reaches it as one written in the review's thread does.
   function agentPopHtml(a) {
     const watch = '<code>untangle watch</code>', name = esc(a.name);
     const nobody = NT.data.notes.filter((n) => !n.resolved && n.status === 'nobody').map((n) => n.n);
@@ -3253,9 +3256,10 @@
       h += `<div class="rv-f"><button type="button" class="btn sm" data-act="nt-copy">Copy for agent</button>`
         + (a.wake ? `<button type="button" class="btn sm primary" data-act="nt-wake" data-agent="${name}"${ntBusyAttr('wake:' + a.name)}>${NT.busy === 'wake:' + a.name ? 'Waking…' : `Wake ${name}`}</button>` : '') + '</div>';
     }
-    return h;
+    return h + composerHtml('agent', { local: true, rows: 2, placeholder: `Write to ${a.name} about the review as a whole`, buttons: [['Add note', 'data-act="nt-review-add"', true]] });
   }
   // The bar's labels, one per agent holding the review: where its chat is. Each opens its menu.
+  let agentDrawn = '';
   function renderAgent() {
     const el = $('#vw-agent');
     if (!el) return;
@@ -3269,13 +3273,33 @@
         + (open ? `<div class="ag-pop st-${a.state}" role="dialog" aria-label="${label}">${compact() ? SHEET_HANDLE : ''}${agentPopHtml(a)}</div>` : '') + '</span>';
     }).join('');
     layerSoon();
-    if (el.innerHTML === h) return;
-    // The button that had the focus keeps it as the labels are drawn again.
-    const ae = el.contains(document.activeElement) ? document.activeElement : null;
-    const sel = ae && ae.dataset.act ? `[data-act="${ae.dataset.act}"]${ae.dataset.agent ? `[data-agent="${CSS.escape(ae.dataset.agent)}"]` : ''}` : null;
-    el.innerHTML = h;
-    const again = sel && el.querySelector(sel);
-    if (again) again.focus({ preventScroll: true });
+    // What's typed in the menu's box doesn't draw it again: the box keeps its words, caret and size.
+    const drawn = h.replace(/(<textarea\b[^>]*>)[^<]*/g, '$1');
+    if (drawn === agentDrawn) {
+      // A note just added empties it.
+      const box = el.querySelector('textarea[data-draft]'), text = box ? drafts.get(box.dataset.draft) || '' : '';
+      if (box && box.value !== text) { box.value = text; fitBox(box); }
+    } else {
+      agentDrawn = drawn;
+      // What had the focus keeps it as the labels are drawn again: a button, or the box with its
+      // caret. In a menu that closed, it goes back to the menu's label.
+      const ae = el.contains(document.activeElement) ? document.activeElement : null;
+      const typing = ae && ae.dataset.draft != null ? [ae.selectionStart, ae.selectionEnd, ae.scrollTop] : null;
+      const sel = !ae ? null : typing ? 'textarea[data-draft]' : ae.dataset.act ? `[data-act="${ae.dataset.act}"]${ae.dataset.agent ? `[data-agent="${CSS.escape(ae.dataset.agent)}"]` : ''}${ae.dataset.pane ? `[data-pane="${ae.dataset.pane}"]` : ''}` : null;
+      const from = ae && ae.closest('.ag-pop') ? ae.closest('.vw-agent-w').querySelector('.vw-agent').dataset.agent : null;
+      el.innerHTML = h;
+      fitBoxes(el);
+      const again = (sel && el.querySelector(sel)) || (from != null && el.querySelector(`.vw-agent[data-agent="${CSS.escape(from)}"]`));
+      if (again) again.focus({ preventScroll: true });
+      if (again && typing && again.matches('textarea')) { again.setSelectionRange(typing[0], typing[1]); again.scrollTop = typing[2]; }
+    }
+    // Opened from its label, the menu's box takes the keys; not on a touch screen, where the
+    // keyboard would come up over the menu.
+    if (NT.agentFocus) {
+      NT.agentFocus = false;
+      const ta = el.querySelector('.ag-pop textarea[data-draft]');
+      if (ta && !COARSE.matches) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
   }
   let toastTimer = null;
   // ---------- Reviews: the others on this machine, from this one. untangle reads them as its
@@ -7492,7 +7516,7 @@
       const k = NT.data ? NT.data.held : 0, a = agentFirst();
       return ntAct('send', { action: 'send' }, () => toast(`${k} held comment${k === 1 ? '' : 's'} sent${a ? ` to ${a.name}` : ''}`));
     }
-    if (act === 'nt-agent') { NT.agentOpen = NT.agentOpen === d.agent ? null : d.agent; return renderAgent(); }
+    if (act === 'nt-agent') { NT.agentOpen = NT.agentOpen === d.agent ? null : d.agent; NT.agentFocus = !!NT.agentOpen; return renderAgent(); }
     if (act === 'nt-wake') {
       // untangle types the line into the agent's chat, in Orca, as if you had.
       const key = 'wake:' + d.agent;
@@ -7517,7 +7541,7 @@
     if (e.target.matches && e.target.matches('.cmp-ta, .rv-ta')) fitBox(e.target);
     const k = e.target.dataset && e.target.dataset.draft;
     // @ and # come from GitHub: not for notes.
-    if (k != null) { setDraft(k, e.target.value); if (GH.on && !/^n(reply|edit):/.test(k) && !(localMode() && /^(new|file|reply):/.test(k))) mentionUpdate(e.target); }
+    if (k != null) { setDraft(k, e.target.value); if (GH.on && !/^(n(reply|edit):|agent$)/.test(k) && !(localMode() && /^(new|file|reply):/.test(k))) mentionUpdate(e.target); }
     if (e.target.matches && e.target.matches('[data-nt-opening]')) {
       NT.opening = e.target.value;
       clearTimeout(NT.openingTimer);

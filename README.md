@@ -157,7 +157,9 @@ When an agent wrote the code, keep your comments as local notes for it. With the
 [untangle skill](#with-a-coding-agent), ask in its chat, "review this in untangle": the review
 opens, your notes reach the agent as you write them, and it answers in their threads, commits and
 resolves what it fixed. Ask for its review too, and it writes notes of its own. It works with
-Claude and Codex, and *Copy for agent* takes the notes to any other chat.
+Claude and Codex, and *Copy for agent* takes the notes to any other chat. The agent's label, in the
+top bar, says what its chat is doing, and its menu takes a note on the review as a whole, for what
+has no line.
 
 An open pull request reviewed from its link gets a working copy of its branch, set up to push to
 it. The agent makes the changes your notes ask for there and commits them, the review follows its
