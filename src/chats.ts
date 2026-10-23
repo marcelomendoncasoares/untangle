@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { orcaHere } from './orca.js';
 
 export interface Chat {
   kind: 'claude' | 'codex';
@@ -94,7 +95,8 @@ export function chatOf(env: NodeJS.ProcessEnv = process.env): Chat | null {
     : codexAt >= 0 ? 'codex'
       : env.CODEX_THREAD_ID ? 'codex' : env.CLAUDE_CODE_SESSION_ID ? 'claude' : null;
   if (!kind) return null;
-  const orca = env.ORCA_TERMINAL_HANDLE && env.ORCA_CLI_COMMAND ? which(env.ORCA_CLI_COMMAND, env) : null;
+  const cli = env.ORCA_TERMINAL_HANDLE ? orcaHere(env) : null;
+  const orca = cli ? which(cli, env) : null;
   const where = { orca: orca ? { cli: orca, handle: env.ORCA_TERMINAL_HANDLE!, pane: env.ORCA_PANE_KEY || null } : null };
   if (kind === 'claude') {
     const p = claudeAt >= 0 ? chain[claudeAt] : claudePid ? proc(claudePid) : null;

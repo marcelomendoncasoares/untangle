@@ -1,20 +1,30 @@
 // Orca's command line, as untangle's manager uses it: to bring a review's tab or its chat's
 // terminal to the front, to find where its own page is open, and to start chats in the Reviews
-// workspace. Orca exports its command to
-// the terminals it runs (ORCA_CLI_COMMAND); elsewhere on Linux it's orca-ide, since a bare orca
-// there is often the screen reader.
+// workspace. Orca names its command to the terminals it runs: ORCA_CLI_COMMAND in WSL, and the
+// folder it's in (ORCA_CLI_BIN_DIR) on macOS and Linux. Elsewhere on Linux it's orca-ide, since a
+// bare orca there is often the screen reader.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { has } from './exec.js';
 
 /**
- * Orca's command, when there is one to run: the one Orca's terminals export, or Orca's own on
+ * The command of the Orca whose terminal untangle runs in, as Orca names it: ORCA_CLI_COMMAND,
+ * else the orca in ORCA_CLI_BIN_DIR. Null outside Orca.
+ */
+export function orcaHere(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.ORCA_CLI_COMMAND) return env.ORCA_CLI_COMMAND;
+  const cli = env.ORCA_CLI_BIN_DIR ? path.join(env.ORCA_CLI_BIN_DIR, 'orca') : null;
+  return cli && fs.existsSync(cli) ? cli : null;
+}
+
+/**
+ * Orca's command, when there is one to run: the one Orca's terminals name, or Orca's own on
  * PATH. UNTANGLE_NO_ORCA keeps untangle off the one on PATH (its tests set it), so only a
  * terminal Orca runs leads it to Orca.
  */
 export function orcaCli(env: NodeJS.ProcessEnv = process.env): string | null {
-  const cli = env.ORCA_CLI_COMMAND || (env.UNTANGLE_NO_ORCA ? null : process.platform === 'linux' ? 'orca-ide' : 'orca');
+  const cli = orcaHere(env) || (env.UNTANGLE_NO_ORCA ? null : process.platform === 'linux' ? 'orca-ide' : 'orca');
   return cli && has(cli) ? cli : null;
 }
 

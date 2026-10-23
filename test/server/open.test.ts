@@ -168,4 +168,32 @@ describe('Given a repository, in an Orca terminal whose CLI is a stub, ', () => 
       assert.equal(others, '');
     });
   });
+
+  describe('when Orca names only the folder its CLI is in, as it does on macOS and Linux, ', () => {
+    let run: UntangleRun | undefined;
+    let calls: string[][] = [];
+
+    before(async () => {
+      fs.writeFileSync(log, '');
+      run = await startUntangle(repo!.dir, {
+        base: 'main',
+        cacheDir: cache,
+        gh,
+        open: true,
+        quiet: false,
+        args: ['-verbose'],
+        env: { ORCA_CLI_BIN_DIR: dir, ORCA_WORKTREE_ID: 'wt-9' },
+      });
+      await said(run, 'opened in Orca’s browser');
+      calls = fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    });
+
+    after(async () => {
+      await run?.stop();
+    });
+
+    it('then the orca in that folder is asked for a tab in this worktree.', () => {
+      assert.deepEqual(calls[0], ['tab', 'create', '--url', run!.url, '--worktree', 'id:wt-9', '--json']);
+    });
+  });
 });

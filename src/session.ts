@@ -10,6 +10,7 @@ import { ghReady, GitHubError, PullRequestConversation, type Action, type Commit
 import type { NotesContext, Side as NoteSide } from './notes.js';
 import { broughtBy, hasCommit, reviewedHead, sinceRows, type History } from './history.js';
 import { git, gitAsync, gitMaybe, runAsync } from './exec.js';
+import { orcaHere } from './orca.js';
 import { fileHunks, generatedPatterns, parseHunks } from './pipeline/diff.js';
 import { writeAtomic } from './server.js';
 import { marksRef, moveMarks, Snapshot } from './snapshot.js';
@@ -31,7 +32,7 @@ export type Editor = { mode: 'uri'; template: string } | { mode: 'command'; temp
 export function editorFrom(option: string | null): Editor {
   const t = option || process.env.UNTANGLE_EDITOR || '';
   if (t) return t.includes('://') ? { mode: 'uri', template: t } : { mode: 'command', template: t };
-  const orca = process.env.ORCA_CLI_COMMAND || (process.env.ORCA_DEV_REPO_ROOT ? 'orca-dev' : process.env.ORCA_WORKTREE_ID ? (process.platform === 'linux' ? 'orca-ide' : 'orca') : null);
+  const orca = orcaHere() || (process.env.ORCA_DEV_REPO_ROOT ? 'orca-dev' : process.env.ORCA_WORKTREE_ID ? (process.platform === 'linux' ? 'orca-ide' : 'orca') : null);
   if (orca) return { mode: 'orca', command: orca };
   const wsl = process.env.WSL_DISTRO_NAME;
   return { mode: 'uri', template: wsl ? `vscode://vscode-remote/wsl+${wsl}{file}:{line}:{col}` : 'vscode://file{file}:{line}:{col}' };

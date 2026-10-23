@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { has } from './exec.js';
+import { orcaHere } from './orca.js';
 
 const isWsl = () => {
   try {
@@ -60,7 +61,7 @@ const pageOf = (json: string): string | null => {
 // on screen when the worktree is, and waiting there when another is. The tab's page, which brings it
 // back later; false when Orca isn't there or didn't open it.
 async function inOrca(url: string, at: Beside = {}): Promise<{ page: string | null } | false> {
-  const cli = at.cli || process.env.ORCA_CLI_COMMAND;
+  const cli = at.cli || orcaHere();
   if (!cli || !has(cli)) return false;
   const id = at.worktree || process.env.ORCA_WORKTREE_ID;
   const worktree = id ? ['--worktree', 'id:' + id] : [];
