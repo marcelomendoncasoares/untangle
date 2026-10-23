@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
-import { reviewPage, type PageConfig } from '../../dist/page.js';
+import { progressPage, reviewPage, type PageConfig } from '../../dist/page.js';
 import type { ReviewData } from '../../dist/build.js';
 
 const placeholders = ['/*TITLE*/', '<!--FONTS-->', '<!--HIGHLIGHT-->', '/*CORE*/', '/*CONFIG*/', '/*MODEL*/', '/*DEFS*/', '/*REFS*/', '/*DEFSOLD*/', '/*HISTORY*/', '/*VIEWER*/'];
@@ -52,6 +52,16 @@ describe('Given a review whose data contains "</script>", ', () => {
 
     it('then the title is in the document.', () => {
       assert.equal(/<title>([^<]*)<\/title>/.exec(html)?.[1], 'A &lt;review&gt; · untangle');
+    });
+  });
+});
+
+describe('Given the page a review shows while it is built, ', () => {
+  describe('when it is rendered, ', () => {
+    it('then it has the review page’s icon, so the tab shows it from the start.', () => {
+      const icon = (html: string) => /<link rel="icon" href="[^"]+">/.exec(html)?.[0];
+      assert.ok(icon(progressPage()));
+      assert.equal(icon(progressPage()), icon(reviewPage(review(''), 'A review', 'served')(config)));
     });
   });
 });
