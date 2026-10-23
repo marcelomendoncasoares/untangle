@@ -103,7 +103,7 @@ export async function reviewsWorkspace(root: string, cli = orcaCli()): Promise<{
     fs.writeFileSync(path.join(folder, 'README.md'), 'The chats of your untangle reviews run here: untangle reviews starts them.\n');
     const env = { ...process.env, GIT_AUTHOR_NAME: 'untangle', GIT_AUTHOR_EMAIL: 'untangle@localhost', GIT_COMMITTER_NAME: 'untangle', GIT_COMMITTER_EMAIL: 'untangle@localhost' };
     for (const args of [['init', '-q', '-b', 'main'], ['add', 'README.md'], ['commit', '-q', '--no-gpg-sign', '-m', 'The Reviews workspace']]) {
-      if (spawnSync('git', ['-C', folder, ...args], { env, stdio: 'ignore' }).status !== 0) return null;
+      if (spawnSync('git', ['-C', folder, ...args], { env, stdio: 'ignore', windowsHide: true }).status !== 0) return null;
     }
   }
   // Added before: the worktree Orca gave it, when Orca still has it.

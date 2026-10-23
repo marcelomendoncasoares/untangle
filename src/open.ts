@@ -38,7 +38,7 @@ function command(url: string): { cmd: string; args: string[]; cwd?: string } | n
 function orca(cli: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     let out = '';
-    const child = spawn(cli, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(cli, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     child.stdout.on('data', (chunk) => { out += chunk; });
     const timer = setTimeout(() => { child.kill(); resolve(null); }, 20_000);
     child.on('error', () => { clearTimeout(timer); resolve(null); });
@@ -73,7 +73,7 @@ async function inOrca(url: string, at: Beside = {}): Promise<{ page: string | nu
 
 function launch(c: { cmd: string; args: string[]; cwd?: string }): boolean {
   try {
-    const child = spawn(c.cmd, c.args, { stdio: 'ignore', detached: true, cwd: c.cwd });
+    const child = spawn(c.cmd, c.args, { stdio: 'ignore', detached: true, cwd: c.cwd, windowsHide: true });
     child.on('error', () => {});
     child.unref();
     return true;

@@ -74,6 +74,7 @@ export class DartServer {
       cwd: folders[0].dir,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: GROUPS,
+      windowsHide: true,
     });
     running.add(child);
     child.on('exit', () => running.delete(child));

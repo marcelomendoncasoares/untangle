@@ -330,7 +330,7 @@ export class LiveSession {
     let buf: Buffer;
     const input = inputFile(list.map((p) => `${this.target.headSha}:${p}\n`).join(''));
     try {
-      buf = execFileSync('git', ['-C', this.target.repo, 'cat-file', '--batch'], { maxBuffer: 1 << 30, stdio: [input.fd, 'pipe', 'ignore'] });
+      buf = execFileSync('git', ['-C', this.target.repo, 'cat-file', '--batch'], { maxBuffer: 1 << 30, stdio: [input.fd, 'pipe', 'ignore'], windowsHide: true });
     } catch {
       return out;
     } finally {
@@ -378,7 +378,7 @@ export function openInEditor(template: string, file: string, line: number, col: 
   const words = template.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const argv = words.map((w) => w.replace(/^["']|["']$/g, '').replace(/\{file\}/g, file).replace(/\{line\}/g, String(line)).replace(/\{col\}/g, String(col + 1)));
   if (!argv.length) return;
-  const child = spawn(argv[0], argv.slice(1), { stdio: 'ignore', detached: true });
+  const child = spawn(argv[0], argv.slice(1), { stdio: 'ignore', detached: true, windowsHide: true });
   child.on('error', () => {});
   child.unref();
 }

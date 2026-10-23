@@ -54,7 +54,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
   const SUPERS = supers;
   const PROVENANCE = provenance;
   const OLD = Object.fromEntries(Object.entries(oldSides).map(([name, o]) => [name, { dir: path.resolve(o.dir) + '/', raw: o.raw, structure: o.structure }]));
-  const gitShow = (rev, p) => { try { return execFileSync('git', ['-C', REPO, 'show', `${rev}:${p}`], { encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; } };
+  const gitShow = (rev, p) => { try { return execFileSync('git', ['-C', REPO, 'show', `${rev}:${p}`], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; } };
   const parser = await dartParser();
   const trees = new Set();
   const parse = (src) => {
@@ -243,7 +243,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
   for (const [name, cmp] of Object.entries(diff.compares)) {
     const meta = { left: cmp.left, right: cmp.right, label: cmp.label };
     // Adapters on for this head, and what .review.yaml adds.
-    const repoPaths = execFileSync('git', ['-C', REPO, 'ls-tree', '-r', '--name-only', meta.right], { encoding: 'utf8', maxBuffer: 256 << 20 }).split('\n').filter(Boolean);
+    const repoPaths = execFileSync('git', ['-C', REPO, 'ls-tree', '-r', '--name-only', meta.right], { encoding: 'utf8', windowsHide: true, maxBuffer: 256 << 20 }).split('\n').filter(Boolean);
     let review = {};
     try { review = YAML.parse(gitShow(meta.right, '.review.yaml') || '') || {}; } catch (e) { log('.review.yaml is not valid YAML: ' + e.message); }
     const adapterOn = Object.fromEntries(Object.entries(ADAPTERS).map(([k, a]) => [k, review.adapters && k in review.adapters ? !!review.adapters[k] : repoPaths.some((p) => a.detect.test(p))]));
@@ -268,7 +268,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       if (byAttr || rule) {
         f.gen = byAttr ? '.gitattributes' : rule[1];
         if ((f.a + f.d) <= PEEK_MAX_LINES) {
-          const text = execFileSync('git', ['-C', REPO, 'diff', '--no-renames', '-U3', meta.left, meta.right, '--', f.p], { encoding: 'utf8', maxBuffer: 64 << 20 });
+          const text = execFileSync('git', ['-C', REPO, 'diff', '--no-renames', '-U3', meta.left, meta.right, '--', f.p], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20 });
           f.hunks = [];
           let cur = null;
           for (const line of text.split('\n')) {

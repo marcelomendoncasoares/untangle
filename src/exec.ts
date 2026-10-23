@@ -17,7 +17,7 @@ export class CommandError extends Error {
 export function run(cmd: string, args: string[], opts: { cwd?: string; input?: string; env?: NodeJS.ProcessEnv } = {}): string {
   const input = opts.input === undefined ? null : inputFile(opts.input);
   try {
-    return execFileSync(cmd, args, { cwd: opts.cwd, env: opts.env ? { ...process.env, ...opts.env } : undefined, encoding: 'utf8', maxBuffer: 1 << 30, stdio: [input ? input.fd : 'pipe', 'pipe', 'pipe'] });
+    return execFileSync(cmd, args, { cwd: opts.cwd, env: opts.env ? { ...process.env, ...opts.env } : undefined, encoding: 'utf8', maxBuffer: 1 << 30, stdio: [input ? input.fd : 'pipe', 'pipe', 'pipe'], windowsHide: true });
   } catch (e) {
     const err = e as { status?: number | null; stderr?: string };
     throw new CommandError([cmd, ...args].join(' '), err.status ?? null, String(err.stderr ?? ''));
@@ -48,7 +48,7 @@ export function inputFile(text: string): { fd: number; close(): void } {
 /** Runs a command without blocking. Resolves with its output, or rejects with CommandError. */
 export function runAsync(cmd: string, args: string[], opts: { cwd?: string; onLine?: (line: string) => void; shell?: boolean; env?: NodeJS.ProcessEnv; timeout?: number } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: opts.cwd, shell: opts.shell, env: opts.env ? { ...process.env, ...opts.env } : undefined, timeout: opts.timeout, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd: opts.cwd, shell: opts.shell, env: opts.env ? { ...process.env, ...opts.env } : undefined, timeout: opts.timeout, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '', err = '';
     const lines = (chunk: string) => opts.onLine && chunk.split(/\r?\n|\r/).filter(Boolean).forEach(opts.onLine);
     child.stdout.setEncoding('utf8').on('data', (d: string) => { out += d; lines(d); });
@@ -61,7 +61,7 @@ export function runAsync(cmd: string, args: string[], opts: { cwd?: string; onLi
 /** Whether a command exists on PATH. */
 export function has(cmd: string): boolean {
   try {
-    execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' });
+    execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore', windowsHide: true });
     return true;
   } catch {
     return false;

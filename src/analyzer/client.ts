@@ -78,7 +78,7 @@ export class Analyzer {
   };
 
   private constructor(executable: string, private readonly log: (line: string) => void) {
-    this.child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     process.once('exit', this.kill);
 
     const fail = (error: Error) => {

@@ -9,7 +9,7 @@ export class GitHubError extends Error {}
 /** `gh api <args>` with a JSON body; the answer, parsed when it's JSON. */
 function ghApi(args: string[], body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const child = spawn('gh', ['api', ...args, '--input', '-'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('gh', ['api', ...args, '--input', '-'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill(); reject(new GitHubError('GitHub did not answer within 60 s')); }, 60_000);
     child.stdout.setEncoding('utf8').on('data', (d: string) => { out += d; });

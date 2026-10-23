@@ -7,6 +7,7 @@ const linux = process.platform === 'linux';
 
 /** Resident memory of a process, in bytes. */
 export function rss(pid: number): number | null {
+  if (process.platform === 'win32') return null;
   try {
     if (linux) {
       const kb = /^VmRSS:\s+(\d+) kB/m.exec(fs.readFileSync(`/proc/${pid}/status`, 'utf8'));
@@ -20,6 +21,7 @@ export function rss(pid: number): number | null {
 
 /** A process's children: a review's language server, for one that can't say its memory itself. */
 export function childPids(pid: number): number[] {
+  if (process.platform === 'win32') return [];
   try {
     const text = linux ? fs.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8') : execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' });
     return text.split(/\s+/).filter(Boolean).map(Number);
