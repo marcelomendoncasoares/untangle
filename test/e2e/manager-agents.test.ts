@@ -73,20 +73,33 @@ describe('Given a review no agent holds, in the manager inside Orca, ', { skip, 
 
   it(
     'when Add an agent is chosen in its row, '
-    + 'then the form asks which agent, a new chat or one to resume, and an optional first message, with how it starts folded.',
+    + 'then the form asks which agent, Claude or Codex, a new chat or one to resume, and an optional first message, with how it starts folded.',
     async () => {
       await page.click('.row.running');
       await page.until(`!!document.querySelector('[data-act="add-agent"]')`);
       await page.click('[data-act="add-agent"]');
       await page.until(`!!document.querySelector('.pal .opts')`);
-      assert.deepEqual(await page.eval(`[[...document.querySelectorAll('.pal .field > :first-child')].map((e) => e.textContent), [...document.querySelectorAll('.pal .opt')].map((o) => o.textContent), document.querySelector('.pal .chk').textContent, document.querySelector('#f-msg').value, !!document.querySelector('#f-cmd'), document.querySelector('.pal-foot .btn.primary').textContent]`), [
-        ['Chat', '', 'First messageoptional', 'In Orca', ''],
+      assert.deepEqual(await page.eval(`[[...document.querySelectorAll('.pal .field > :first-child')].map((e) => e.textContent), [...document.querySelectorAll('.pal .seg button')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? ' (picked)' : '')), [...document.querySelectorAll('.pal .opt')].map((o) => o.textContent), document.querySelector('.pal .chk').textContent, document.querySelector('#f-msg').value, !!document.querySelector('#f-cmd'), document.querySelector('.pal-foot .btn.primary').textContent]`), [
+        ['Agent', 'Chat', '', 'First messageoptional', 'In Orca', ''],
+        ['Claude (picked)', 'Codex'],
         ['New chatnamed Review ' + path.basename(repo.dir), 'Resume a chatnone held a review before'],
         'Request an initial review from Claude',
         '',
         false,
         'Start Claude⏎',
       ]);
+    },
+  );
+
+  it(
+    'when Codex is picked, '
+    + 'then the form is Codex’s, to start, and Claude can be picked back.',
+    async () => {
+      await page.click('.pal .seg [data-key="codex"]');
+      await page.until(`document.querySelector('.pal-foot .btn.primary').textContent === 'Start Codex⏎'`);
+      assert.equal(await page.eval(`document.querySelector('.pal .chk').textContent`), 'Request an initial review from Codex');
+      await page.click('.pal .seg [data-key="claude"]');
+      await page.until(`document.querySelector('.pal-foot .btn.primary').textContent === 'Start Claude⏎'`);
     },
   );
 

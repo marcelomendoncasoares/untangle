@@ -487,7 +487,8 @@
   function formHtml() {
     const f = P.form, it = P.item, ag = P.agents;
     const kind = f.agent;
-    const seg = ['claude', 'codex', 'none'].map((k) => `<button type="button" data-act="f-agent" data-key="${k}" aria-pressed="${kind === k}"${k !== 'none' && ag && !ag[k].installed ? ' disabled title="Not installed here"' : ''}>${k === 'none' ? 'No agent' : AGENT[k]}</button>`).join('');
+    // An agent joining a running review is one of the two.
+    const seg = (P.addFor ? ['claude', 'codex'] : ['claude', 'codex', 'none']).map((k) => `<button type="button" data-act="f-agent" data-key="${k}" aria-pressed="${kind === k}"${k !== 'none' && ag && !ag[k].installed ? ' disabled title="Not installed here"' : ''}>${k === 'none' ? 'No agent' : AGENT[k]}</button>`).join('');
     const chats = ag ? ag.chats.filter((c) => c.kind === kind) : [];
     const opt = (key, label, small, off) => `<button type="button" class="opt" data-act="f-chat" data-key="${key}" aria-pressed="${f.chat === key}"${off ? ' disabled' : ''}><i class="radio"></i>${label}<small>${small}</small></button>`;
     const agentRows = kind === 'none' ? '<div class="field"><span>Chat</span><span class="where">None. Add an agent from its row, any time.</span></div>' : `
@@ -500,7 +501,7 @@
       ${f.adv ? `<div class="field"><label for="f-flags">Starts with</label><span class="flags"><input id="f-flags" type="text" spellcheck="false" autocomplete="off" value="${esc(f.flags[kind] || '')}" placeholder="${kind === 'claude' ? '--model opus --permission-mode auto' : '-m gpt-6.1-sol'}"></span></div><pre class="cmd" id="f-cmd">${esc(command())}</pre>` : ''}`;
     return `<div class="sh">${P.addFor ? '<span></span>' : `<button type="button" class="ib" data-act="pal-back" aria-label="Back">${ICON.back}</button>`}<span class="main"><span class="l1">${numTag(it.num)}${it.kind ? `<span class="kind">${esc(it.kind)}</span>` : ''}<span class="ttl">${md(it.title)}</span></span><span class="l2">${esc(it.sub)}</span></span></div>
       <div class="pal-body">
-        ${P.addFor ? '' : `<div class="field"><span>Agent</span><span class="seg">${seg}</span></div>`}
+        <div class="field"><span>Agent</span><span class="seg">${seg}</span></div>
         ${agentRows}
         <div class="field"><span>In Orca</span><span class="where">${where}</span></div>
         ${adv}
