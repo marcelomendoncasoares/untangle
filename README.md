@@ -141,7 +141,9 @@ replaced.
 
 Comments go to the pull request through `gh`, and its threads show under their lines, with
 replies, reactions and suggestions. Comment on a line, a range or a file, resolve threads, and
-submit your review.
+submit your review. The review has a thread of its own, first in the Threads tab: the description,
+the conversation's comments and reviews, your notes on the review, and your pending review's
+summary. Each card folds, and *Fold all* folds them to a line each.
 
 ![A resolved thread from #96 under the lines it was written on, in crdt_sync.dart](docs/images/comments.png)
 
@@ -152,6 +154,18 @@ When an agent wrote the code, keep your comments as local notes for it. With the
 opens, your notes reach the agent as you write them, and it answers in their threads, commits and
 resolves what it fixed. Ask for its review too, and it writes notes of its own. It works with
 Claude and Codex, and *Copy for agent* takes the notes to any other chat.
+
+A talk with the agent can end in a comment on the pull request, in the same thread:
+
+- *Comment this*, on anything said in the talk, puts it in a comment box, for you to edit and post.
+- *Draft comment*, beside *Reply*, asks the agent for the comment. It answers as it answers any
+  note, and untangle posts the answer into your pending review, marked *Draft* until you edit it.
+  Asked again while it's pending, the agent rewrites it. On the review's own thread, the draft is
+  your review's summary.
+- *Ask*, on a comment from GitHub, writes a note about it, which the agent reads with the comment.
+
+The talk folds above the comment it made, and the thread is listed with GitHub's, its notes
+counted with it.
 
 ![Notes on #168's sync_streams.dart: Claude listening, its answers in the threads, a note changed since the head it was written on, and one it resolved](docs/images/notes.png)
 
@@ -306,6 +320,7 @@ chat is enough. The agent runs:
 | `untangle watch [directory \| pr-url]`          | open the review, then wait for the notes and replies the agent hasn't read |
 | `untangle reply <N> <text>`                     | answer in note N's thread; `-resolve` resolves it too                      |
 | `untangle note <path>[:<line>[-<line>]] <text>` | write a note of its own (`-removed`: on lines the change removed)          |
+| `untangle note <text>`                          | write a note on the review itself, for what has no line                    |
 | `untangle notes`                                | print the open notes (`-all`: the resolved too)                            |
 | `untangle stop`                                 | close the review                                                           |
 | `untangle feedback <text>`                      | when untangle misbehaves: draft a bug report for you to check and send     |

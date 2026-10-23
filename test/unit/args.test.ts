@@ -213,7 +213,16 @@ describe('Given the agent’s commands, ', () => {
     'when note has no text, '
     + 'then it asks what to write.',
     () => {
-      assert.throws(() => parseCommand(['note', 'lib/a.dart:3']), (error: unknown) => error instanceof UsageError && error.message === 'what to write? untangle note <path>[:<line>[-<line>]] <text>');
+      assert.throws(() => parseCommand(['note', 'lib/a.dart:3']), (error: unknown) => error instanceof UsageError && error.message === 'what to write? untangle note <path>[:<line>[-<line>]] <text>, or untangle note \'<text>\' on the review');
+    },
+  );
+
+  it(
+    'when note has its text alone, '
+    + 'then it’s a note on the review itself, with no path or lines.',
+    () => {
+      const c = parseCommand(['note', 'Nothing to change here.']);
+      assert.deepEqual(c.cmd === 'note' ? [c.path, c.line, c.text] : c, [null, null, 'Nothing to change here.']);
     },
   );
 

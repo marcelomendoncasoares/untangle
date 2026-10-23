@@ -27,10 +27,36 @@ export interface NoteComment {
   edited: string | null;
   /** When it reached the agents (the notes' sequence then); null while held. */
   sent: number | null;
+  /** Yours, asking the agent for a comment for GitHub: its answer goes there, pending, as it is. */
+  draft?: boolean;
+}
+
+/** What a note is about on GitHub, quoted for the agent: a review thread's comment, a comment of the conversation, or the description. */
+export type About =
+  | { kind: 'thread'; thread: string; author: string; body: string; url: string }
+  | { kind: 'comment'; comment: string; author: string; body: string; url: string }
+  | { kind: 'pr'; author: string; body: string; url: string };
+
+/** A comment on GitHub a note made: one you posted from it, or the agent's answer to a draft ask. */
+export interface Said {
+  /** GitHub's id of the comment; the pending review's id for its summary. */
+  id: string;
+  /** The review thread it's in, for a comment on lines or a file. */
+  thread: string | null;
+  kind: 'thread' | 'reply' | 'conversation' | 'summary';
+  /** You (null), or the agent that drafted it. */
+  by: By;
+  /** Its text as posted: a draft that still reads so on GitHub wasn't edited. */
+  body: string;
+  at: string;
+  /** Posted into the pending review, not on its own. */
+  pending: boolean;
 }
 
 export interface Note {
   n: number;
+  /** On the review itself, not on its code: no path, lines or code, and nothing to follow through new commits. */
+  review?: boolean;
   path: string;
   /** On the whole file, not on lines. */
   file: boolean;
@@ -48,13 +74,15 @@ export interface Note {
   resolved: { by: By; at: string } | null;
   /** In a copy for the agent already. */
   copied: boolean;
-  /** The GitHub thread it answers, quoted. */
-  quote: { thread: string; author: string; body: string; url: string } | null;
+  /** What it's about on GitHub: a thread's comment, a comment of the conversation, or the description. */
+  about: About | null;
   comments: NoteComment[];
+  /** The comments on GitHub it made, oldest first: it shows in their thread from then on. */
+  said: Said[];
 }
 
 /** What changed besides new comments, for the agents: by the notes' sequence. */
-interface NoteEvent { seq: number; type: 'edit' | 'resolve' | 'reopen' | 'delete' | 'post'; n: number; by: By; id?: string; sent?: number | null }
+interface NoteEvent { seq: number; type: 'edit' | 'resolve' | 'reopen' | 'delete' | 'post' | 'said'; n: number; by: By; id?: string; sent?: number | null; body?: string }
 
 interface Stored {
   version: 1;
@@ -88,14 +116,38 @@ export interface NotesContext {
   checkout: string | null;
   /** The change a line is in: its chain's name and the commit that started it. */
   change(path: string, side: Side, line: number): { name: string; sha: string | null } | null;
-  /** Posts into the pending review on GitHub: a thread on lines or a file, or a reply. Null without GitHub. */
-  post: ((p: Post) => Promise<unknown>) | null;
+  /** The pull request on GitHub, to post to; null without one, or without gh. */
+  gh: NotesGitHub | null;
 }
-export type Post = { thread: string; body: string } | { path: string; body: string; line?: number; side?: Side; startLine?: number; startSide?: Side };
+
+/** A thread's lines, for a comment on them; none for one on the whole file. */
+export interface At { path: string; line?: number; side?: Side; startLine?: number; startSide?: Side }
+/** Single: posted at once. Review: into the pending review, which GitHub starts when there's none. */
+export type PostMode = 'single' | 'review';
+
+/** What the notes post on GitHub, each answering with the conversation after it and the comment's id. */
+export interface NotesGitHub {
+  thread(at: At, body: string, mode: PostMode): Promise<{ conversation: unknown; thread: string; comment: string }>;
+  reply(thread: string, body: string, mode: PostMode): Promise<{ conversation: unknown; comment: string }>;
+  /** A comment on the conversation: GitHub posts these at once. */
+  conversation(body: string): Promise<{ conversation: unknown; comment: string }>;
+  /** Sets the pending review's summary, starting a pending review when there's none. */
+  summary(body: string): Promise<{ conversation: unknown; review: string }>;
+  /** Rewrites a review comment: a pending draft, asked again. */
+  edit(comment: string, body: string): Promise<{ conversation: unknown }>;
+  /** What GitHub last said of a comment: its text, and whether it's pending. Null when unknown. */
+  current(comment: string): { body: string; pending: boolean } | null;
+  /** The pending review now: its id and summary. Null when none is pending, or unknown. */
+  pending(): { id: string; body: string } | null;
+  /** GitHub's pull request is on newer commits than the review: lines can't take new threads. */
+  stale(): boolean;
+}
 
 export type NoteAction =
-  | { action: 'add'; path: string; body: string; file?: boolean; side?: Side; line?: number; startSide?: Side; startLine?: number; quote?: { thread: string; author: string; body: string; url: string } }
-  | { action: 'reply'; n: number; body: string }
+  | { action: 'add'; path: string; body: string; review?: boolean; file?: boolean; side?: Side; line?: number; startSide?: Side; startLine?: number; about?: About; draft?: boolean; quote?: { thread: string; author: string; body: string; url: string } }
+  | { action: 'reply'; n: number; body: string; draft?: boolean }
+  /** Says on GitHub what was said in a note: on its lines, in its thread, or on the conversation. */
+  | { action: 'comment'; n: number; body: string; mode: PostMode }
   | { action: 'edit'; n: number; id: string; body: string }
   | { action: 'delete'; n: number; id?: string }
   | { action: 'resolve'; n: number; resolved: boolean }
@@ -168,6 +220,11 @@ interface Holder {
  */
 export const DEFAULT_OPENING = 'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.';
 const FORMER_OPENING = 'Discuss these with me before changing anything.';
+/**
+ * What a draft ask asks when you wrote nothing in it: the agent reads this instead, and the page
+ * shows the ask alone.
+ */
+export const DRAFT_ASK = 'Draft a comment for GitHub from this talk, in a natural tone.';
 // A burst of notes reaches a waiting agent together: this long after the last one.
 const QUIET = Number(process.env.UNTANGLE_NOTES_QUIET) >= 0 && process.env.UNTANGLE_NOTES_QUIET ? Number(process.env.UNTANGLE_NOTES_QUIET) : 3000;
 const MAX_BODY = 64 << 10;
@@ -183,6 +240,7 @@ const fence = (code: string[]) => '`'.repeat(Math.max(3, ...code.map((l) => Math
 const FENCE_LANG: Record<string, string> = { dart: 'dart', yaml: 'yaml', yml: 'yaml', json: 'json', sql: 'sql', md: 'markdown', ts: 'ts', js: 'js', mjs: 'js', sh: 'sh', py: 'python', kt: 'kotlin', swift: 'swift', java: 'java', go: 'go', rs: 'rust', html: 'html', css: 'css', proto: 'proto' };
 const langOf = (p: string) => FENCE_LANG[path.extname(p).slice(1).toLowerCase()] || '';
 const plural = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+const clip = (s: string, k: number) => (s.length > k ? s.slice(0, k - 1).trimEnd() + '…' : s);
 // "a", "a and b", "a, b and c".
 const and = (parts: Array<string | number | false>) => {
   const p = parts.filter((x): x is string => typeof x === 'string' && x !== '');
@@ -262,6 +320,8 @@ export class Notes {
   private ctx: NotesContext | null = null;
   // Bumped on every change, the agents' coming and going included: pages ask again when it moves.
   private rev = 0;
+  // Bumped when untangle posts on GitHub on its own, as for a draft: pages read GitHub again.
+  private ghRev = 0;
   private closed = false;
   // Closed by a pause: its chats hear it'll be back.
   private paused = false;
@@ -292,6 +352,12 @@ export class Notes {
       if (saved && saved.version === 1 && Array.isArray(saved.notes)) this.data = { ...this.data, ...saved, opening: saved.opening === FORMER_OPENING || typeof saved.opening !== 'string' ? DEFAULT_OPENING : saved.opening };
     } catch {
       // No notes yet.
+    }
+    // Notes from before they knew what they made on GitHub: one that quoted a thread is about it.
+    for (const note of this.data.notes as Array<Note & { quote?: { thread: string; author: string; body: string; url: string } | null }>) {
+      if (note.about === undefined) note.about = note.quote && typeof note.quote.thread === 'string' ? { kind: 'thread', ...note.quote } : null;
+      delete note.quote;
+      note.said ??= [];
     }
   }
 
@@ -348,7 +414,7 @@ export class Notes {
     };
     const diffs = { RIGHT: diff(from.head, ctx.head), LEFT: diff(from.base, ctx.base) };
     for (const note of this.data.notes) {
-      if (note.gone) continue;
+      if (note.gone || note.review) continue;
       const sha = note.side === 'LEFT' ? ctx.base : ctx.head;
       const d = diffs[note.side];
       if (!d) {
@@ -380,26 +446,53 @@ export class Notes {
     return note;
   }
 
-  private body(text: unknown): string {
+  /** A comment's text, trimmed: a draft ask may have none, as it asks for what Claude would write. */
+  private body(text: unknown, draft = false): string {
     const body = typeof text === 'string' ? text.replace(/\r\n?/g, '\n').trim() : '';
-    if (!body) throw new NoteError('a note needs some text');
+    if (!body && !draft) throw new NoteError('a note needs some text');
     if (body.length > MAX_BODY) throw new NoteError('that is too long for a note');
     return body;
   }
 
   /** A comment, sent to the agents now, or held for later when live review is off (yours only). */
-  private comment(by: By, body: string): NoteComment {
+  private comment(by: By, body: string, draft = false): NoteComment {
     const held = by === null && !this.data.live;
-    const c: NoteComment = { id: crypto.randomBytes(6).toString('hex'), by, body, at: new Date().toISOString(), edited: null, sent: held ? null : ++this.data.seq };
+    const c: NoteComment = { id: crypto.randomBytes(6).toString('hex'), by, body, at: new Date().toISOString(), edited: null, sent: held ? null : ++this.data.seq, ...(draft && by === null ? { draft: true } : {}) };
     if (!held) this.lastSent = Date.now();
     return c;
   }
 
-  /** A new note, on lines of the review's commits or on a whole file: yours (by null), or an agent's. */
+  /** What a note is about on GitHub, as the page sends it: kept short, and a known kind or none. */
+  private about(a: Extract<NoteAction, { action: 'add' }>): About | null {
+    const x = a.about ?? (a.quote ? { kind: 'thread' as const, ...a.quote } : null);
+    if (!x || typeof x !== 'object') return null;
+    const text = { author: String(x.author || ''), body: String(x.body || '').slice(0, 4000), url: String(x.url || '') };
+    if (x.kind === 'thread' && typeof x.thread === 'string') return { kind: 'thread', thread: x.thread, ...text };
+    if (x.kind === 'comment' && typeof x.comment === 'string') return { kind: 'comment', comment: x.comment, ...text };
+    if (x.kind === 'pr') return { kind: 'pr', ...text };
+    return null;
+  }
+
+  /**
+   * A new note, on lines of the review's commits, on a whole file or on the review itself: yours
+   * (by null), or an agent's. One about a comment of the conversation, or the description, is on
+   * the review; one about a review thread's comment is on its lines.
+   */
   private newNote(by: By, a: Extract<NoteAction, { action: 'add' }>): Note {
     const ctx = this.ctx!;
     const d = this.data;
-    const body = this.body(a.body);
+    const draft = by === null && a.draft === true;
+    const body = this.body(a.body, draft);
+    const about = this.about(a);
+    if (a.review || about?.kind === 'comment' || about?.kind === 'pr') {
+      const note: Note = {
+        n: d.next++, review: true, path: '', file: false, side: 'RIGHT', line: null, startSide: null, startLine: null, code: [],
+        wrote: { head: ctx.head, path: '', line: null, startLine: null, code: [] }, changed: false, gone: false,
+        resolved: null, copied: false, about, comments: [this.comment(by, body, draft)], said: [],
+      };
+      d.notes.push(note);
+      return note;
+    }
     const file = !!a.file || a.line == null;
     if (typeof a.path !== 'string') throw new NoteError('which file?');
     // A note on a deleted file is on the base's.
@@ -414,14 +507,20 @@ export class Notes {
     if (line != null && line > text.length) throw new NoteError(`${a.path} has ${plural(text.length, 'line', 'lines')} at ${short(sha)}`);
     const startSide = startLine == null ? null : side;
     const code = this.codeOf(sha, a.path, startLine, line);
-    const q = a.quote && typeof a.quote.thread === 'string' ? { thread: a.quote.thread, author: String(a.quote.author || ''), body: String(a.quote.body || '').slice(0, 4000), url: String(a.quote.url || '') } : null;
     const note: Note = {
       n: d.next++, path: a.path, file, side, line, startSide, startLine, code,
       wrote: { head: ctx.head, path: a.path, line, startLine, code }, changed: false, gone: false,
-      resolved: null, copied: false, quote: q, comments: [this.comment(by, body)],
+      resolved: null, copied: false, about, comments: [this.comment(by, body, draft)], said: [],
     };
     d.notes.push(note);
     return note;
+  }
+
+  /** The GitHub thread a note is in: the one it's about, or the one a comment it made is in. */
+  private threadOf(note: Note): string | null {
+    if (note.about?.kind === 'thread') return note.about.thread;
+    for (let i = note.said.length - 1; i >= 0; i--) if (note.said[i].thread) return note.said[i].thread;
+    return null;
   }
 
   private event(e: Omit<NoteEvent, 'seq'>) {
@@ -433,6 +532,7 @@ export class Notes {
   // ---- What the agent reads: the same text for the copy, `untangle notes` and `untangle watch`.
 
   private where(note: Note): string {
+    if (note.review) return 'the review';
     if (note.file) return `${note.path} (the whole file)`;
     const at = `${note.path}:${range(note.startLine, note.line)}`;
     return note.side === 'LEFT' ? `${at}, removed lines (numbered as on the base)` : at;
@@ -452,18 +552,75 @@ export class Notes {
     return at ? ` That commit is checked out at ${at}: read and search its code there, and change nothing (untangle uses it).` : '';
   }
 
-  /** One note for the agent: where it is, the change it's in, its code and its thread. */
-  noteText(note: Note): string {
-    const lines = [`N${note.n} · ${this.where(note)}${note.resolved ? ' (resolved)' : ''}`];
+  /** Where a note is, as a thread's first line says it: on the review, or its file and lines. */
+  private place(note: Note): string {
+    return note.review ? 'on the review' : this.where(note);
+  }
+
+  /** What a note is about on GitHub, quoted. */
+  private aboutText(note: Note): string[] {
+    const a = note.about;
+    if (!a) return [];
+    const quoted = clip(a.body, 1500).split('\n').map((l) => '> ' + l);
+    if (a.kind === 'pr') return [`About the pull request’s description, by ${a.author} (${a.url}):`, ...quoted];
+    return [`About ${a.author}’s comment on GitHub (${a.url}):`, ...quoted];
+  }
+
+  /** A comment as the agent reads it: who wrote it, and what; a draft ask with no text asks for the comment. */
+  private said(c: NoteComment, first = false): string {
+    const body = c.draft && !c.body ? DRAFT_ASK : c.body;
+    return c.by ? `${c.by}: ${body}` : first ? body : `You: ${body}`;
+  }
+
+  /**
+   * Your last word in a note, when it asks for a draft the agent hasn't answered yet: the agent's
+   * next reply in the note goes to GitHub, pending.
+   */
+  private askOf(note: Note): NoteComment | null {
+    const last = note.comments[note.comments.length - 1];
+    if (!last || last.by !== null || !last.draft) return null;
+    return note.said.some((x) => x.by !== null && x.at >= last.at) ? null : last;
+  }
+
+  /** The agent's pending draft in a note, asked for earlier: a new ask rewrites it. */
+  private pendingDraft(note: Note): { said: Said; body: string } | null {
+    const gh = this.ctx?.gh;
+    const s = [...note.said].reverse().find((x) => x.by !== null && x.pending);
+    if (!s || !gh) return null;
+    if (s.kind === 'summary') { const p = gh.pending(); return p && p.id === s.id ? { said: s, body: p.body } : null; }
+    const now = gh.current(s.id);
+    return now && now.pending ? { said: s, body: now.body } : null;
+  }
+
+  /** Where a draft goes on GitHub, as the agent hears it. */
+  private draftPlace(note: Note): string {
+    if (note.review) return 'as the summary of your user’s pending review';
+    if (this.threadOf(note)) return 'as a reply in its thread on GitHub, pending in your user’s review';
+    return note.file ? 'on its file, pending in your user’s review' : 'on its lines, pending in your user’s review';
+  }
+
+  /** What a draft ask asks of the agent: the comment alone, posted as it is; and the draft it rewrites. */
+  private askText(note: Note, live: boolean): string[] {
+    if (!this.askOf(note)) return [];
+    if (!live) return ['This asks for a draft comment for GitHub: answer with the comment alone.'];
+    const out = [`This asks for a draft comment for GitHub. Answer with the comment alone, as untangle reply N${note.n} '…': untangle posts your answer as it is, ${this.draftPlace(note)}, for them to edit and send.`];
+    const prev = this.pendingDraft(note);
+    if (prev) out.push('Your earlier draft is there now, pending (they may have edited it):', ...prev.body.split('\n').map((l) => '> ' + l), 'Write it again, taking in both what they ask and what’s there: your answer replaces it.');
+    return out;
+  }
+
+  /** One note for the agent: where it is, the change it's in, what it's about, its code and its thread. */
+  noteText(note: Note, live = false): string {
+    const lines = [`N${note.n} · ${this.place(note)}${note.resolved ? ' (resolved)' : ''}`];
     const change = !note.file && note.line != null && !note.gone && this.ctx ? this.ctx.change(note.path, note.side, note.line) : null;
     if (change) lines.push(`In the change "${change.name}"${change.sha ? ` (${short(change.sha)})` : ''}`);
-    if (note.quote) lines.push(`Answering ${note.quote.author} on GitHub (${note.quote.url}):`, ...note.quote.body.split('\n').map((l) => '> ' + l));
+    lines.push(...this.aboutText(note));
     if (note.gone) lines.push(`Gone since ${short(note.wrote.head)}, where I wrote this. The lines below are the ones it was on then.`);
     else if (note.changed) lines.push(`Changed since ${short(note.wrote.head)}, where I wrote this. The lines below are the new ones.`);
     const code = note.gone ? note.wrote.code : note.code;
     if (code.length) { const f = fence(code); lines.push(f + langOf(note.path), ...code, f); }
     const [first, ...replies] = note.comments;
-    lines.push(first.by ? `${first.by}: ${first.body}` : first.body, ...replies.map((c) => `${c.by ?? 'You'}: ${c.body}`));
+    lines.push(this.said(first, true), ...replies.map((c) => this.said(c)), ...this.askText(note, live));
     return lines.join('\n') + '\n';
   }
 
@@ -472,9 +629,9 @@ export class Notes {
     return this.data.notes.filter(scope === 'all' ? () => true : scope === 'new' ? (n) => open(n) && !n.copied : open);
   }
 
-  /** The copy for the agent: the head, the opening line, then the notes. */
+  /** The copy for the agent: the head, the opening line, then the notes, those on the review first. */
   exportText(scope: Scope, opening = this.data.opening): string {
-    const list = this.inScope(scope);
+    const list = this.inScope(scope).sort((x, y) => Number(!!y.review) - Number(!!x.review));
     return [this.header() + '\n', opening.trim() && opening.trim() + '\n', ...(list.length ? list.map((n) => this.noteText(n)) : ['No notes to send.\n'])].filter(Boolean).join('\n');
   }
 
@@ -495,7 +652,7 @@ export class Notes {
     };
     return {
       // Where comments go, until you choose: notes, for a review an agent started or one that has some.
-      rev: this.rev, mode: d.mode ?? (this.byAgent || d.notes.length ? 'local' : null), live: d.live, opening: d.opening, scope: d.scope, head: d.head, header: this.header(),
+      rev: this.rev, gh: this.ghRev, mode: d.mode ?? (this.byAgent || d.notes.length ? 'local' : null), live: d.live, opening: d.opening, scope: d.scope, head: d.head, header: this.header(),
       held: d.notes.reduce((k, n) => k + n.comments.filter((c) => c.by === null && c.sent == null).length, 0),
       notes: d.notes.map((n) => ({ ...n, text: this.noteText(n), status: read(n) })),
       agents,
@@ -570,9 +727,20 @@ export class Notes {
       case 'add':
         this.newNote(null, a);
         break;
-      case 'reply':
-        this.note(a.n).comments.push(this.comment(null, this.body(a.body)));
+      case 'reply': {
+        const draft = a.draft === true;
+        this.note(a.n).comments.push(this.comment(null, this.body(a.body, draft), draft));
         break;
+      }
+      case 'comment': {
+        const note = this.note(a.n);
+        const body = this.body(a.body);
+        const r = await this.say(note, body, a.mode === 'single' ? 'single' : 'review', null);
+        note.said.push(r.said);
+        conversation = r.conversation;
+        if (note.comments[0].sent != null) this.event({ type: 'said', n: note.n, by: null, body });
+        break;
+      }
       case 'edit': {
         const note = this.note(a.n);
         const c = note.comments.find((x) => x.id === a.id);
@@ -619,24 +787,25 @@ export class Notes {
         this.release();
         break;
       case 'post': {
-        if (!ctx.post) throw new NoteError('Posting needs the pull request on GitHub, through gh (gh auth login).');
-        const list = (Array.isArray(a.ns) ? a.ns : []).map((n) => this.note(n)).filter((n) => !n.resolved && !n.gone);
-        if (!list.length) throw new NoteError('no open notes to post');
+        if (!ctx.gh) throw new NoteError('Posting needs the pull request on GitHub, through gh (gh auth login).');
+        // Each open note not on GitHub yet says its first words in your pending review, and stays,
+        // in the thread it made. A note on the review stays here: a pending review takes comments
+        // on lines and files only.
+        const list = (Array.isArray(a.ns) ? a.ns : []).map((n) => this.note(n)).filter((n) => !n.resolved && !n.gone && !n.review && !n.said.length && n.comments[0].body);
+        if (!list.length) throw new NoteError('no open notes on lines or files to post: a note on the review stays here');
         for (const note of list) {
           const body = note.comments[0].body;
-          const p: Post = note.quote ? { thread: note.quote.thread, body }
-            : note.file ? { path: note.path, body }
-              : { path: note.path, body, line: note.line!, side: note.side, ...(note.startLine != null ? { startLine: note.startLine, startSide: note.startSide || note.side } : {}) };
           try {
-            conversation = await ctx.post(p);
+            const r = await this.say(note, body, 'review', null);
+            note.said.push(r.said);
+            conversation = r.conversation;
           } catch (e) {
-            // The ones posted so far have left the notes.
+            // The ones posted so far are in their threads.
             this.save();
             this.touch();
             throw new NoteError(`N${note.n} could not be posted: ${(e as Error).message}`, 502);
           }
-          d.notes.splice(d.notes.indexOf(note), 1);
-          if (note.comments[0].sent != null) this.event({ type: 'post', n: note.n, by: null, sent: note.comments[0].sent });
+          if (note.comments[0].sent != null) this.event({ type: 'said', n: note.n, by: null, body });
         }
         break;
       }
@@ -686,10 +855,25 @@ export class Notes {
     return !!chat && !!held && held !== chat;
   }
 
-  /** An agent's answer in a note's thread, and its resolving the note when it's done. */
-  reply(agent: string, n: number, body: string | null, resolve: boolean, chat: string | null = null): { n: number; resolved: boolean; other: boolean } {
+  /**
+   * An agent's answer in a note's thread, and its resolving the note when it's done. The answer to
+   * a draft ask goes to GitHub instead, pending in your review, as it is: `drafted` says where. When
+   * it can't, it stays an answer in the thread, and `error` says why.
+   */
+  async reply(agent: string, n: number, body: string | null, resolve: boolean, chat: string | null = null): Promise<{ n: number; resolved: boolean; other: boolean; drafted: string | null; error: string | null }> {
     const note = this.note(n);
-    if (body != null) note.comments.push(this.comment(agent, this.body(body)));
+    let drafted: string | null = null, error: string | null = null;
+    if (body != null) {
+      const text = this.body(body);
+      if (this.askOf(note)) {
+        try {
+          drafted = await this.draft(note, agent, text);
+        } catch (e) {
+          error = (e as Error).message;
+        }
+      }
+      if (!drafted) note.comments.push(this.comment(agent, text));
+    }
     if (resolve && !note.resolved) {
       note.resolved = { by: agent, at: new Date().toISOString() };
       this.event({ type: 'resolve', n, by: agent });
@@ -697,7 +881,56 @@ export class Notes {
     this.holders.get(agent)?.answered.add(n);
     this.save();
     this.touch();
-    return { n, resolved: !!note.resolved, other: this.other(agent, chat) };
+    return { n, resolved: !!note.resolved, other: this.other(agent, chat), drafted, error };
+  }
+
+  /**
+   * What's said on GitHub from a note: on the conversation for a note on the review (an agent's
+   * draft is the pending review's summary instead, as GitHub keeps no comment there pending), as
+   * a reply in the note's thread, or as a thread of its own on its lines.
+   */
+  private async say(note: Note, body: string, mode: PostMode, by: By): Promise<{ said: Said; conversation: unknown }> {
+    const gh = this.ctx?.gh;
+    if (!gh) throw new NoteError('Posting needs the pull request on GitHub, through gh (gh auth login).');
+    const at = new Date().toISOString();
+    if (note.review) {
+      if (by !== null) {
+        const r = await gh.summary(body);
+        return { conversation: r.conversation, said: { id: r.review, thread: null, kind: 'summary', by, body, at, pending: true } };
+      }
+      const r = await gh.conversation(body);
+      return { conversation: r.conversation, said: { id: r.comment, thread: null, kind: 'conversation', by, body, at, pending: false } };
+    }
+    const thread = this.threadOf(note);
+    if (thread) {
+      const r = await gh.reply(thread, body, mode);
+      return { conversation: r.conversation, said: { id: r.comment, thread, kind: 'reply', by, body, at, pending: mode === 'review' } };
+    }
+    if (note.gone) throw new NoteError(`N${note.n}’s lines are gone since ${short(note.wrote.head)}`);
+    if (gh.stale()) throw new NoteError('GitHub has newer commits than this review: refresh the review to comment on its lines', 409);
+    const where: At = note.file ? { path: note.path } : { path: note.path, line: note.line!, side: note.side, ...(note.startLine != null ? { startLine: note.startLine, startSide: note.startSide || note.side } : {}) };
+    const r = await gh.thread(where, body, mode);
+    return { conversation: r.conversation, said: { id: r.comment, thread: r.thread, kind: 'thread', by, body, at, pending: mode === 'review' } };
+  }
+
+  /**
+   * The agent's answer to a draft ask, on GitHub: pending in your review, where `say` puts it. Asked
+   * again while its draft is pending, it rewrites that draft instead.
+   */
+  private async draft(note: Note, agent: string, body: string): Promise<string> {
+    const gh = this.ctx?.gh;
+    if (!gh) throw new Error('this review has no pull request on GitHub (or gh is logged out)');
+    const prev = this.pendingDraft(note);
+    const at = new Date().toISOString();
+    if (prev) {
+      if (prev.said.kind === 'summary') await gh.summary(body);
+      else await gh.edit(prev.said.id, body);
+      note.said.splice(note.said.indexOf(prev.said), 1);
+      note.said.push({ ...prev.said, by: agent, body, at });
+    } else note.said.push((await this.say(note, body, 'review', agent)).said);
+    this.ghRev++;
+    const s = note.said[note.said.length - 1];
+    return s.kind === 'summary' ? 'as the summary of your user’s pending review' : s.kind === 'reply' ? 'in its thread on GitHub, pending in your user’s review' : `on ${note.file ? 'its file' : 'its lines'} on GitHub, pending in your user’s review`;
   }
 
   /** What an agent hasn't read: comments by others, and what changed on notes it has read. */
@@ -718,19 +951,22 @@ export class Notes {
       const note = this.data.notes.find((x) => x.n === e.n);
       if (e.type === 'delete' || e.type === 'post') { if (e.sent != null && e.sent <= seen) lines.push(`N${e.n} · ${e.type === 'post' ? 'posted to GitHub: it left the notes.' : `${e.by ?? 'you'} deleted it.`}`); return; }
       if (!note || !knew(note)) return;
-      if (e.type === 'edit') { const c = told.has(note.n) ? null : note.comments.find((x) => x.id === e.id); if (c) lines.push(`N${note.n} · ${this.where(note)} · ${e.by ?? 'you'} edited ${c === note.comments[0] ? 'the note' : 'a reply'}:\n${c.body}`); return; }
+      if (e.type === 'edit') { const c = told.has(note.n) ? null : note.comments.find((x) => x.id === e.id); if (c) lines.push(`N${note.n} · ${this.place(note)} · ${e.by ?? 'you'} edited ${c === note.comments[0] ? 'the note' : 'a reply'}:\n${c.body}`); return; }
+      // What you said on GitHub from a note: the agent knows what went out, with its next news.
+      if (e.type === 'said') { lines.push(`N${note.n} · ${this.place(note)} · you commented on GitHub from it:\n${(e.body || '').split('\n').map((l) => '> ' + l).join('\n')}`); closed++; return; }
       const state = `${e.type === 'resolve' ? 'resolved' : 'reopened'} by ${e.by ?? 'you'}`;
       if (told.has(note.n)) states.set(note.n, state);
-      else { lines.push(`N${note.n} · ${this.where(note)} · ${state}.`); if (e.type === 'resolve') closed++; }
+      else { lines.push(`N${note.n} · ${this.place(note)} · ${state}.`); if (e.type === 'resolve') closed++; }
     });
     const replies = threads.reduce((k, note) => k + note.comments.slice(1).filter(fresh).length, 0);
-    // A note resolved only ends the talk on it: it comes with the next news, and wakes no one.
+    // A note resolved, or said on GitHub, only ends the talk on it: it comes with the next news, and wakes no one.
     return { notes, threads, lines, states, replies, count: notes.length + replies + lines.length - closed };
   }
 
   private threadText(note: Note, state?: string): string {
     const [first, ...rest] = note.comments;
-    return [`N${note.n} · ${this.where(note)} · ${rest.length === 1 ? 'a reply' : 'replies'} in its thread${state ? ` · ${state}` : ''}`, ...(first.by ? `${first.by}: ${first.body}` : first.body).split('\n').map((l) => '> ' + l), ...rest.map((c) => `${c.by ?? 'You'}: ${c.body}`)].join('\n') + '\n';
+    const ask = this.askOf(note) ? ' · you ask for a draft comment' : '';
+    return [`N${note.n} · ${this.place(note)} · ${rest.length === 1 ? 'a reply' : 'replies'} in its thread${state ? ` · ${state}` : ''}${ask}`, ...this.aboutText(note), ...this.said(first, true).split('\n').map((l) => '> ' + l), ...rest.map((c) => this.said(c)), ...this.askText(note, true)].join('\n') + '\n';
   }
 
   /**
@@ -747,7 +983,7 @@ export class Notes {
     if (h.fresh) {
       notes = read = this.data.notes.filter((n) => !n.resolved);
       text = `untangle: you hold this review now: another ${agent} chat held it. Here ${notes.length === 1 ? 'is its open note' : `are its ${notes.length} open notes`}, ${at}\n\n`
-        + [opening && opening + '\n', ...notes.map((n) => this.noteText(n))].filter(Boolean).join('\n');
+        + [opening && opening + '\n', ...notes.map((n) => this.noteText(n, true))].filter(Boolean).join('\n');
     } else {
       const u = this.unseen(agent);
       ({ notes, replies } = u);
@@ -755,7 +991,7 @@ export class Notes {
       const parts: string[] = [];
       if (notes.length) {
         if (opening) parts.push(opening + '\n');
-        parts.push(...notes.map((n) => this.noteText(n)));
+        parts.push(...notes.map((n) => this.noteText(n, true)));
       }
       parts.push(...u.threads.map((n) => this.threadText(n, u.states.get(n.n))), ...u.lines.map((l) => l + '\n'));
       text = `untangle: ${and([notes.length && plural(notes.length, 'note', 'notes'), replies && plural(replies, 'reply', 'replies'), u.lines.length && plural(u.lines.length, 'change', 'changes')])} you haven’t read, ${at}\n\n${parts.join('\n')}`;

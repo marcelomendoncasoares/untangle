@@ -1788,7 +1788,8 @@
     return tools ? [...tools.children].map((b) => {
       const label = b.getAttribute('aria-label') || b.title;
       const data = Object.fromEntries(Object.entries(b.dataset).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()), v]));
-      return b.tagName === 'A' ? { label, href: b.getAttribute('href'), icon: b.innerHTML } : { label, icon: b.innerHTML, data };
+      const icon = b.querySelector('svg') ? b.querySelector('svg').outerHTML : b.innerHTML;
+      return b.tagName === 'A' ? { label, href: b.getAttribute('href'), icon } : { label, icon, data };
     }) : [];
   }
   function menuHtml(items) {
@@ -2176,6 +2177,12 @@
     showResolved: false, away: new Set(), fileCompose: null, reviewOpen: false, event: 'COMMENT',
     // Comment ids GitHub has given so far, and the ones new in its last answer (they fade in).
     known: null, fresh: new Set(),
+    // A box's own voice, a note or a comment, when Comment this or Ask opened it: others follow the Review menu.
+    voice: new Map(),
+    // The comment Ask was pressed on, by its thread: the note about the thread quotes it.
+    askAbout: new Map(),
+    // The review's thread: cards folded, and the notes being written about a comment or the description.
+    folded: new Set(), asking: new Set(),
   };
   const DRAFTS = 'untangle:drafts:' + ((CONFIG.github && CONFIG.github.url) || CONFIG.key || 'review');
   const drafts = new Map();
@@ -2199,8 +2206,10 @@
   const NT = {
     on: !!CONFIG.served,
     data: null, error: null, loading: false, again: false, busy: null, errors: new Map(),
-    anchors: new Map(), files: new Map(), byN: new Map(),
+    anchors: new Map(), files: new Map(), byN: new Map(), review: [],
     opened: new Set(), replying: new Set(), editing: null, folded: new Set(), was: new Set(), showResolved: false,
+    // Runs of talk in a thread, opened though a comment follows them.
+    unfold: new Set(),
     reveal: null, opening: null, openingTimer: null, seenAgents: new Set(), agentOpen: null,
   };
   // GitHub can take comments: the review has a pull request, and gh answered (or hasn't yet).
@@ -2218,16 +2227,42 @@
   const agentsNow = () => (NT.data ? NT.data.agents : []);
   // The one a note just written goes to: the first that hears it, else the first.
   const agentFirst = () => { const l = agentsNow(); return l.find((a) => a.state !== 'deaf' && a.state !== 'left') || l[0] || null; };
+  // Who a note goes to, by name: the agent holding the review, or any.
+  const agentWho = () => {
+    const a = agentFirst();
+    if (a) return a.name;
+    const named = NT.data ? NT.data.notes.flatMap((n) => n.comments.map((c) => c.by)).filter(Boolean).pop() : null;
+    return named || 'your agent';
+  };
+
+  // ---- One thread per point: a note and the GitHub thread it's about, or that a comment of it
+  // went into, show as one thread, with GitHub's comments.
+  const noteThread = (n) => (n.about && n.about.kind === 'thread' ? n.about.thread : ((n.said || []).filter((s) => s.thread).pop() || {}).thread || null);
+  // Whether a note shows in its GitHub thread, which the page has: else on its own lines.
+  const inThread = (n) => { const id = noteThread(n); return !!id && !!GH.data && GH.data.threads.some((t) => t.id === id); };
+  const notesIn = (t) => (NT.data ? NT.data.notes.filter((n) => noteThread(n) === t.id) : []);
+  // A comment on GitHub a note made, and the note.
+  const saidOf = (id) => { if (NT.data) for (const n of NT.data.notes) for (const s of n.said || []) if (s.id === id) return { n, s }; return null; };
+  // An agent's draft, pending and as it wrote it: a Draft badge says to make it yours before you send it.
+  const draftOf = (c) => { const x = c && c.pending ? saidOf(c.id) : null; return x && x.s.by && x.s.body.trim() === (c.body || '').trim() ? x : null; };
+  // A box's voice: a note ('local') or a GitHub comment. Comment this and Ask set a box's own;
+  // others follow the Review menu, or the default given.
+  const voiceOf = (key, dflt) => GH.voice.get(key) || dflt || (localMode() ? 'local' : 'github');
+  // Whether what's said in a note can go to GitHub now: on the conversation any time, on lines
+  // while the review is on GitHub's head and they're there.
+  const canSay = (n) => ghCan() && !!GH.data && !GH.data.pr.locked && (n.review || (!n.gone && !GH.stale));
 
   function ntSet(d) {
     const was = NT.data;
     NT.data = d;
-    NT.anchors = new Map(); NT.files = new Map(); NT.byN = new Map();
+    NT.anchors = new Map(); NT.files = new Map(); NT.byN = new Map(); NT.review = [];
     const fileOf = (p) => { if (!NT.files.has(p)) NT.files.set(p, { line: [], file: [], away: [], open: 0 }); return NT.files.get(p); };
     const m = M('base');
     const generated = new Set(m.generated.map((g) => g.p));
     d.notes.forEach((n) => {
       NT.byN.set(n.n, n);
+      // On the review itself: it shows in its own view, under no file.
+      if (n.review) { NT.review.push(n); return; }
       const e = fileOf(n.path);
       if (!n.resolved) e.open++;
       if (n.file) { e.file.push(n); return; }
@@ -2255,7 +2290,15 @@
         if (n.resolved && n.resolved.by && !(b && b.resolved)) news.push(`${n.resolved.by} resolved N${n.n}`);
       });
       if (wrote.length) news.unshift(`${wrote[0].comments[0].by} wrote ${nList(wrote.map((n) => n.n))}`);
+      // An agent's draft, posted on GitHub for the note that asked for it.
+      d.notes.forEach((n) => {
+        const b = before.get(n.n), old = new Set(((b && b.said) || []).map((s) => s.id + s.at));
+        const fresh = (n.said || []).filter((s) => s.by && !old.has(s.id + s.at));
+        if (fresh.length) news.push(`${fresh[0].by} drafted N${n.n}’s comment: it’s pending in your review, to edit and send`);
+      });
     }
+    // untangle posted on GitHub on its own: GitHub's side is read again.
+    if (was && d.gh !== was.gh) ghLoad(true);
     // Where each agent's chat went since: it began listening, another chat took over, it left, or
     // a line from untangle waits while it's busy.
     const before = new Map((was ? was.agents : []).map((a) => [a.name, a]));
@@ -2532,8 +2575,9 @@
   }
   // The buttons to send a comment: into the pending review, or (with none pending) on its own. In
   // local mode, one: Add note (on a GitHub thread, a note that quotes it).
-  function sendButtons(act, attrs) {
-    if (localMode()) return [['Add note', `data-act="${act === 'gh-reply' ? 'nt-quote' : 'nt-add'}" ${attrs || ''}`, true]];
+  // `github`: the box is a comment's whatever the Review menu says (its own voice, chosen by its caller).
+  function sendButtons(act, attrs, github) {
+    if (!github && localMode()) return noteButtons(act === 'gh-reply' ? 'nt-thread' : 'nt-add', attrs, 'Add note');
     if (GH.data && GH.data.pending) return [['Add review comment', `data-act="${act}" data-mode="review" ${attrs || ''}`, true]];
     return [['Add single comment', `data-act="${act}" data-mode="single" ${attrs || ''}`, false], ['Start a review', `data-act="${act}" data-mode="review" ${attrs || ''}`, true]];
   }
@@ -2547,22 +2591,68 @@
   // run show only their time. Its tools show under the pointer.
   // On a touch screen, with no pointer, they're behind a ⋯ instead, as a menu.
   const cmMoreHtml = (key) => `<button type="button" class="ib cm-more" data-act="menu" data-menu="cm:${esc(key)}" aria-haspopup="menu" aria-expanded="${MENU.open === 'cm:' + key}" title="More" aria-label="More">${ICON.more}</button>`;
-  function commentHtml(c, kind, first) {
+  // `o.thread`: the review thread it's in; `o.fold`: it folds, as a card of the review's thread does.
+  function commentHtml(c, kind, first, o) {
+    o = o || {};
     const editKey = 'edit:' + c.id;
+    const drafted = draftOf(c);
+    // Ask the agent about it: a note under it, or in its thread, that quotes it.
+    const ask = NT.on && NT.data ? `<button type="button" class="ib txt nt" data-act="nt-ask" data-kind="${kind}" data-id="${esc(c.id)}"${o.thread ? ` data-thread="${esc(o.thread)}"` : ''} title="Ask ${esc(agentWho())} about it: a note, kept here" aria-label="Ask ${esc(agentWho())}">${ICON.discussion}<span class="ib-t">Ask ${esc(agentWho())}</span></button>` : '';
     const tools = (c.canReact ? iconBtn(ICON.smiley, 'React', `data-act="react-open" data-subject="${esc(c.id)}"`) : '')
-      + (c.canEdit && kind !== 'pr' ? iconBtn(ICON.edit, 'Edit', `data-act="edit-open" data-id="${esc(c.id)}"`) : '')
       + (c.canDelete && kind !== 'pr' ? iconBtn(ICON.trash, 'Delete', `data-act="gh-delete" data-id="${esc(c.id)}" data-kind="${kind}"${busyAttr('del:' + c.id)}`) : '')
-      + (c.url ? `<a class="ib" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub">${ICON.external}</a>` : '');
+      + (c.url ? `<a class="ib" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub">${ICON.external}</a>` : '')
+      + (c.canEdit && kind !== 'pr' ? iconBtn(ICON.edit, 'Edit', `data-act="edit-open" data-id="${esc(c.id)}"`) : '')
+      + ask;
+    const folded = o.fold && GH.folded.has(c.id);
     const body = GH.editing === c.id
       ? composerHtml(editKey, { buttons: [['Update comment', `data-act="gh-edit" data-id="${esc(c.id)}" data-kind="${kind}"`, true]], cancel: 'edit-cancel' })
-      : `<div class="cm-body">${c.html ? clean(c.html) : '<p class="muted">No description.</p>'}</div>`;
+      : folded ? `<div class="cm-body cm-folded">${esc(trunc((c.body || '').replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim(), 160)) || '…'}</div>`
+        : `<div class="cm-body">${c.html ? clean(c.html) : '<p class="muted">No description.</p>'}</div>`;
     const err = GH.errors.get('del:' + c.id);
     const when = `<span title="${esc(new Date(c.created).toLocaleString())}">${ago(c.created)}${c.edited ? ' · edited' : ''}</span>`;
     // A role shows only for the pull request's author.
     const author = kind !== 'pr' && GH.data && GH.data.pr.author && c.author.login === GH.data.pr.author.login ? '<span class="cm-tag">Author</span>' : '';
-    const pending = c.pending ? '<span class="cm-tag pending">Pending</span>' : '';
-    const head = first ? `<div class="cm-h"><a class="cm-who" href="${esc(c.author.url)}" target="_blank" rel="noopener noreferrer">${esc(c.author.login)}</a>${author}${when}${pending}</div>` : '';
-    return `<div class="cm${first ? ' first' : ''}${c.pending ? ' pending' : ''}" data-comment="${esc(c.id)}">${first ? avatar(c.author) : '<span></span>'}<div class="cm-main">${head}${!first && c.pending ? pending : ''}${body}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}${reactionsHtml(c)}</div>${first ? '' : `<span class="cm-t">${when}</span>`}${tools ? `<span class="cm-tools">${tools}</span>${cmMoreHtml('gh:' + c.id)}` : ''}</div>`;
+    const pending = (c.pending ? '<span class="cm-tag pending">Pending</span>' : '')
+      + (drafted ? `<span class="cm-tag draft" title="${esc(drafted.s.by)} drafted it, and it reads as it drafted it: make it yours before you send your review">Draft</span>` : '');
+    const fold = o.fold ? `<button type="button" class="ib cm-fold" data-act="card-fold" data-id="${esc(c.id)}" aria-expanded="${!folded}" title="${folded ? 'Open it' : 'Fold it'}" aria-label="${folded ? 'Open it' : 'Fold it'}">${folded ? ICON.chevronRight : ICON.chevronDown}</button>` : '';
+    const head = first ? `<div class="cm-h">${fold}<a class="cm-who" href="${esc(c.author.url)}" target="_blank" rel="noopener noreferrer">${esc(c.author.login)}</a>${author}${o.label || ''}${when}${pending}</div>` : '';
+    return `<div class="cm${first ? ' first' : ''}${c.pending ? ' pending' : ''}${drafted ? ' drafted' : ''}${folded ? ' folded' : ''}" data-comment="${esc(c.id)}">${first ? avatar(c.author) : '<span></span>'}<div class="cm-main">${head}${!first && (c.pending || drafted) ? pending : ''}${body}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}${folded ? '' : reactionsHtml(c)}</div>${first ? '' : `<span class="cm-t">${when}</span>`}${tools ? `<span class="cm-tools">${tools}</span>${cmMoreHtml('gh:' + c.id)}` : ''}</div>`;
+  }
+  // The buttons a box sends a note with: Reply (or Add note), and the ask for a draft before it.
+  const noteButtons = (act, attrs, label) => (NT.on && canPost() ? [['Draft comment', `data-act="nt-draft" data-via="${act}" data-draft-ask="1" ${attrs || ''} title="Ask ${esc(agentWho())} for the comment: its answer is your pending comment on GitHub, to edit and send"`, false]] : [])
+    .concat([[label, `data-act="${act}" ${attrs || ''}`, true]]);
+  // A GitHub thread's comments and its notes' comments, by time. A run of talk that a comment
+  // follows folds to one line, "N5 · 3 notes with Claude", that opens it again.
+  function talkHtml(key, comments, notes, kind, thread) {
+    // A comment a note made comes after the talk that made it, whatever GitHub's clock says.
+    const made = new Map(notes.flatMap((n) => (n.said || []).map((x) => [x.id, Date.parse(x.at)])));
+    const items = comments.map((c) => ({ at: Math.max(Date.parse(c.created), made.get(c.id) || 0), c }))
+      .concat(notes.flatMap((n) => n.comments.map((c, i) => ({ at: Date.parse(c.at), nc: c, n, lead: i === 0 }))))
+      .sort((x, y) => x.at - y.at);
+    const runs = [];
+    items.forEach((it) => { const last = runs[runs.length - 1]; if (it.nc && last && last.notes) last.items.push(it); else runs.push({ notes: !!it.nc, items: [it] }); });
+    let h = '', prev = null;
+    runs.forEach((r, k) => {
+      if (!r.notes) {
+        const c = r.items[0].c, first = !prev || prev.author.login !== c.author.login;
+        prev = c;
+        h += commentHtml(c, kind, first, { thread });
+        return;
+      }
+      prev = null;
+      const fold = key + ':' + r.items[0].nc.id;
+      const foldable = runs.slice(k + 1).some((x) => !x.notes);
+      const open = !foldable || NT.unfold.has(fold);
+      if (foldable) {
+        const who = (r.items.find((x) => x.nc.by) || {}).nc;
+        const k2 = r.items.length;
+        h += `<button type="button" class="th-talk" data-act="nt-talk" data-key="${esc(fold)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><b>${nList([...new Set(r.items.map((x) => x.n.n))])}</b> <span>· ${k2} note${k2 === 1 ? '' : 's'} with ${esc(who ? who.by : agentWho())}</span> <span class="muted">· only here</span></button>`;
+      }
+      if (!open) return;
+      let p = null;
+      r.items.forEach((x) => { h += noteCommentHtml(x.n, x.nc, !p || p.nc.by !== x.nc.by || p.n !== x.n || x.lead, x.lead); p = x; });
+    });
+    return h;
   }
   // A review thread, under its line: one quiet block with GitHub's blue on its edge. Resolved
   // threads fold, as on GitHub.
@@ -2578,12 +2668,18 @@
     }
     if (!open) return h + '</div>';
     if (t.outdated && !o.head) h += '<div class="th-note">Outdated: the code changed since.</div>';
-    let prev = null;
-    h += t.comments.map((c) => { const first = !prev || prev.author.login !== c.author.login; prev = c; return commentHtml(c, 'review', first); }).join('');
-    const key = 'reply:' + t.id, err = GH.errors.get('resolve:' + t.id);
+    const notes = NT.on ? notesIn(t) : [];
+    h += talkHtml(t.id, t.comments, notes, 'review', t.id);
+    const key = 'reply:' + t.id, err = GH.errors.get('resolve:' + t.id) || NT.errors.get(key);
+    // The note its box adds to: the open one in it, else a new one about it.
+    const talk = notes.filter((n) => !n.resolved).pop();
+    const local = voiceOf(key) === 'local';
     const res = t.resolved ? (t.canUnresolve ? 'Unresolve' : '') : t.canResolve ? 'Resolve' : '';
     const resBtn = res ? `<button type="button" class="btn" data-act="gh-resolve" data-thread="${esc(t.id)}" data-on="${!t.resolved}" title="${t.resolved ? 'Open the conversation again' : 'Resolve the conversation'}"${busyAttr('resolve:' + t.id)}>${GH.busy === 'resolve:' + t.id ? 'Saving…' : res}</button>` : '';
-    const reply = GH.replying.has(t.id) || drafts.has(key) ? composerHtml(key, { local: localMode(), dest: true, mode: true, placeholder: localMode() ? 'A note on this thread, for your agent' : 'Reply…', rows: 3, buttons: sendButtons('gh-reply', `data-thread="${esc(t.id)}"`), cancel: 'reply-cancel' })
+    const reply = GH.replying.has(t.id) || drafts.has(key) ? composerHtml(key, {
+      local, dest: true, mode: true, placeholder: local ? `A note on this thread, for ${agentWho()}` : 'Reply…', rows: 3, cancel: 'reply-cancel',
+      buttons: local ? noteButtons('nt-thread', `data-thread="${esc(t.id)}"`, 'Add note') : talk ? sendButtons('nt-comment', `data-n="${talk.n}" data-thread="${esc(t.id)}"`, true) : sendButtons('gh-reply', `data-thread="${esc(t.id)}"`, true),
+    })
       : t.canReply ? `<button type="button" class="th-reply" data-act="reply-open" data-thread="${esc(t.id)}">Reply…</button>` : '';
     if (reply || resBtn || err) h += `<div class="th-f">${reply}${resBtn}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>`;
     return h + '</div>';
@@ -2600,7 +2696,7 @@
   function threadsAt(f, side, line) {
     if (line == null) return '';
     const k = f.p + '\n' + side + '\n' + line;
-    const list = GH.on && GH.data ? GH.anchors.get(k) : null, notes = NT.data ? NT.anchors.get(k) : null;
+    const list = GH.on && GH.data ? GH.anchors.get(k) : null, notes = NT.data && NT.anchors.has(k) ? NT.anchors.get(k).filter((n) => !inThread(n)) : null;
     let h = (list ? list.map((t) => threadHtml(t)).join('') : '') + (notes ? notes.map((n) => noteHtml(n)).join('') : '');
     const c = state.compose;
     if (c && !compact() && c.path === f.p && c.side === side && c.line === line) h += newThreadHtml(c);
@@ -2640,7 +2736,7 @@
       MARKS.byId.set(id, { path, kind, keys });
     };
     if (GH.on && GH.data) GH.data.threads.forEach((t) => { if (!t.resolved && !t.file && t.at != null) put('gh:' + t.id, 'gh', t.path, t.from != null ? { side: t.startSide || t.side, line: t.from } : null, { side: t.side, line: t.at }); });
-    if (NT.data) NT.data.notes.forEach((n) => { if (!n.resolved && !n.file && !n.gone && n.line != null) put('nt:' + n.n, 'nt', n.path, n.startLine != null ? { side: n.startSide || n.side, line: n.startLine } : null, { side: n.side, line: n.line }); });
+    if (NT.data) NT.data.notes.forEach((n) => { if (!n.resolved && !n.file && !n.gone && !n.review && n.line != null && !inThread(n)) put('nt:' + n.n, 'nt', n.path, n.startLine != null ? { side: n.startSide || n.side, line: n.startLine } : null, { side: n.side, line: n.line }); });
     return MARKS;
   }
   // A row's marks: ' cm-on' under an open thread, ' nt-on' under an open note (a split row: either side's).
@@ -2655,20 +2751,21 @@
   // and a new file comment.
   function fileThreadsHtml(f) {
     const e = (GH.on && GH.data && GH.files.get(f.p)) || { file: [], away: [] };
-    const nt = (NT.data && NT.files.get(f.p)) || { file: [], away: [] };
+    let nt = (NT.data && NT.files.get(f.p)) || { file: [], away: [] };
     let h = '';
     if (GH.fileCompose === f.p) {
       const key = 'file:' + f.p, local = localMode();
       h += `<div class="th new${local ? ' note' : ''}" data-thread="new"><div class="th-new-h">${ICON.comment}<b>${local ? 'Note' : 'Comment'} on the file</b></div>${composerHtml(key, { local, dest: true, mode: true, buttons: sendButtons('gh-thread', 'data-file="1"'), cancel: 'file-cancel' })}</div>`;
     }
     h += e.file.map((t) => threadHtml(t, { head: '<b>On the file</b>' })).join('');
-    h += nt.file.map((n) => noteHtml(n, { head: '<b>On the file</b>' })).join('');
+    h += nt.file.filter((n) => !inThread(n)).map((n) => noteHtml(n, { head: '<b>On the file</b>' })).join('');
     if (e.away.length) {
       const open = GH.away.has(f.p);
       h += `<button type="button" class="th-away" data-act="away-toggle" data-p="${esc(f.p)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${e.away.length} thread${e.away.length > 1 ? 's' : ''} on code this version doesn’t have (outdated${GH.stale ? ', or on newer commits' : ''})</button>`;
       if (open) h += e.away.map((t) => hunkSnippet(t) + threadHtml(t, { head: `<b>${t.outdated ? 'Outdated' : 'On a newer commit'}</b>` })).join('');
     }
     // Notes whose lines went, or left the diff, stay open here until folded.
+    nt = { ...nt, away: nt.away.filter((n) => !inThread(n)) };
     if (nt.away.length) {
       const open = !NT.folded.has(f.p);
       h += `<button type="button" class="th-away note" data-act="nt-away" data-p="${esc(f.p)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${nt.away.length} note${nt.away.length > 1 ? 's' : ''} on code this version doesn’t show</button>`;
@@ -2684,6 +2781,7 @@
   }
   // A note's lines, as a thread's are said: line 28, lines 47 to 49, line −12 (the base's).
   function noteLines(n) {
+    if (n.review) return !n.about ? 'on the review' : n.about.kind === 'pr' ? 'about the description' : `about ${n.about.author || 'a'}’s comment`;
     if (n.file) return 'the file';
     const sign = n.side === 'LEFT' ? '−' : '';
     return n.startLine != null && n.startLine !== n.line ? `lines ${sign}${n.startLine} to ${sign}${n.line}` : `line ${sign}${n.line}`;
@@ -2717,15 +2815,18 @@
     // Your comments can be edited and deleted; an agent's note, deleted (its answers stay its own).
     // What an agent wrote copies as it wrote it, to post or keep elsewhere.
     const trash = iconBtn(ICON.trash, lead ? 'Delete the note' : 'Delete', `data-act="nt-delete" data-n="${n.n}" data-id="${esc(c.id)}"${ntBusyAttr('del:' + id)}`);
-    const copy = iconBtn(ICON.copy, lead ? 'Copy the note’s text' : 'Copy its text', `data-act="nt-copy-text" data-n="${n.n}" data-id="${esc(c.id)}"`);
-    const tools = mine ? iconBtn(ICON.edit, 'Edit', `data-act="nt-edit-open" data-n="${n.n}" data-id="${esc(c.id)}"`) + trash : copy + (lead ? trash : '');
+    const copy = c.body ? iconBtn(ICON.copy, lead ? 'Copy the note’s text' : 'Copy its text', `data-act="nt-copy-text" data-n="${n.n}" data-id="${esc(c.id)}"`) : '';
+    // Comment this: what was said in the talk, in a comment box on GitHub, to edit and post.
+    const say = c.body && canSay(n) ? `<button type="button" class="ib txt gh" data-act="nt-comment-this" data-n="${n.n}" data-id="${esc(c.id)}" title="Comment this on GitHub: it fills a comment box, for you to edit and post" aria-label="Comment this">${ICON.comment}<span class="ib-t">Comment this</span></button>` : '';
+    const tools = (mine ? iconBtn(ICON.edit, 'Edit', `data-act="nt-edit-open" data-n="${n.n}" data-id="${esc(c.id)}"`) + trash : lead ? trash : '') + copy + say;
     const body = NT.editing === id
       ? composerHtml(key, { local: true, buttons: [[lead ? 'Update note' : 'Update reply', `data-act="nt-edit" data-n="${n.n}" data-id="${esc(c.id)}"`, true]], cancel: 'nt-edit-cancel' })
-      : `<div class="cm-body">${noteMd(c.body)}</div>`;
+      : c.draft && !c.body ? '<div class="cm-body"><p class="muted">Asked for a draft comment.</p></div>' : `<div class="cm-body">${noteMd(c.body)}</div>`;
     const when = `<span title="${esc(new Date(c.at).toLocaleString())}">${ago(c.at)}${c.edited ? ' · edited' : ''}</span>`;
     const since = (what) => `<span class="cm-tag since" title="${what === 'Gone' ? 'The commits since you wrote it removed its lines' : 'The commits since you wrote it changed its lines: it’s on the lines that replaced them'}">${what} since <code>${esc(shortSha(n.wrote.head))}</code></span>`;
     const agentTag = mine ? '' : '<span class="cm-tag">Agent</span>';
-    const tags = lead ? '<span class="cm-tag local" title="Kept on this machine, not on GitHub">Local</span>' + agentTag + (n.gone ? since('Gone') : n.changed ? since('Changed') : '') + noteStatus(n) : agentTag;
+    const ask = c.draft ? '<span class="cm-tag ask" title="Its answer is a comment on GitHub, pending in your review, to edit and send">Draft comment</span>' : '';
+    const tags = (lead ? '<span class="cm-tag local" title="Kept on this machine, not on GitHub">Local</span>' + agentTag + (n.gone ? since('Gone') : n.changed ? since('Changed') : '') + noteStatus(n) : agentTag) + ask;
     const av = lead ? `<span class="nt-n" title="Note ${n.n}: “N${n.n}” names it to your agent">N${n.n}</span>` : mine ? '<span class="av"></span>' : AGENT_AV;
     const head = first ? `<div class="cm-h"><b class="cm-who">${mine ? 'You' : esc(c.by)}</b>${lead ? `<span>${esc(noteLines(n))}</span>` : ''}${tags}${when}</div>` : '';
     const err = NT.errors.get('del:' + id);
@@ -2737,27 +2838,41 @@
     o = o || {};
     const open = !n.resolved || NT.opened.has(n.n);
     const k = n.comments.length;
-    let h = `<div class="th note${n.resolved ? ' resolved' : ''}${n.resolved && n.resolved.by ? ' by-agent' : ''}" data-note="${n.n}">`;
+    // A note on the review that said something on the conversation shows those comments in its talk.
+    const said = n.review && GH.data ? GH.data.comments.filter((c) => (n.said || []).some((x) => x.id === c.id)) : [];
+    let h = `<div class="th note${said.length ? ' gh' : ''}${n.resolved ? ' resolved' : ''}${n.resolved && n.resolved.by ? ' by-agent' : ''}" data-note="${n.n}">`;
     if (n.resolved || o.head) {
       const by = !n.resolved ? '' : n.resolved.by ? `<span class="ag-mark" aria-hidden="true">✦</span><span>Resolved by ${esc(n.resolved.by)}</span>` : `${ICON.check}<span>Resolved</span>`;
       h += `<button type="button" class="th-fold" data-act="nt-fold" data-n="${n.n}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${by}${o.head ? `<span>${o.head}</span>` : ''}<span class="muted">· N${n.n} · ${esc(noteLines(n))} · ${k} comment${k === 1 ? '' : 's'}</span></button>`;
     }
     if (!open) return h + '</div>';
-    if (n.quote) h += `<div class="nt-quote"><span class="muted">On ${esc(n.quote.author || 'a')}’s thread on GitHub</span><div class="cm-body">${noteMd(n.quote.body.split('\n').map((l) => '> ' + l).join('\n'))}</div></div>`;
-    let prev = null;
-    h += n.comments.map((c, i) => { const first = !prev || prev.by !== c.by || i === 1; prev = c; return noteCommentHtml(n, c, first, i === 0); }).join('');
+    // What it's about, quoted, when that isn't right above it.
+    if (n.about && !o.under) h += `<div class="nt-quote"><span class="muted">${n.about.kind === 'pr' ? 'About the description' : `About ${esc(n.about.author || 'a')}’s comment`} on GitHub</span><div class="cm-body">${noteMd(trunc(n.about.body, 600).split('\n').map((l) => '> ' + l).join('\n'))}</div></div>`;
+    if (said.length) h += talkHtml('n' + n.n, said, [n], 'issue');
+    else {
+      let prev = null;
+      h += n.comments.map((c, i) => { const first = !prev || prev.by !== c.by || i === 1; prev = c; return noteCommentHtml(n, c, first, i === 0); }).join('');
+    }
+    // A draft asked for on the review went into your review's summary.
+    const sum = (n.said || []).filter((x) => x.kind === 'summary').pop();
+    if (sum) h += `<div class="nt-said">${ICON.comment}<span>${esc(sum.by || 'Its')}’s answer went into your review’s summary.</span></div>`;
     if (n.changed && !n.gone && NT.was.has(n.n)) {
       const w = n.wrote, from = w.startLine != null ? w.startLine : w.line;
       h += `<div class="nt-was"><p>The lines it was written on, at <code>${esc(shortSha(w.head))}</code>:</p>${w.code.map((t, i) => `<div class="r"><span class="no">${from + i}</span><span class="tx">${esc(t) || ' '}</span></div>`).join('')}</div>`;
     }
-    const key = 'nreply:' + n.n, err = NT.errors.get('res:' + n.n) || NT.errors.get('post:' + n.n);
+    // Its box: a reply, or the ask for a draft; or, switched (as Comment this does), a comment on
+    // GitHub from it: on the conversation for a note on the review, else on its lines.
+    const key = 'nreply:' + n.n, err = NT.errors.get('res:' + n.n) || NT.errors.get(key);
+    const local = voiceOf(key, 'local') === 'local';
     const reply = NT.replying.has(n.n) || drafts.has(key)
-      ? composerHtml(key, { local: true, dest: true, placeholder: 'Reply…', rows: 3, buttons: [['Reply', `data-act="nt-reply" data-n="${n.n}"`, true]], cancel: 'nt-reply-cancel' })
+      ? composerHtml(key, {
+        local, dest: true, mode: canSay(n), placeholder: local ? 'Reply…' : n.review ? 'A comment on the conversation, on GitHub' : 'A comment on GitHub, on its lines', rows: 3, cancel: 'nt-reply-cancel',
+        buttons: local ? noteButtons('nt-reply', `data-n="${n.n}"`, 'Reply') : n.review ? [['Comment', `data-act="nt-comment" data-n="${n.n}" data-mode="single"`, true]] : sendButtons('nt-comment', `data-n="${n.n}"`, true),
+      })
       : `<button type="button" class="th-reply" data-act="nt-reply-open" data-n="${n.n}">Reply…</button>`;
     const btn = (act, label, title, extra) => `<button type="button" class="btn sm" data-act="${act}" data-n="${n.n}" title="${esc(title)}"${extra || ''}>${label}</button>`;
     const tools = (n.changed && !n.gone ? btn('nt-was', NT.was.has(n.n) ? 'Hide the lines it was on' : 'Show the lines it was on', `The lines you wrote it on, at ${shortSha(n.wrote.head)}`, ` aria-expanded="${NT.was.has(n.n)}"`) : '')
       + btn('nt-copy1', 'Copy', 'Copy this note for your agent')
-      + (!n.resolved && !n.gone && canPost() ? btn('nt-post1', NT.busy === 'post:' + n.n ? 'Posting…' : 'Post to GitHub', 'Post it into your pending review on GitHub: it leaves the notes', ntBusyAttr('post:' + n.n)) : '')
       + btn('nt-resolve', n.resolved ? 'Unresolve' : 'Resolve', n.resolved ? 'Open it again' : 'Resolve it: it folds away', ntBusyAttr('res:' + n.n));
     h += `<div class="th-f">${reply}<span class="th-tools">${tools}</span>${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>`;
     return h + '</div>';
@@ -2771,14 +2886,18 @@
     const add = (kind, list) => (list || []).forEach((t) => { out[kind]++; if (!t.resolved) out.open++; });
     for (let i = s0; i < e0; i++) {
       const r = meta[i];
-      if (r.n != null && r.t !== '-') { add('threads', GH.anchors.get(f.p + '\nRIGHT\n' + r.n)); add('notes', NT.anchors.get(f.p + '\nRIGHT\n' + r.n)); }
-      if (r.o != null && r.t !== '+') { add('threads', GH.anchors.get(f.p + '\nLEFT\n' + r.o)); add('notes', NT.anchors.get(f.p + '\nLEFT\n' + r.o)); }
+      // A note in a GitHub thread counts with it, not apart.
+      const own = (list) => list && list.filter((n) => !inThread(n));
+      if (r.n != null && r.t !== '-') { add('threads', GH.anchors.get(f.p + '\nRIGHT\n' + r.n)); add('notes', own(NT.anchors.get(f.p + '\nRIGHT\n' + r.n))); }
+      if (r.o != null && r.t !== '+') { add('threads', GH.anchors.get(f.p + '\nLEFT\n' + r.o)); add('notes', own(NT.anchors.get(f.p + '\nLEFT\n' + r.o))); }
     }
     return out;
   }
   const openThreadsHtml = (p) => {
-    const e = GH.on && GH.files.get(p), n = NT.files.get(p);
-    return (e && e.open ? `<span class="cm-cnt" title="Open threads">${ICON.comment}${e.open}</span>` : '') + (n && n.open ? `<span class="cm-cnt note" title="Open notes">${ICON.comment}${n.open}</span>` : '');
+    const e = GH.on && GH.files.get(p), f = NT.files.get(p);
+    // A note in a GitHub thread counts with the thread.
+    const n = f ? f.line.concat(f.file, f.away).filter((x) => !x.resolved && !inThread(x)).length : 0;
+    return (e && e.open ? `<span class="cm-cnt" title="Open threads">${ICON.comment}${e.open}</span>` : '') + (n ? `<span class="cm-cnt note" title="Open notes">${ICON.comment}${n}</span>` : '');
   };
   // A line of a file's diff by side: its hunk and row.
   function rowAt(path, side, line) {
@@ -2832,41 +2951,91 @@
     GH.reveal = t.id;
     render({ top: true });
   }
-  // The pull request's conversation: its description, comments and reviews, and a new comment.
+  // The review's own thread: the description, the conversation's comments and reviews, the notes
+  // on the review (yours and the agent's; one about a comment sits under it), and your pending
+  // review's summary. Each card folds, and the header folds or opens them all.
   function renderConversation() {
-    if (!GH.on) return `<div class="empty">${esc((CONFIG.github && CONFIG.github.off) || 'This review has no pull request.')}</div>`;
-    const d = GH.data;
-    if (!d) return `<div class="empty">${GH.error ? esc(GH.error) : 'Loading the conversation from GitHub…'}</div>`;
-    const pr = d.pr;
-    const state1 = pr.draft ? 'Draft' : { OPEN: 'Open', MERGED: 'Merged', CLOSED: 'Closed' }[pr.state] || pr.state;
-    const decision = { APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', REVIEW_REQUIRED: 'Review required' }[pr.decision] || '';
-    const open = d.threads.filter((t) => !t.resolved).length;
-    let h = headerHtml({
-      crumbs: `<button type="button" data-tab="comments" title="Show the threads">Conversation</button>${SEP}<b class="ui" title="${esc(pr.title)}">${esc(pr.title)}</b>`,
-      facts: `<span class="pr-state ${esc(pr.state.toLowerCase())}${pr.draft ? ' draft' : ''}">${state1}</span>${decision ? ` · ${decision}` : ''} · ${esc(pr.author.login)} opened it ${ago(pr.created)} · ${open} open thread${open === 1 ? '' : 's'}`,
-      action: `<a class="btn" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>`,
-    });
-    h += '<div class="conv">' + commentHtml({ id: pr.id, author: pr.author, association: '', html: pr.html, created: pr.created, edited: null, url: pr.url, pending: false, canEdit: false, canDelete: false, canReact: pr.canReact, reactions: pr.reactions }, 'pr', true);
-    const items = d.comments.map((c) => ({ at: c.created, c })).concat(d.reviews.map((r) => ({ at: r.created, r }))).sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
-    const VERB = { APPROVED: ['approved these changes', 'ok'], CHANGES_REQUESTED: ['requested changes', 'no'], COMMENTED: ['reviewed', ''], DISMISSED: ['reviewed (dismissed)', ''] };
-    items.forEach(({ c, r }) => {
-      if (c) { h += commentHtml(c, 'issue', true); return; }
-      const [verb, cls] = VERB[r.state] || ['reviewed', ''];
-      h += `<div class="tl-ev ${cls}">${avatar(r.author, 40)}<span><a class="cm-who" href="${esc(r.author.url)}" target="_blank" rel="noopener noreferrer">${esc(r.author.login)}</a> ${verb}${r.comments ? ` · ${r.comments} comment${r.comments > 1 ? 's' : ''}` : ''} <span class="muted">${ago(r.created)}</span></span></div>`;
-      if (r.body) h += `<div class="tl-body cm-body">${clean(r.html)}</div>`;
-    });
-    h += `<div class="conv-new">${composerHtml('issue', { placeholder: 'Add a comment to the conversation', buttons: [['Comment', 'data-act="gh-comment"', true]] })}</div></div>`;
+    const d = GH.on ? GH.data : null;
+    if (GH.on && !d && !NT.on) return `<div class="empty">${GH.error ? esc(GH.error) : 'Loading the conversation from GitHub…'}</div>`;
+    const notes = NT.on && NT.data ? NT.review : [];
+    const under = (kind, id) => notes.filter((n) => n.about && n.about.kind === kind && (kind === 'pr' || n.about.comment === id)).map((n) => `<div class="cv-under">${noteHtml(n, { under: true })}</div>`).join('') + askHtml(kind, id);
+    // Comments a note made are in its talk, not in the timeline.
+    const told = new Set(notes.flatMap((n) => (n.said || []).map((x) => x.id)));
+    let h;
+    if (d) {
+      const pr = d.pr;
+      const state1 = pr.draft ? 'Draft' : { OPEN: 'Open', MERGED: 'Merged', CLOSED: 'Closed' }[pr.state] || pr.state;
+      const decision = { APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', REVIEW_REQUIRED: 'Review required' }[pr.decision] || '';
+      const open = d.threads.filter((t) => !t.resolved).length;
+      const cards = cardIds();
+      const allFolded = cards.length > 0 && cards.every((id) => GH.folded.has(id));
+      h = headerHtml({
+        crumbs: `<button type="button" data-tab="comments" title="Show the threads">The review</button>${SEP}<b class="ui" title="${esc(pr.title)}">${esc(pr.title)}</b>`,
+        facts: `<span class="pr-state ${esc(pr.state.toLowerCase())}${pr.draft ? ' draft' : ''}">${state1}</span>${decision ? ` · ${decision}` : ''} · ${esc(pr.author.login)} opened it ${ago(pr.created)} · ${open} open thread${open === 1 ? '' : 's'}`,
+        action: `<button type="button" class="btn" data-act="cards-fold" data-on="${!allFolded}" title="${allFolded ? 'Open every card' : 'Fold every card to a line'}">${allFolded ? 'Open all' : 'Fold all'}</button><a class="btn" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">Open on GitHub</a>`,
+      });
+      h += '<div class="conv">' + commentHtml({ id: pr.id, author: pr.author, association: '', html: pr.html, body: pr.body, created: pr.created, edited: null, url: pr.url, pending: false, canEdit: false, canDelete: false, canReact: pr.canReact, reactions: pr.reactions }, 'pr', true, { fold: true, label: '<span class="cm-tag">Description</span>' }) + under('pr', pr.id);
+      const items = d.comments.filter((c) => !told.has(c.id)).map((c) => ({ at: c.created, c }))
+        .concat(d.reviews.map((r) => ({ at: r.created, r })))
+        .concat(notes.filter((n) => !n.about).map((n) => ({ at: n.comments[0].at, n })))
+        .sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+      const VERB = { APPROVED: ['approved these changes', 'ok'], CHANGES_REQUESTED: ['requested changes', 'no'], COMMENTED: ['reviewed', ''], DISMISSED: ['reviewed (dismissed)', ''] };
+      items.forEach(({ c, r, n }) => {
+        if (n) { h += noteHtml(n); return; }
+        if (c) { h += commentHtml(c, 'issue', true, { fold: true }) + under('comment', c.id); return; }
+        const [verb, cls] = VERB[r.state] || ['reviewed', ''];
+        const folded = GH.folded.has(r.id);
+        const fold = r.body ? `<button type="button" class="ib cm-fold" data-act="card-fold" data-id="${esc(r.id)}" aria-expanded="${!folded}" title="${folded ? 'Open it' : 'Fold it'}" aria-label="${folded ? 'Open it' : 'Fold it'}">${folded ? ICON.chevronRight : ICON.chevronDown}</button>` : '';
+        h += `<div class="tl-ev ${cls}">${fold}${avatar(r.author, 40)}<span><a class="cm-who" href="${esc(r.author.url)}" target="_blank" rel="noopener noreferrer">${esc(r.author.login)}</a> ${verb}${r.comments ? ` · ${r.comments} comment${r.comments > 1 ? 's' : ''}` : ''} <span class="muted">${ago(r.created)}</span></span></div>`;
+        if (r.body && !folded) h += `<div class="tl-body cm-body">${clean(r.html)}</div>`;
+      });
+      h += summaryHtml(d);
+    } else {
+      // No pull request on GitHub: the notes on the review, alone.
+      const open = notes.filter((n) => !n.resolved).length;
+      h = headerHtml({
+        crumbs: `<button type="button" data-tab="comments" title="Show the threads">Threads</button>${SEP}<b class="ui">The review</b>`,
+        facts: GH.on && !d ? (GH.error ? esc(GH.error) : 'Loading the conversation from GitHub…') : `${open} open note${open === 1 ? '' : 's'} on the review · on no line`,
+      });
+      h += '<div class="conv">' + (notes.length ? notes.map((n) => noteHtml(n)).join('') : `<p class="onrev-none">A note on the review is for what has no line: how to go on, a question about the whole change, or what ${esc(agentWho())} found when it had nothing to say on a line. It reaches ${esc(agentWho())} as your notes on lines do.</p>`);
+    }
+    // The box: a note to the agent about the whole review, or, switched, a comment on the conversation.
+    const local = !d || voiceOf('issue') === 'local';
+    h += `<div class="conv-new">${composerHtml('issue', {
+      local, dest: true, mode: !!d, rows: 3, placeholder: local ? `Write to ${agentWho()} about the review as a whole` : 'Add a comment to the conversation',
+      buttons: local ? noteButtons('nt-review-add', '', 'Add note') : [['Comment', 'data-act="gh-comment"', true]],
+    })}</div></div>`;
     return h;
   }
-  // The notes in the Threads tab: open ones in the files' order, then the resolved ones.
+  // The cards of the review's thread that fold: the description, comments and reviews that say something.
+  const cardIds = () => { const d = GH.data; return !d ? [] : [d.pr.id].concat(d.comments.map((c) => c.id), d.reviews.filter((r) => r.body).map((r) => r.id)); };
+  // A note being written about a comment of the conversation, or the description, under it.
+  function askHtml(kind, id) {
+    const key = `ask:${kind}:${id}`;
+    if (!GH.asking.has(key) && !drafts.has(key)) return '';
+    return `<div class="cv-under"><div class="th new note" data-ask="${esc(key)}"><div class="th-new-h">${ICON.discussion}<b>A note about ${kind === 'pr' ? 'the description' : 'this comment'}</b><span class="muted">for ${esc(agentWho())}, kept here</span></div>${composerHtml(key, { local: true, dest: true, rows: 3, placeholder: `Ask ${agentWho()} about it…`, buttons: noteButtons('nt-about-add', `data-about="${kind}" data-id="${esc(id)}"`, 'Add note'), cancel: 'nt-ask-cancel' })}</div></div>`;
+  }
+  // Your pending review's summary: the agent's draft, when you asked for one on the review, yours to
+  // edit and send with the review.
+  function summaryHtml(d) {
+    const p = d.pending;
+    if (!p || !p.body) return '';
+    const x = NT.data ? NT.data.notes.flatMap((n) => (n.said || []).filter((s) => s.kind === 'summary' && s.id === p.id && s.by)).pop() : null;
+    const drafted = !!x && x.body.trim() === p.body.trim();
+    const editing = GH.editing === 'summary';
+    const body = editing ? composerHtml('summary', { placeholder: 'Your review’s summary', buttons: [['Update summary', 'data-act="gh-summary"', true]], cancel: 'summary-cancel' }) : `<div class="cm-body">${noteMd(p.body)}</div>`;
+    return `<div class="cm first pending cv-sum${drafted ? ' drafted' : ''}">${avatar(d.viewer || {})}<div class="cm-main"><div class="cm-h"><b class="cm-who">Your review</b><span class="cm-tag pending">Pending</span>${drafted ? `<span class="cm-tag draft" title="${esc(x.by)} drafted it, and it reads as it drafted it: make it yours before you send your review">Draft</span>` : ''}<span class="muted">${p.comments ? `${p.comments} comment${p.comments === 1 ? '' : 's'} with it · ` : ''}only you see it until you send it</span></div>${body}${editing ? '' : '<div class="cv-sum-f"><button type="button" class="btn sm" data-act="summary-edit">Edit</button><button type="button" class="btn sm primary" data-act="review-toggle">Finish review</button></div>'}</div></div>`;
+  }
+  // The notes in the Threads tab: those of lines and files that aren't in a GitHub thread, open
+  // ones in the files' order, then the resolved ones. Notes on the review are in its own row.
   function notesTabHtml() {
     const d = NT.data;
     if (!d) return `<div class="sb-gh">${NT.error ? `<span class="d">${esc(NT.error)}</span>` : 'Loading the notes…'}</div>`;
     const order = new Map(M().files.map((f, i) => [f.p, i]));
-    const sorted = d.notes.slice().sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.line || 0) - (y.line || 0));
+    const sorted = d.notes.filter((n) => !n.review && !inThread(n)).sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.line || 0) - (y.line || 0));
     const row = (n) => {
       const last = n.comments[n.comments.length - 1];
-      const text = last.body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
+      const text = last.draft && !last.body ? 'Asked for a draft comment' : last.body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
       const where = n.file ? 'file' : n.startLine != null ? `${n.startLine}–${n.line}` : n.line;
       const mk = n.resolved ? (n.resolved.by ? '<i class="mk ok ag" aria-hidden="true">✦</i>' : `<i class="mk ok">${ICON.check}</i>`) : `<i class="mk note${n.changed || n.gone ? ' ch' : ''}"></i>`;
       const who = last.by ? `${last.by}: ` : n.comments.length > 1 ? 'You: ' : '';
@@ -2881,6 +3050,23 @@
     }
     return h;
   }
+  // The review's own row, first in the Threads tab: its thread holds the description, the
+  // conversation, the notes on the review and your pending review's summary.
+  function reviewRowHtml(v) {
+    const d = GH.on ? GH.data : null;
+    const notes = NT.on ? NT.review : [];
+    const open = notes.filter((n) => !n.resolved).length;
+    const flat = (t) => (t || '').replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
+    // Its latest word: your pending summary, a note on the review, or the conversation's last comment.
+    const latest = [];
+    if (d) d.comments.forEach((c) => latest.push({ at: c.created, text: `${c.author.login}: ${flat(c.body)}` }));
+    notes.forEach((n) => { const c = n.comments[n.comments.length - 1]; latest.push({ at: c.at, text: `${c.by || 'You'}: ${c.draft && !c.body ? 'Asked for a draft comment' : flat(c.body)}` }); });
+    latest.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+    const sn = d && d.pending && d.pending.body ? `Your pending review: ${flat(d.pending.body)}` : latest.length ? latest[latest.length - 1].text : d ? flat(d.pr.title) : 'Notes about the whole review, for your agent';
+    const k = d ? d.comments.length : 0;
+    const counts = (k ? `<span class="n gh" title="${k} comment${k === 1 ? '' : 's'} on the conversation">${k}</span>` : '') + (open ? `<span class="n nt" title="${open} open note${open === 1 ? '' : 's'} on the review">${open}</span>` : '');
+    return `<button type="button" class="sb-row sb-rv" data-act="conversation"${v.kind === 'conversation' ? ' aria-current="true"' : ''} title="The review’s own thread: ${d ? 'the description, the conversation, ' : ''}the notes on the review${d ? ' and your pending review' : ''}"><span class="tw">${ICON.discussion}</span><span class="nm ui">The review<span class="sn">${esc(trunc(sn, 90))}</span></span><span class="cnt">${counts}</span></button>`;
+  }
   // A section of the Threads tab, open or folded (kept in this browser): Notes, or From GitHub.
   const sectionOpen = (key) => !(Array.isArray(UI.foldedThreads) && UI.foldedThreads.includes(key));
   function threadsSectionHtml(key, label, title, count, body) {
@@ -2888,15 +3074,17 @@
     return `<button type="button" class="sb-sec ${key}" data-act="threads-fold" data-key="${key}" aria-expanded="${open}" title="${esc(title)}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><i class="sw" aria-hidden="true"></i><span class="nm">${label}</span><span class="cnt">${count}</span></button>`
       + (open ? `<div class="sb-sec-body">${body}</div>` : '');
   }
-  // The Threads tab: the notes (in local mode, or when there are some) and what comes from GitHub,
-  // each a section that folds; then the conversation, and threads, open ones first, in the files' order.
+  // The Threads tab: the review's own row first; then the notes (in local mode, or when there are
+  // some) and the threads on GitHub, each a section that folds, with nothing grouped under them but
+  // what's resolved.
   function commentsTabHtml(v) {
+    const top = GH.on || NT.on ? reviewRowHtml(v) : '';
     const gh = GH.on ? githubTabHtml(v) : `<div class="sb-gh">${esc((CONFIG.github && CONFIG.github.off) || 'This review has no pull request: comments stay here, as notes.')}</div>`;
-    if (!NT.on || !(localMode() || (NT.data && NT.data.notes.length))) return gh;
-    const notes = NT.data ? NT.data.notes.filter((n) => !n.resolved).length : '';
+    if (!NT.on || !(localMode() || (NT.data && (NT.data.notes.length || NT.data.agents.length)))) return top + gh;
+    const notes = NT.data ? NT.data.notes.filter((n) => !n.resolved && !n.review && !inThread(n)).length : '';
     const threads = GH.data ? GH.data.threads.filter((t) => !t.resolved).length : '';
-    return threadsSectionHtml('notes', 'Notes', 'Kept on this machine, for your agent', notes, notesTabHtml())
-      + threadsSectionHtml('github', GH.on ? 'From GitHub' : 'GitHub', GH.on ? 'The pull request’s conversation and threads' : 'This review has no pull request', threads, gh);
+    return top + threadsSectionHtml('notes', 'Notes', 'Kept on this machine, for your agent', notes, notesTabHtml())
+      + threadsSectionHtml('github', 'GitHub', GH.on ? 'The pull request’s threads on GitHub, with your notes in them' : 'This review has no pull request', threads, gh);
   }
   function githubTabHtml(v) {
     const d = GH.data;
@@ -2904,19 +3092,21 @@
     if (!d) return h;
     if (GH.stale) h += `<div class="sb-warn">GitHub has newer commits (<code>${esc(d.pr.head.slice(0, 7))}</code>). Comments on lines wait for this review to be on them. <button type="button" class="linkish" data-act="refresh">Refresh</button></div>`;
     if (d.pending) h += `<button type="button" class="sb-pend" data-act="review-toggle">${d.pending.comments} pending comment${d.pending.comments === 1 ? '' : 's'} · Finish your review</button>`;
-    h += `<button type="button" class="sb-row" data-act="conversation"${v.kind === 'conversation' ? ' aria-current="true"' : ''} title="The description, ${d.comments.length} comment${d.comments.length === 1 ? '' : 's'} and ${d.reviews.length} review${d.reviews.length === 1 ? '' : 's'}"><span class="tw">${ICON.discussion}</span><span class="nm ui">Conversation</span><span class="cnt">${d.comments.length || ''}</span></button>`;
     const order = new Map(M().files.map((f, i) => [f.p, i]));
     const sorted = d.threads.slice().sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.at || x.originalLine || 0) - (y.at || y.originalLine || 0));
     const row = (t) => {
       const c = t.comments[0];
       const text = c ? c.body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim() : '';
       const where = t.file ? 'file' : t.at != null ? t.at : t.originalLine;
-      const pend = t.comments.some((x) => x.pending);
-      const mk = pend ? '<i class="mk pend"></i>' : t.resolved ? `<i class="mk ok">${ICON.check}</i>` : t.at == null && !t.file ? '<i class="mk away"></i>' : '<i class="mk gh"></i>';
-      return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}">${mk}<span class="nm">${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${t.comments.length > 1 ? t.comments.length : ''}</span></button>`;
+      const pend = t.comments.some((x) => x.pending), drafted = t.comments.some((x) => draftOf(x));
+      const mk = drafted ? '<i class="mk pend draft"></i>' : pend ? '<i class="mk pend"></i>' : t.resolved ? `<i class="mk ok">${ICON.check}</i>` : t.at == null && !t.file ? '<i class="mk away"></i>' : '<i class="mk gh"></i>';
+      // Its notes, counted by its comments: the talk with the agent in it, only here.
+      const talk = NT.on ? notesIn(t).reduce((k, n) => k + n.comments.length, 0) : 0;
+      const counts = `${t.comments.length > 1 || talk ? `<span class="n gh">${t.comments.length}</span>` : ''}${talk ? `<span class="n nt" title="${talk} note${talk === 1 ? '' : 's'} with your agent in it, only here">${talk}</span>` : ''}`;
+      return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}${drafted ? ' · a draft of your agent’s, pending' : ''}">${mk}<span class="nm">${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${counts}</span></button>`;
     };
     const open = sorted.filter((t) => !t.resolved), done = sorted.filter((t) => t.resolved);
-    h += `<div class="sb-group"><span>Open threads</span><span>${open.length}</span></div>` + (open.length ? open.map(row).join('') : '<div class="sb-gh">None open.</div>');
+    h += open.length ? open.map(row).join('') : '<div class="sb-gh">None open.</div>';
     if (done.length) {
       h += `<button type="button" class="sb-group" data-act="resolved-toggle" aria-expanded="${GH.showResolved}"><span>Resolved</span><span>${done.length} ${GH.showResolved ? '▾' : '▸'}</span></button>`;
       if (GH.showResolved) h += done.map(row).join('');
@@ -3508,7 +3698,7 @@
     if (v.kind === 'group') return m.groupById.has(Number(v.id)) ? v : null;
     if (v.kind === 'map') return v.family == null || m.families.some((f) => f.id === v.family) ? v : { kind: 'map', family: null };
     if (v.kind === 'history') return HX ? v : null;
-    if (v.kind === 'conversation') return GH.on ? v : null;
+    if (v.kind === 'conversation') return GH.on || NT.on ? v : null;
     return v;
   }
   function navGo(st) {
@@ -6791,7 +6981,7 @@
     }
     if (on('threads') && NT.data) {
       NT.data.notes.forEach((n) => {
-        const where = `N${n.n} ${fileName(n.path)}:${n.file ? 'file' : n.line}`;
+        const where = n.review ? `N${n.n} the review` : `N${n.n} ${fileName(n.path)}:${n.file ? 'file' : n.line}`;
         const text = n.comments[0].body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
         const label = `${where} ${trunc(text, 70)}`;
         const r = fuzzy(label, q);
@@ -6926,7 +7116,9 @@
   // Whether a composer may close: an unsent comment is only dropped when the user says so.
   const letGo = (key, original) => { const t = drafts.get(key) || ''; if (t.trim() && t !== original && !confirm('Discard this unsent comment?')) return false; setDraft(key, ''); GH.preview.delete(key); GH.errors.delete(key); NT.errors.delete(key); return true; };
   const findComment = (id) => { const d = GH.data; if (!d) return null; for (const t of d.threads) { const c = t.comments.find((x) => x.id === id); if (c) return c; } return d.comments.find((x) => x.id === id) || (d.pr.id === id ? d.pr : null); };
-  const GH_ACTS = new Set(['conversation', 'thread-open', 'thread-toggle', 'resolved-toggle', 'away-toggle', 'review-toggle', 'file-comment', 'file-cancel', 'compose-cancel', 'reply-open', 'reply-cancel', 'edit-open', 'edit-cancel', 'cmp-pane', 'cmp-suggest', 'react-open']);
+  const GH_ACTS = new Set(['conversation', 'thread-open', 'thread-toggle', 'resolved-toggle', 'away-toggle', 'review-toggle', 'file-comment', 'file-cancel', 'compose-cancel', 'reply-open', 'reply-cancel', 'edit-open', 'edit-cancel', 'cmp-pane', 'cmp-suggest', 'react-open', 'card-fold', 'cards-fold', 'summary-edit', 'summary-cancel']);
+  // Notes changed quietly, one after the other, as a thread resolved on GitHub resolves its notes.
+  const ntQuiet = (list) => list.reduce((p, payload) => p.then(() => api('notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(okJson).then((j) => { ntSet(j); render(); })), Promise.resolve()).catch(() => ntLoad());
   function ghClick(act, d) {
     if (act === 'conversation') { state.view = { kind: 'conversation' }; state.peek = null; return render({ top: true }); }
     if (act === 'gh-refresh') return ghLoad(false);
@@ -6934,7 +7126,17 @@
     if (act === 'thread-toggle') { GH.opened.has(d.thread) ? GH.opened.delete(d.thread) : GH.opened.add(d.thread); return render(); }
     if (act === 'resolved-toggle') { GH.showResolved = !GH.showResolved; return renderSide(); }
     if (act === 'away-toggle') { GH.away.has(d.p) ? GH.away.delete(d.p) : GH.away.add(d.p); hint({ away: { act, p: d.p } }); return render(); }
-    if (act === 'review-toggle') { GH.reviewOpen = !GH.reviewOpen; if (GH.reviewOpen) GH.focus = 'review'; return render(); }
+    if (act === 'review-toggle') {
+      GH.reviewOpen = !GH.reviewOpen;
+      // The summary so far (an agent's draft, maybe) is in its box.
+      if (GH.reviewOpen && !drafts.has('review') && GH.data && GH.data.pending && GH.data.pending.body) setDraft('review', GH.data.pending.body);
+      if (GH.reviewOpen) GH.focus = 'review';
+      return render();
+    }
+    if (act === 'card-fold') { GH.folded.has(d.id) ? GH.folded.delete(d.id) : GH.folded.add(d.id); return render(); }
+    if (act === 'cards-fold') { if (d.on === 'true') cardIds().forEach((id) => GH.folded.add(id)); else GH.folded.clear(); return render(); }
+    if (act === 'summary-edit') { GH.editing = 'summary'; if (!drafts.has('summary')) setDraft('summary', (GH.data && GH.data.pending && GH.data.pending.body) || ''); GH.focus = 'summary'; return render(); }
+    if (act === 'summary-cancel') { if (letGo(d.key, GH.data && GH.data.pending && GH.data.pending.body)) { GH.editing = null; render(); } return; }
     if (act === 'file-comment') { GH.fileCompose = d.p; GH.focus = 'file:' + d.p; return render(); }
     if (act === 'file-cancel') { if (letGo(d.key)) { GH.fileCompose = null; render(); } return; }
     if (act === 'compose-cancel') { if (letGo(d.key)) { state.compose = null; render(); } return; }
@@ -7000,7 +7202,19 @@
       if (!confirm('Delete this comment on GitHub?')) return;
       return ghAct('del:' + d.id, { action: 'delete', kind: d.kind, id: d.id }, () => toast('Comment deleted'));
     }
-    if (act === 'gh-resolve') return ghAct('resolve:' + d.thread, { action: 'resolve', thread: d.thread, resolved: d.on === 'true' }, () => GH.opened.delete(d.thread));
+    if (act === 'gh-resolve') {
+      // Resolved on GitHub, a thread's notes resolve with it.
+      const t = GH.data && GH.data.threads.find((x) => x.id === d.thread), on = d.on === 'true';
+      return ghAct('resolve:' + d.thread, { action: 'resolve', thread: d.thread, resolved: on }, () => {
+        GH.opened.delete(d.thread);
+        if (on && t && NT.on) ntQuiet(notesIn(t).filter((x) => !x.resolved).map((x) => ({ action: 'resolve', n: x.n, resolved: true })));
+      });
+    }
+    if (act === 'gh-summary') {
+      const body = bodyOf('summary');
+      if (!body) return;
+      return ghAct('summary', { action: 'summary', body }, () => { setDraft('summary', ''); GH.preview.delete('summary'); GH.editing = null; toast('Summary updated: it stays pending'); });
+    }
     if (act === 'gh-comment') {
       const body = bodyOf('issue');
       if (!body) return;
@@ -7035,6 +7249,8 @@
     if (a.state === 'deaf' || a.state === 'left') { NT.agentOpen = a.name; return `${what || 'Note'} saved. ${agentLabel(a)}`; }
     return `${what || 'Note'} saved, ${a.state === 'queued' ? 'queued' : 'sent'} to ${a.name}`;
   }
+  // Once a draft is asked for: what comes of it.
+  const draftAsked = () => (NT.data && !NT.data.live ? 'Draft asked for, held until you send it' : `Asked ${agentWho()} for a draft: its answer will be your pending comment on GitHub`);
   function ntCopied(ns) {
     api('notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'copied', ns }) }).then(okJson).then((j) => { ntSet(j); render(); }).catch(() => {});
   }
@@ -7045,6 +7261,9 @@
     if (!note) return;
     if (note.resolved) NT.opened.add(n);
     state.peek = null;
+    // On the review: in the review's own thread. In a GitHub thread: there, pulsing.
+    if (note.review) { state.view = { kind: 'conversation' }; NT.reveal = n; return render({ top: true }); }
+    if (inThread(note)) return openThread(noteThread(note));
     if (!M().files.some((f) => f.p === note.path) && !M().generated.some((f) => f.p === note.path)) return toast(`${note.path} isn’t in this review`);
     state.view = { kind: 'file', path: note.path };
     const r = !note.file && note.line != null ? rowAt(note.path, note.side, note.line) : null;
@@ -7054,44 +7273,110 @@
   }
   // Notes: where comments go, writing and answering notes, and the two ways out (copy, post).
   function ntClick(act, d) {
+    // Draft comment: the box's own action, as a draft ask.
+    if (act === 'nt-draft') return ntClick(d.via, Object.assign({}, d, { draftAsk: '1' }));
     const n = d.n != null ? Number(d.n) : null, note = n != null ? NT.byN.get(n) : null;
     if (act === 'nt-mode') {
+      // A box with a voice of its own switches alone; the others switch where new comments go.
+      if (d.key && (GH.voice.has(d.key) || /^(nreply|ask):/.test(d.key))) { GH.voice.set(d.key, d.mode === 'local' ? 'local' : 'github'); GH.focus = d.key; return render(); }
       if (!NT.data || d.mode === (localMode() ? 'local' : 'github')) return;
       // From a box, its text keeps the focus.
       if (d.key) GH.focus = d.key;
       return ntSettings({ mode: d.mode });
     }
+    // A draft ask may have no words: it asks the agent for the comment.
+    const draft = d.draftAsk === '1';
+    const said = () => { if (draft) return true; return !!bodyOf(d.key); };
+    const text = () => (drafts.get(d.key) || '').trim();
+    if (act === 'nt-review-add') {
+      if (!said()) return;
+      return ntAct(d.key, { action: 'add', review: true, path: '', body: text(), draft }, (j) => {
+        setDraft(d.key, ''); GH.preview.delete(d.key);
+        const last = j.notes.filter((x) => x.review).pop();
+        if (last) NT.reveal = last.n;
+        toast(draft ? draftAsked() : noteSaved());
+      });
+    }
+    if (act === 'nt-thread') {
+      // A note in a GitHub thread: in the open note there, else a new one about the thread that
+      // quotes the comment Ask was pressed on (or its last).
+      const t = GH.data && GH.data.threads.find((x) => x.id === d.thread);
+      if (!t || !said()) return;
+      const done = () => { setDraft(d.key, ''); GH.preview.delete(d.key); GH.replying.delete(t.id); GH.voice.delete(d.key); GH.askAbout.delete(t.id); toast(draft ? draftAsked() : noteSaved()); };
+      const talk = notesIn(t).filter((x) => !x.resolved).pop();
+      if (talk) return ntAct(d.key, { action: 'reply', n: talk.n, body: text(), draft }, done);
+      const c = t.comments.find((x) => x.id === GH.askAbout.get(t.id)) || t.comments[t.comments.length - 1];
+      const at = t.file || t.at == null ? { path: t.path, file: true } : { path: t.path, side: t.side, line: t.at, startLine: t.from != null && t.from !== t.at ? t.from : undefined };
+      return ntAct(d.key, { action: 'add', body: text(), draft, ...at, about: { kind: 'thread', thread: t.id, author: c ? c.author.login : '', body: c ? c.body : '', url: c ? c.url : '' } }, done);
+    }
+    if (act === 'nt-comment') {
+      // What a note said, on GitHub: on the conversation for a note on the review, else in its
+      // thread or on its lines. The note shows in that thread from then on.
+      const body = bodyOf(d.key);
+      if (!body) return;
+      return ntAct(d.key, { action: 'comment', n, body, mode: d.mode === 'single' ? 'single' : 'review' }, () => {
+        setDraft(d.key, ''); GH.preview.delete(d.key); GH.voice.delete(d.key);
+        if (d.thread) GH.replying.delete(d.thread); else NT.replying.delete(n);
+        toast(note && note.review ? 'Comment posted on the conversation' : d.mode === 'single' ? 'Comment posted' : 'Added to your pending review');
+      });
+    }
+    if (act === 'nt-comment-this') {
+      // What was said in the talk, in a comment box on GitHub: its thread's, or the note's own.
+      const c = note && note.comments.find((x) => x.id === d.id);
+      if (!c) return;
+      const tid = inThread(note) ? noteThread(note) : null;
+      const key = tid ? 'reply:' + tid : 'nreply:' + n;
+      setDraft(key, c.body);
+      GH.preview.delete(key);
+      GH.voice.set(key, 'github');
+      if (tid) GH.replying.add(tid); else NT.replying.add(n);
+      GH.focus = key;
+      return render();
+    }
+    if (act === 'nt-ask') {
+      // A note about a comment on GitHub: in its thread's box, or under it in the review's thread.
+      if (d.thread) {
+        const key = 'reply:' + d.thread;
+        GH.askAbout.set(d.thread, d.id);
+        GH.voice.set(key, 'local');
+        GH.replying.add(d.thread);
+        GH.focus = key;
+        return render();
+      }
+      const kind = d.kind === 'pr' ? 'pr' : 'comment';
+      const open = NT.review.find((x) => !x.resolved && x.about && x.about.kind === kind && (kind === 'pr' || x.about.comment === d.id));
+      if (open) { NT.replying.add(open.n); GH.voice.set('nreply:' + open.n, 'local'); GH.focus = 'nreply:' + open.n; return render(); }
+      const key = `ask:${kind}:${d.id}`;
+      GH.asking.add(key);
+      GH.focus = key;
+      return render();
+    }
+    if (act === 'nt-about-add') {
+      if (!said()) return;
+      const g = GH.data, kind = d.about === 'pr' ? 'pr' : 'comment';
+      const c = !g ? null : kind === 'pr' ? { author: g.pr.author, body: g.pr.body, url: g.pr.url } : g.comments.find((x) => x.id === d.id);
+      if (!c) return;
+      const about = kind === 'pr' ? { kind, author: c.author.login, body: c.body, url: c.url } : { kind, comment: d.id, author: c.author.login, body: c.body, url: c.url };
+      return ntAct(d.key, { action: 'add', review: true, path: '', body: text(), draft, about }, () => { setDraft(d.key, ''); GH.preview.delete(d.key); GH.asking.delete(d.key); toast(draft ? draftAsked() : noteSaved()); });
+    }
+    if (act === 'nt-ask-cancel') { if (letGo(d.key)) { GH.asking.delete(d.key); render(); } return; }
+    if (act === 'nt-talk') { NT.unfold.has(d.key) ? NT.unfold.delete(d.key) : NT.unfold.add(d.key); return render(); }
     if (act === 'nt-add') {
       const c = state.compose;
       if (!d.file && !c) return;
-      const body = bodyOf(d.key);
-      if (!body) return;
+      if (!said()) return;
       const at = d.file ? { path: GH.fileCompose, file: true } : noteDraft(c);
-      return ntAct(d.key, { action: 'add', body, ...at }, () => {
+      return ntAct(d.key, { action: 'add', body: text(), draft, ...at }, () => {
         setDraft(d.key, ''); GH.preview.delete(d.key);
         if (d.file) GH.fileCompose = null; else state.compose = null;
-        toast(noteSaved());
-      });
-    }
-    if (act === 'nt-quote') {
-      // A reply to a GitHub thread, in local mode: a note on its lines that quotes it.
-      const t = GH.data && GH.data.threads.find((x) => x.id === d.thread);
-      if (!t) return;
-      const body = bodyOf(d.key);
-      if (!body) return;
-      const c0 = t.comments[0];
-      const at = t.file || t.at == null ? { path: t.path, file: true } : { path: t.path, side: t.side, line: t.at, startLine: t.from != null && t.from !== t.at ? t.from : undefined };
-      return ntAct(d.key, { action: 'add', body, ...at, quote: { thread: t.id, author: c0 ? c0.author.login : '', body: c0 ? c0.body : '', url: c0 ? c0.url : '' } }, () => {
-        setDraft(d.key, ''); GH.preview.delete(d.key); GH.replying.delete(t.id);
-        toast(noteSaved());
+        toast(draft ? draftAsked() : noteSaved());
       });
     }
     if (act === 'nt-reply-open') { NT.replying.add(n); GH.focus = 'nreply:' + n; return render(); }
     if (act === 'nt-reply-cancel') { if (letGo(d.key)) { NT.replying.delete(Number(d.key.slice('nreply:'.length))); render(); } return; }
     if (act === 'nt-reply') {
-      const body = bodyOf(d.key);
-      if (!body) return;
-      return ntAct(d.key, { action: 'reply', n, body }, () => { setDraft(d.key, ''); GH.preview.delete(d.key); NT.replying.delete(n); toast(noteSaved('Reply')); });
+      if (!said()) return;
+      return ntAct(d.key, { action: 'reply', n, body: text(), draft }, () => { setDraft(d.key, ''); GH.preview.delete(d.key); NT.replying.delete(n); toast(draft ? draftAsked() : noteSaved('Reply')); });
     }
     if (act === 'nt-edit-open') {
       const c = note && note.comments.find((x) => x.id === d.id);
@@ -7130,7 +7415,7 @@
     }
     if (act === 'nt-copy-text') {
       const i = note ? note.comments.findIndex((x) => x.id === d.id) : -1;
-      if (i >= 0) copyText(note.comments[i].body, `${note.comments[i].by}’s ${i ? 'reply' : `note, N${n},`} copied`);
+      if (i >= 0) copyText(note.comments[i].body, `${note.comments[i].by ? `${note.comments[i].by}’s` : 'Your'} ${i ? 'reply' : `note, N${n},`} copied`);
       return;
     }
     if (act === 'nt-copy') {
@@ -7138,11 +7423,11 @@
       if (list.length) copyText(ntExport(list), `${list.length} note${list.length === 1 ? '' : 's'} copied for your agent`).then((ok) => { if (ok) ntCopied(list.map((x) => x.n)); });
       return;
     }
-    if (act === 'nt-post' || act === 'nt-post1') {
-      const list = act === 'nt-post1' ? (note ? [note] : []) : NT.data.notes.filter((x) => !x.resolved && !x.gone && x.comments[0].by == null);
+    if (act === 'nt-post') {
+      const list = NT.data.notes.filter((x) => !x.resolved && !x.gone && !x.review && !(x.said || []).length && x.comments[0].by == null && x.comments[0].body);
       if (!list.length) return;
-      if (act === 'nt-post' && !confirm(`Post your ${list.length} open note${list.length === 1 ? '' : 's'} to GitHub? ${list.length === 1 ? 'It becomes a thread' : 'Each becomes a thread'} of your pending review, and leaves the notes.`)) return;
-      return ntAct(act === 'nt-post' ? 'post' : 'post:' + n, { action: 'post', ns: list.map((x) => x.n) }, () => toast(`${list.length === 1 ? `N${list[0].n} is` : `${list.length} notes are`} in your pending review on GitHub`));
+      if (!confirm(`Post your ${list.length} open note${list.length === 1 ? '' : 's'} to GitHub? ${list.length === 1 ? 'Its first words become a thread' : 'The first words of each become a thread'} of your pending review, and the note${list.length === 1 ? ' stays in it' : 's stay in them'}.`)) return;
+      return ntAct('post', { action: 'post', ns: list.map((x) => x.n) }, () => toast(`${list.length === 1 ? `N${list[0].n} is` : `${list.length} notes are`} in your pending review on GitHub`));
     }
     if (act === 'nt-send') {
       const k = NT.data ? NT.data.held : 0, a = agentFirst();
@@ -7615,7 +7900,7 @@
   viewer.addEventListener('keydown', (e) => {
     if (mentionKey(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.dataset && e.target.dataset.draft != null) {
-      const btn = e.target.closest('.cmp') && e.target.closest('.cmp').querySelector('[data-primary]');
+      const box = e.target.closest('.cmp'), btn = box && (e.shiftKey ? box.querySelector('[data-draft-ask]') : box.querySelector('[data-primary]'));
       if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
       return;
     }
@@ -7996,7 +8281,7 @@
       const c = r.chain && M().chains.find((x) => x.name === r.chain);
       if (r.kind === 'file' && r.path && (M().files.some((f) => f.p === r.path) || M().generated.some((f) => f.p === r.path))) state.view = { kind: 'file', path: r.path };
       else if (c) state.view = { kind: 'chain', id: c.id };
-      else if (r.kind === 'conversation' && GH.on) state.view = { kind: 'conversation' };
+      else if (r.kind === 'conversation' && (GH.on || NT.on)) state.view = { kind: 'conversation' };
       else if (r.kind === 'standalone') state.view = { kind: 'standalone' };
       else if (r.kind === 'history' && HX) state.view = { kind: 'history' };
       else if (r.kind === 'tests') state.view = { kind: 'tests' };

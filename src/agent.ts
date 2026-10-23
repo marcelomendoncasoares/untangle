@@ -207,7 +207,10 @@ export async function reply(o: { review: string | null; agent: string | null; re
   const r = await call(run, 'POST', 'notes/agent', { body: { agent, n: o.note, body: text, resolve: o.resolve, chat: chat?.id ?? null } }).catch((e) => { throw e instanceof Gone ? new Error('the review stopped') : e; });
   const err = failed(r);
   if (err) throw new Error(err);
-  say(text ? `answered N${o.note}${o.resolve ? ' and resolved it' : ''}.` : `resolved N${o.note}.`);
+  // An answer to a draft ask went to GitHub, pending, as the user's comment to edit and send.
+  if (r.data.drafted) say(`answered N${o.note} with the draft it asked for: it’s ${r.data.drafted}, for them to edit and send.${o.resolve ? ' Resolved it.' : ''}`);
+  else say(text ? `answered N${o.note}${o.resolve ? ' and resolved it' : ''}.` : `resolved N${o.note}.`);
+  if (r.data.error) say(`couldn’t post the draft to GitHub: ${r.data.error}. It’s your answer in N${o.note}’s thread instead.`);
   if (r.data.other) elsewhere(agent);
   return 0;
 }
@@ -221,11 +224,13 @@ function repoPath(run: RunInfo, p: string): string {
   return fs.existsSync(here) && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : named;
 }
 
-export async function note(o: { review: string | null; agent: string | null; removed: boolean; path: string; line: number | null; startLine: number | null; text: string }): Promise<number> {
+export async function note(o: { review: string | null; agent: string | null; removed: boolean; path: string | null; line: number | null; startLine: number | null; text: string }): Promise<number> {
   const run = await running(o.review);
   const text = o.text === '-' ? fs.readFileSync(0, 'utf8') : o.text;
   const chat = chatOf(), agent = agentName(o.agent, chat);
-  const body = { agent, chat: chat?.id ?? null, path: repoPath(run, o.path), side: o.removed ? 'LEFT' : 'RIGHT', line: o.line, startLine: o.startLine, file: o.line == null, body: text };
+  // No path: a note on the review itself.
+  const body = o.path == null ? { agent, chat: chat?.id ?? null, review: true, body: text }
+    : { agent, chat: chat?.id ?? null, path: repoPath(run, o.path), side: o.removed ? 'LEFT' : 'RIGHT', line: o.line, startLine: o.startLine, file: o.line == null, body: text };
   const r = await call(run, 'POST', 'notes/note', { body }).catch((e) => { throw e instanceof Gone ? new Error('the review stopped') : e; });
   const err = failed(r);
   if (err) throw new Error(err);

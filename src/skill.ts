@@ -43,8 +43,10 @@ Read the change (its diff against the review's base: \`git diff <base>...HEAD\` 
 \`untangle note lib/a.dart:42 'your comment'\`. A range is \`lib/a.dart:40-42\`, a path alone
 is a note on the whole file, and \`-removed\` puts it on lines the change removed, numbered as on
 the base. Lines are numbered as on the review's commit: \`untangle note\` prints the lines it put
-the note on. Write one note per point, where it applies, and say what you'd change and why. The
-user answers in each note's thread, and \`untangle watch\` brings the answers.
+the note on. Write one note per point, where it applies, and say what you'd change and why. A
+point that isn't about a line (a summary, a question, or that you found nothing to change) goes in
+a note on the review itself: \`untangle note 'your note'\`, its text alone. The user answers in
+each note's thread, and \`untangle watch\` brings the answers.
 
 ## Each round
 
@@ -58,7 +60,12 @@ When \`untangle watch\` prints notes, or a line from untangle says there are new
    backticks reads from stdin instead: \`untangle reply N2 - <<'EOF'\`, the answer, then \`EOF\`
    (\`untangle note\` takes \`-\` too). Once you've made the change a note asks for, add
    \`-resolve\`. Commit as you go: the page shows your commits, and the notes follow their lines.
-3. Claude: start the next \`untangle watch\` in the background before you end your turn.
+3. A note that asks for a draft comment (the watch says so) wants the comment for GitHub. Answer
+   it with \`untangle reply\` and the comment alone, as you'd post it, in a natural tone: no
+   preamble, no quotes around it. untangle posts your answer to GitHub as it is, pending in the
+   user's review, for them to edit and send. Asked again while your draft is pending, the watch
+   shows that draft as it is now: write the comment again from both. Never post to GitHub yourself.
+4. Claude: start the next \`untangle watch\` in the background before you end your turn.
 
 ## The end
 

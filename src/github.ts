@@ -89,6 +89,15 @@ const PR_OF = {
 };
 
 type Page<T> = { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: T[] };
+/** What the notes' mutations answer with: the comment or review made, and the pull request after. */
+interface Payload {
+  // (Each asks for the comment's url too: tests tell the pending-review lookup by its "nodes { id } }".)
+  thread?: { id: string; comments?: { nodes: Array<{ id: string }> }; pullRequest?: RawPR };
+  comment?: { id: string; pullRequest?: RawPR };
+  pullRequestReview?: { id?: string; comments?: { nodes: Array<{ id: string }> }; pullRequest?: RawPR };
+  commentEdge?: { node: { id: string } };
+  subject?: RawPR;
+}
 interface RawPerson { login: string; avatarUrl: string; url: string }
 interface RawReacts { viewerCanReact: boolean; reactionGroups: Array<{ content: string; viewerHasReacted: boolean; reactors: { totalCount: number } }> }
 interface RawComment extends RawReacts { id: string; body: string; bodyHTML: string; createdAt: string; lastEditedAt: string | null; url: string; state?: string; authorAssociation: string; viewerCanUpdate: boolean; viewerCanDelete: boolean; author: RawPerson | null }
@@ -116,13 +125,22 @@ export interface Review { id: string; state: string; author: Person; association
 export interface Conversation {
   viewer: Person;
   pr: { id: string; number: number; title: string; url: string; state: string; draft: boolean; locked: boolean; head: string; created: string; author: Person; html: string; body: string; decision: string | null; mine: boolean; canReact: boolean; reactions: Reaction[] };
-  pending: { id: string; comments: number } | null;
+  /** Your pending review: its comments, and its summary so far. */
+  pending: { id: string; comments: number; body: string } | null;
   threads: Thread[];
   comments: Comment[];
   reviews: Review[];
 }
 
 const GHOST: Person = { login: 'ghost', avatar: '', url: 'https://github.com/ghost' };
+// The pull request in a mutation's payload, wherever the payload keeps it.
+const findPR = (x: unknown): RawPR | null => {
+  if (!x || typeof x !== 'object') return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.headRefOid === 'string' && o.reviewThreads) return o as unknown as RawPR;
+  for (const v of Object.values(o)) { const r = findPR(v); if (r) return r; }
+  return null;
+};
 const person = (a: RawPerson | null): Person => (a ? { login: a.login, avatar: a.avatarUrl, url: a.url } : GHOST);
 const reactions = (r: RawReacts): Reaction[] => r.reactionGroups.filter((g) => g.reactors.totalCount || g.viewerHasReacted).map((g) => ({ content: g.content, count: g.reactors.totalCount, mine: g.viewerHasReacted }));
 const comment = (c: RawComment): Comment => ({
@@ -152,6 +170,8 @@ export type Action =
   | { action: 'comment'; body: string }
   | { action: 'submit'; event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES'; body: string }
   | { action: 'discard' }
+  /** Your pending review's summary, set: a pending review starts with it when there's none. */
+  | { action: 'summary'; body: string }
   | { action: 'preview'; text: string }
   | { action: 'suggest'; kind: '@' | '#'; query: string };
 
@@ -282,15 +302,7 @@ export class PullRequestConversation {
   /** A mutation that returns the pull request at `path` in its payload. */
   private async mutate(name: string, input: Record<string, unknown>, payload: string): Promise<Conversation> {
     const d = await graphql<Record<string, unknown>>(`mutation($input: ${name[0].toUpperCase() + name.slice(1)}Input!) { ${name}(input: $input) { ${payload} } } ${fragments('PR')}`, { input });
-    // Find the pull request in the payload, wherever the payload keeps it.
-    const find = (x: unknown): RawPR | null => {
-      if (!x || typeof x !== 'object') return null;
-      const o = x as Record<string, unknown>;
-      if (typeof o.headRefOid === 'string' && o.reviewThreads) return o as unknown as RawPR;
-      for (const v of Object.values(o)) { const r = find(v); if (r) return r; }
-      return null;
-    };
-    const pr = find(d);
+    const pr = findPR(d);
     return pr ? this.shape(await this.rest(pr)) : this.load();
   }
 
@@ -354,7 +366,135 @@ export class PullRequestConversation {
         const pending = await this.currentPending();
         return pending ? this.mutate('deletePullRequestReview', { pullRequestReviewId: pending }, PR_OF.review) : this.load();
       }
+      case 'summary': {
+        const pending = await this.currentPending();
+        return pending
+          ? this.mutate('updatePullRequestReview', { pullRequestReviewId: pending, body: a.body }, PR_OF.review)
+          : this.mutate('addPullRequestReview', { pullRequestId, commitOID: this.head, body: a.body }, PR_OF.review);
+      }
     }
+  }
+
+  // ---- What the notes post: each answers with the conversation after it, and the new comment's id.
+
+  /** One change in the queue, as `act`'s are: two quick ones can't start two pending reviews. */
+  private queued<T>(f: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(f);
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  /** A mutation's payload with the pull request in it, shaped, and the payload itself. */
+  private async mutateRaw(name: string, input: Record<string, unknown>, payload: string): Promise<{ data: Payload; conversation: Conversation }> {
+    const data = await graphql<Record<string, Payload>>(`mutation($input: ${name[0].toUpperCase() + name.slice(1)}Input!) { ${name}(input: $input) { ${payload} } } ${fragments('PR')}`, { input });
+    const p = data[name] || {};
+    const pr = findPR(data);
+    return { data: p, conversation: pr ? this.shape(await this.rest(pr)) : await this.load() };
+  }
+
+  /** The comment a mutation made, when its payload doesn't say: new since `before`, with this text. */
+  private made(before: Conversation | null, after: Conversation, body: string): { thread: string | null; comment: string } | null {
+    const old = new Set(before ? before.threads.flatMap((t) => t.comments.map((c) => c.id)).concat(before.comments.map((c) => c.id)) : []);
+    const same = (c: Comment) => !old.has(c.id) && c.body.trim() === body.trim();
+    for (const t of after.threads) for (const c of t.comments) if (same(c)) return { thread: t.id, comment: c.id };
+    for (const c of after.comments) if (same(c)) return { thread: null, comment: c.id };
+    return null;
+  }
+
+  /** A thread of its own on lines or a file: into the pending review, or a review of its own, posted at once. */
+  postThread(d: Draft, mode: 'single' | 'review'): Promise<{ conversation: Conversation; thread: string; comment: string }> {
+    return this.queued(async () => {
+      const pullRequestId = await this.pullRequestId();
+      const before = this.last;
+      const line = d.line != null ? { line: d.line, side: d.side || 'RIGHT', ...(d.startLine != null && d.startLine !== d.line ? { startLine: d.startLine, startSide: d.startSide || d.side || 'RIGHT' } : {}) } : {};
+      if (mode === 'single') {
+        const r = await this.mutateRaw('addPullRequestReview', { pullRequestId, commitOID: this.head, event: 'COMMENT', threads: [{ path: d.path, body: d.body, ...line }] }, 'pullRequestReview { comments(first: 1) { nodes { id url } } pullRequest { ...PR } }').catch((e) => {
+          throw /one pending review/.test((e as Error).message) ? new GitHubError('You have a review pending on GitHub: add this comment to it, or finish the review first.') : e;
+        });
+        const id = r.data.pullRequestReview?.comments?.nodes[0]?.id;
+        const thread = id ? r.conversation.threads.find((t) => t.comments.some((c) => c.id === id)) : null;
+        const m = id && thread ? { thread: thread.id, comment: id } : this.made(before, r.conversation, d.body);
+        if (!m || !m.thread) throw new GitHubError('GitHub didn’t say which comment it made');
+        return { conversation: r.conversation, thread: m.thread, comment: m.comment };
+      }
+      try {
+        const r = await this.mutateRaw('addPullRequestReviewThread', { pullRequestId, path: d.path, body: d.body, subjectType: d.line != null ? 'LINE' : 'FILE', ...line }, 'thread { id comments(first: 1) { nodes { id url } } pullRequest { ...PR } }');
+        const t = r.data.thread;
+        const m = t && t.comments?.nodes[0] ? { thread: t.id, comment: t.comments.nodes[0].id } : this.made(before, r.conversation, d.body);
+        if (!m || !m.thread) throw new GitHubError('GitHub didn’t say which comment it made');
+        return { conversation: r.conversation, thread: m.thread, comment: m.comment };
+      } catch (e) {
+        await this.dropEmptyPending();
+        throw e;
+      }
+    });
+  }
+
+  /** A reply in a review thread: into the pending review (started when there's none), or posted at once. */
+  postReply(thread: string, body: string, mode: 'single' | 'review'): Promise<{ conversation: Conversation; comment: string }> {
+    return this.queued(async () => {
+      const pullRequestId = await this.pullRequestId();
+      const before = this.last;
+      if (mode === 'review' && !(await this.currentPending())) {
+        await graphql(`mutation($input: AddPullRequestReviewInput!) { addPullRequestReview(input: $input) { pullRequestReview { id } } }`, { input: { pullRequestId, commitOID: this.head } });
+      }
+      const r = await this.mutateRaw('addPullRequestReviewThreadReply', { pullRequestReviewThreadId: thread, body }, 'comment { id pullRequest { ...PR } }');
+      const id = r.data.comment?.id || this.made(before, r.conversation, body)?.comment;
+      if (!id) throw new GitHubError('GitHub didn’t say which comment it made');
+      return { conversation: r.conversation, comment: id };
+    });
+  }
+
+  /** A comment on the conversation, posted at once (GitHub keeps none of these pending). */
+  postConversation(body: string): Promise<{ conversation: Conversation; comment: string }> {
+    return this.queued(async () => {
+      const pullRequestId = await this.pullRequestId();
+      const before = this.last;
+      const r = await this.mutateRaw('addComment', { subjectId: pullRequestId, body }, 'commentEdge { node { id } } subject { ... on PullRequest { ...PR } }');
+      const id = r.data.commentEdge?.node.id || this.made(before, r.conversation, body)?.comment;
+      if (!id) throw new GitHubError('GitHub didn’t say which comment it made');
+      return { conversation: r.conversation, comment: id };
+    });
+  }
+
+  /** The pending review's summary: set on the pending review, or a pending review started with it. */
+  setSummary(body: string): Promise<{ conversation: Conversation; review: string }> {
+    return this.queued(async () => {
+      const pending = await this.currentPending();
+      if (pending) {
+        const r = await this.mutateRaw('updatePullRequestReview', { pullRequestReviewId: pending, body }, 'pullRequestReview { id pullRequest { ...PR } }');
+        return { conversation: r.conversation, review: pending };
+      }
+      const r = await this.mutateRaw('addPullRequestReview', { pullRequestId: await this.pullRequestId(), commitOID: this.head, body }, 'pullRequestReview { id pullRequest { ...PR } }');
+      const id = r.data.pullRequestReview?.id || r.conversation.pending?.id;
+      if (!id) throw new GitHubError('GitHub didn’t say which review it started');
+      return { conversation: r.conversation, review: id };
+    });
+  }
+
+  /** Rewrites a review comment. */
+  editComment(id: string, body: string): Promise<{ conversation: Conversation }> {
+    return this.queued(async () => ({ conversation: await this.mutate('updatePullRequestReviewComment', { pullRequestReviewCommentId: id, body }, PR_OF.reviewComment) }));
+  }
+
+  /** What GitHub last said of a comment, as the page or the notes last read it. */
+  known(id: string): { body: string; pending: boolean } | null {
+    const d = this.last;
+    if (!d) return null;
+    for (const t of d.threads) { const c = t.comments.find((x) => x.id === id); if (c) return { body: c.body, pending: c.pending }; }
+    const c = d.comments.find((x) => x.id === id);
+    return c ? { body: c.body, pending: false } : null;
+  }
+
+  /** The pending review, as last read. */
+  knownPending(): { id: string; body: string } | null {
+    const p = this.last?.pending;
+    return p ? { id: p.id, body: p.body } : null;
+  }
+
+  /** GitHub's pull request is on newer commits than the review, as last read. */
+  knownStale(): boolean {
+    return !!this.last && this.last.pr.head !== this.head;
   }
 
   /** The viewer's pending review on GitHub now (it may have been started or submitted elsewhere). */
@@ -411,7 +551,7 @@ export class PullRequestConversation {
         id: pr.id, number: pr.number, title: pr.title, url: pr.url, state: pr.state, draft: pr.isDraft, locked: pr.locked, head: pr.headRefOid, created: pr.createdAt,
         author: person(pr.author), html: pr.bodyHTML, body: pr.body, decision: pr.reviewDecision, mine: pr.viewerDidAuthor, canReact: pr.viewerCanReact, reactions: reactions(pr),
       },
-      pending: pending ? { id: pending.id, comments: pending.comments.totalCount } : null,
+      pending: pending ? { id: pending.id, comments: pending.comments.totalCount, body: pending.body } : null,
       threads: pr.reviewThreads.nodes.map((t) => ({
         id: t.id, path: t.path, file: t.subjectType === 'FILE', side: t.diffSide, line: t.line, startSide: t.startDiffSide, startLine: t.startLine,
         originalLine: t.originalLine, originalStartLine: t.originalStartLine, commit: t.head.nodes[0]?.originalCommit?.oid || null, hunk: t.head.nodes[0]?.diffHunk || '',

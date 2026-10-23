@@ -299,10 +299,10 @@ async function review(opts: Options): Promise<number> {
         const again = typeof b.again === 'string' && /^untangle watch[^\n]{0,300}$/.test(b.again) ? b.again : undefined;
         return { data: await book.watch(name, { timeout: wait, signal, chat: chatFrom(b.chat), again, brief: b.brief === true }) };
       }
-      if (route === 'notes/agent' && method === 'POST') return { data: book.reply(name, Number(b.n), b.body ?? null, !!b.resolve, chatId(b.chat)) };
+      if (route === 'notes/agent' && method === 'POST') return { data: await book.reply(name, Number(b.n), b.body ?? null, !!b.resolve, chatId(b.chat)) };
       if (route === 'notes/note' && method === 'POST') {
         const n = (x: unknown) => (x == null ? undefined : Number(x));
-        return { data: book.write(name, { path: String(b.path ?? ''), side: b.side === 'LEFT' ? 'LEFT' : 'RIGHT', line: n(b.line), startLine: n(b.startLine), file: b.file === true, body: String(b.body ?? '') }, chatId(b.chat)) };
+        return { data: book.write(name, { path: String(b.path ?? ''), review: (b as { review?: unknown }).review === true, side: b.side === 'LEFT' ? 'LEFT' : 'RIGHT', line: n(b.line), startLine: n(b.startLine), file: b.file === true, body: String(b.body ?? '') }, chatId(b.chat)) };
       }
       if (route === 'notes/export' && method === 'GET') {
         const scope = (['open', 'new', 'all'].includes(query.get('scope') || '') ? query.get('scope') : 'open') as Scope;

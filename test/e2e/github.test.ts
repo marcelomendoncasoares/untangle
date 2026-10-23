@@ -181,13 +181,14 @@ describe('Given a served review of pull request 7, with an open thread on the ca
     before(async () => {
       await rest(page!);
       await page!.click('[data-tab="comments"]');
-      await page!.until(`(document.querySelector('#vw-side')?.textContent || '').includes('Open threads')`);
+      await page!.until(`!!document.querySelector('#vw-side .sb-rv') && (document.querySelector('#vw-side')?.textContent || '').includes('Why this name?')`);
       const text = await read(page!, `document.querySelector('#vw-side')?.textContent ?? ''`);
-      listed = `${text.includes('Why this name?') ? 'open' : 'missing'}\n${text.includes('Ship the name.') ? 'shown' : 'hidden'}`;
+      const first = await read(page!, `document.querySelector('#vw-side .sb-row .nm').firstChild.textContent`);
+      listed = `${first} first\n${text.includes('Why this name?') ? 'open' : 'missing'}\n${text.includes('Ship the name.') ? 'shown' : 'hidden'}`;
     });
 
-    it('then the open thread is listed and the resolved one is hidden.', () => {
-      assert.equal(listed, 'open\nhidden');
+    it('then the review’s own row comes first, the open thread is listed and the resolved one is hidden.', () => {
+      assert.equal(listed, 'The review first\nopen\nhidden');
     });
   });
 
@@ -197,7 +198,7 @@ describe('Given a served review of pull request 7, with an open thread on the ca
     before(async () => {
       await rest(page!);
       await page!.click('[data-tab="comments"]');
-      await page!.until(`(document.querySelector('#vw-side')?.textContent || '').includes('Open threads')`);
+      await page!.until(`(document.querySelector('#vw-side')?.textContent || '').includes('Why this name?')`);
       await page!.click('[data-act="resolved-toggle"]');
       await page!.until(`(document.querySelector('#vw-side')?.textContent || '').includes('Ship the name.')`);
       const text = await read(page!, `document.querySelector('#vw-side')?.textContent ?? ''`);

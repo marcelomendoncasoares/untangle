@@ -27,7 +27,7 @@ const usageText = [
   '  watch [directory | pr-url]  start the review if it isn’t running, wait for the notes and replies',
   '                              the agent hasn’t read, print them and exit',
   '  reply <N> <text>            answer in note N’s thread',
-  '  note <path:line> <text>     write a note of its own, from its review of the change',
+  '  note [path:line] <text>     write a note of its own: on lines, or on the review with its text alone',
   '  notes                       print the open notes, as Copy for agent gives them',
   '  stop                        close the review',
   '  feedback [text | -] [-idea] [pr-url]  draft a report for the user to check and send',

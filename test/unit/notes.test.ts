@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { TempRepo, type Person } from '../helpers/repo.ts';
 import type { Bell, Chat } from '../../dist/chats.js';
-import type { NotesContext, Post } from '../../dist/notes.js';
+import type { At, NotesContext, NotesGitHub } from '../../dist/notes.js';
 
 // A burst of notes reaches an agent this long after the last one.
 process.env.UNTANGLE_NOTES_QUIET = '150';
@@ -36,11 +36,37 @@ function greeting() {
   return { repo, base, head, next };
 }
 
-function context(repo: TempRepo, base: string, head: string, posted: Post[] = []): NotesContext {
+/** What the notes asked of GitHub, in order. */
+interface Posted { kind: 'thread' | 'reply' | 'conversation' | 'summary' | 'edit'; at?: At; thread?: string; id?: string; body: string; mode?: string }
+
+/** GitHub as the notes see it: what they post is kept, with ids, as GitHub would. */
+class FakeGitHub implements NotesGitHub {
+  readonly posted: Posted[] = [];
+  readonly comments = new Map<string, { body: string; pending: boolean }>();
+  summaryNow: { id: string; body: string } | null = null;
+  /** Set to make every post fail, as a logged-out gh does. */
+  failing: string | null = null;
+  private k = 0;
+  private post(p: Posted) {
+    if (this.failing) throw new Error(this.failing);
+    this.posted.push(p);
+    return { posted: this.posted.length };
+  }
+  async thread(at: At, body: string, mode: 'single' | 'review') { const conversation = this.post({ kind: 'thread', at, body, mode }); const n = ++this.k; this.comments.set(`C${n}`, { body, pending: mode === 'review' }); return { conversation, thread: `T${n}`, comment: `C${n}` }; }
+  async reply(thread: string, body: string, mode: 'single' | 'review') { const conversation = this.post({ kind: 'reply', thread, body, mode }); const n = ++this.k; this.comments.set(`C${n}`, { body, pending: mode === 'review' }); return { conversation, comment: `C${n}` }; }
+  async conversation(body: string) { const conversation = this.post({ kind: 'conversation', body }); const n = ++this.k; this.comments.set(`IC${n}`, { body, pending: false }); return { conversation, comment: `IC${n}` }; }
+  async summary(body: string) { const conversation = this.post({ kind: 'summary', body }); this.summaryNow = { id: 'REVIEW_1', body }; return { conversation, review: 'REVIEW_1' }; }
+  async edit(id: string, body: string) { const conversation = this.post({ kind: 'edit', id, body }); this.comments.get(id)!.body = body; return { conversation }; }
+  current(id: string) { return this.comments.get(id) ?? null; }
+  pending() { return this.summaryNow; }
+  stale() { return false; }
+}
+
+function context(repo: TempRepo, base: string, head: string, gh: NotesGitHub | null = new FakeGitHub()): NotesContext {
   return {
     repo: repo.dir, base, head, name: 'acme/app#7', branch: 'feature', checkout: null,
     change: (p, side, line) => (p === 'lib/app.dart' && side === 'RIGHT' && line === 3 ? { name: 'Greet by name', sha: head } : null),
-    post: async (x) => { posted.push(x); return { posted: posted.length }; },
+    gh,
   };
 }
 
@@ -117,13 +143,13 @@ describe('Given notes on the greeting’s message and print, and a note on a fil
   let g: ReturnType<typeof greeting>;
   let dir = '';
   let notes: InstanceType<typeof Notes>;
-  const posted: Post[] = [];
+  const gh = new FakeGitHub();
 
   before(async () => {
     g = greeting();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-notes-'));
     notes = new Notes(path.join(dir, 'pr-7.json'));
-    notes.attach(context(g.repo, g.base, g.head, posted));
+    notes.attach(context(g.repo, g.base, g.head, gh));
     await notes.act({ action: 'add', path: 'lib/app.dart', side: 'RIGHT', line: 3, body: 'Why a local?' });
     await notes.act({ action: 'add', path: 'lib/app.dart', side: 'RIGHT', startLine: 4, line: 5, body: 'Print it once.' });
     await notes.act({ action: 'reply', n: 2, body: 'And flush.' });
@@ -217,13 +243,13 @@ describe('Given notes on the greeting’s message and print, and a note on a fil
     });
   });
 
-  it('when the open notes are posted to GitHub, then each goes into the pending review on its lines, and leaves the notes.', async () => {
+  it('when the open notes are posted to GitHub, then each says its first words in the pending review, on its lines, and stays, in the thread it made.', async () => {
     const out = await notes.act({ action: 'post', ns: [1, 2] });
-    assert.deepEqual(posted, [
-      { path: 'lib/app.dart', body: 'Why a local?', line: 3, side: 'RIGHT' },
-      { path: 'lib/app.dart', body: 'Print it once.', line: 5, side: 'RIGHT', startLine: 4, startSide: 'RIGHT' },
+    assert.deepEqual(gh.posted, [
+      { kind: 'thread', at: { path: 'lib/app.dart', line: 3, side: 'RIGHT' }, body: 'Why a local?', mode: 'review' },
+      { kind: 'thread', at: { path: 'lib/app.dart', line: 5, side: 'RIGHT', startLine: 4, startSide: 'RIGHT' }, body: 'Print it once.', mode: 'review' },
     ]);
-    assert.deepEqual([out.notes.map((n) => n.n), out.conversation], [[3, 4], { posted: 2 }]);
+    assert.deepEqual([out.notes.map((n) => `N${n.n}${n.said.map((x) => ` ${x.kind} ${x.thread} ${x.id}${x.pending ? ' pending' : ''}`).join('')}`), out.conversation], [['N1 thread T1 C1 pending', 'N2 thread T2 C2 pending', 'N3', 'N4'], { posted: 2 }]);
   });
 });
 
@@ -265,7 +291,7 @@ describe('Given notes an agent watches, ', () => {
   });
 
   it('when the agent answers and resolves a note, then the page shows its answer and who resolved it, and its own watch doesn’t get them back.', async () => {
-    notes.reply('Claude', 2, 'Done in abc1234.', true);
+    await notes.reply('Claude', 2, 'Done in abc1234.', true);
     const n2 = notes.view().notes[1];
     assert.deepEqual([n2.comments.map((c) => [c.by, c.body]), n2.resolved?.by], [[[null, 'Flush after it.'], ['Claude', 'Done in abc1234.']], 'Claude']);
     const again = await notes.watch('Claude', { timeout: 300 });
@@ -292,7 +318,7 @@ describe('Given notes an agent watches, ', () => {
   });
 
   it('when you answer in a thread and resolve its note, or reopen a note and answer in it, then the thread says so.', async () => {
-    notes.reply('Claude', 2, 'Flushed on every path.', true);
+    await notes.reply('Claude', 2, 'Flushed on every path.', true);
     await notes.act({ action: 'reply', n: 1, body: 'Leave it as it is.' });
     await notes.act({ action: 'resolve', n: 1, resolved: true });
     await notes.act({ action: 'resolve', n: 2, resolved: false });
@@ -444,7 +470,7 @@ describe('Given notes a Claude chat holds, in an Orca terminal, ', () => {
       'N1 · lib/app.dart:3',
     ].join('\n'));
     assert.match(second.text, /\nWhy a local\?\nYou: Keep the doc comment\.\n\nN2 · lib\/app\.dart:4\n/);
-    assert.deepEqual([notes.agents()[0].chat, notes.reply('Claude', 2, 'From the old chat.', false, 'a').other], ['b', true]);
+    assert.deepEqual([notes.agents()[0].chat, (await notes.reply('Claude', 2, 'From the old chat.', false, 'a')).other], ['b', true]);
   });
 
   it('when the chat ends, then the page says Claude left, and a new note reaches nobody.', async () => {
@@ -499,9 +525,9 @@ describe('Given notes a Codex chat holds, ', () => {
   it('when its watch reads them, then it works on what it hasn’t answered, and listens again once it has.', async () => {
     const got = await watch();
     const working = notes.agents()[0];
-    notes.reply('Codex', 1, 'It names the greeting.', false);
+    await notes.reply('Codex', 1, 'It names the greeting.', false);
     const one = notes.agents()[0];
-    notes.reply('Codex', 2, 'Done.', true);
+    await notes.reply('Codex', 2, 'Done.', true);
     assert.ok('text' in got && /\nWhy a local\?\nYou: And the doc comment\?\n/.test(got.text));
     assert.deepEqual([working.state, working.on, one.on, notes.agents()[0].state], ['working', [1, 2], [2], 'listening']);
   });
@@ -664,5 +690,161 @@ describe('Given notes kept with the opening line untangle once gave them, and no
       'Where a note asks for a change, make it. Where it asks a question, or isn’t clear, answer it before changing anything.',
       'Only answer: change nothing.',
     ]);
+  });
+});
+
+describe('Given notes on a pull request on GitHub, and Claude watching, ', () => {
+  let g: ReturnType<typeof greeting>;
+  let dir = '';
+  let notes: InstanceType<typeof Notes>;
+  const gh = new FakeGitHub();
+  const watch = async () => {
+    const r = await notes.watch('Claude', { timeout: 5_000 });
+    return 'text' in r ? r.text : JSON.stringify(r);
+  };
+
+  before(async () => {
+    g = greeting();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-notes-'));
+    notes = new Notes(path.join(dir, 'pr-7.json'));
+    notes.attach(context(g.repo, g.base, g.head, gh));
+    await notes.act({ action: 'add', path: 'lib/app.dart', side: 'RIGHT', line: 3, body: 'Why a local?' });
+    await watch();
+    await notes.reply('Claude', 1, 'It names the message before printing it.', false);
+  });
+
+  after(() => {
+    notes.close();
+    g.repo.remove();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  describe('when you ask for a draft with no words of your own, ', () => {
+    let text: string;
+
+    before(async () => {
+      await notes.act({ action: 'reply', n: 1, body: '', draft: true });
+      text = await watch();
+    });
+
+    it('then Claude reads the ask in your stead, and that its answer goes to GitHub as it is, pending on the note’s lines.', () => {
+      assert.equal(text.split('\n').slice(2).join('\n'), [
+        'N1 · lib/app.dart:3 · replies in its thread · you ask for a draft comment',
+        '> Why a local?',
+        'Claude: It names the message before printing it.',
+        'You: Draft a comment for GitHub from this talk, in a natural tone.',
+        'This asks for a draft comment for GitHub. Answer with the comment alone, as untangle reply N1 \'…\': untangle posts your answer as it is, on its lines, pending in your user’s review, for them to edit and send.',
+        '',
+      ].join('\n'));
+    });
+  });
+
+  describe('when Claude answers it, ', () => {
+    let answer: Awaited<ReturnType<InstanceType<typeof Notes>['reply']>>;
+
+    before(async () => {
+      answer = await notes.reply('Claude', 1, 'The local names the message; inlining it reads as well.', false);
+    });
+
+    it('then its answer is a pending comment of yours on the note’s lines, not a reply in the note, and the answer says where it went.', () => {
+      const n1 = notes.view().notes[0];
+      assert.deepEqual([gh.posted, answer.drafted, n1.comments.length, n1.said.map((x) => `${x.by} ${x.kind} ${x.id}${x.pending ? ' pending' : ''}`)], [
+        [{ kind: 'thread', at: { path: 'lib/app.dart', line: 3, side: 'RIGHT' }, body: 'The local names the message; inlining it reads as well.', mode: 'review' }],
+        'on its lines on GitHub, pending in your user’s review',
+        3,
+        ['Claude thread C1 pending'],
+      ]);
+    });
+  });
+
+  describe('when you edit the draft on GitHub and ask again, ', () => {
+    let text: string;
+
+    before(async () => {
+      gh.comments.get('C1')!.body = 'The local names the message: inline it.';
+      await notes.act({ action: 'reply', n: 1, body: 'Shorter, and ask for a test.', draft: true });
+      text = await watch();
+      await notes.reply('Claude', 1, 'Inline the message, and add a test for the greeting.', false);
+    });
+
+    it('then Claude reads the draft as it is now, and its answer rewrites that draft instead of adding one.', () => {
+      assert.match(text, /You: Shorter, and ask for a test\.\nThis asks for a draft comment for GitHub\. Answer with the comment alone, as untangle reply N1 '…': untangle posts your answer as it is, as a reply in its thread on GitHub, pending in your user’s review, for them to edit and send\.\nYour earlier draft is there now, pending \(they may have edited it\):\n> The local names the message: inline it\.\nWrite it again, taking in both what they ask and what’s there: your answer replaces it\.\n/);
+      assert.deepEqual([gh.posted.slice(1), notes.view().notes[0].said.length], [[{ kind: 'edit', id: 'C1', body: 'Inline the message, and add a test for the greeting.' }], 1]);
+    });
+  });
+
+  describe('when a note on the review asks for a draft, and Claude answers, ', () => {
+    before(async () => {
+      await notes.act({ action: 'add', path: '', review: true, body: 'Sum the review up for the author.', draft: true });
+      await watch();
+      await notes.reply('Claude', 2, 'Clear change; inline the message and test the greeting.', false);
+    });
+
+    it('then the answer is your pending review’s summary, as GitHub keeps no comment on the conversation pending.', () => {
+      assert.deepEqual([gh.posted.slice(2), notes.view().notes[1].said.map((x) => `${x.kind} ${x.id}`)], [[{ kind: 'summary', body: 'Clear change; inline the message and test the greeting.' }], ['summary REVIEW_1']]);
+    });
+  });
+
+  describe('when what a note said goes on GitHub from the page (Comment this), ', () => {
+    let quiet: string;
+    let text: string;
+
+    before(async () => {
+      await notes.act({ action: 'comment', n: 1, body: 'Inline the message.', mode: 'single' });
+      const r = await notes.watch('Claude', { timeout: 400, brief: true });
+      quiet = 'idle' in r ? 'idle' : JSON.stringify(r);
+      await notes.act({ action: 'add', path: 'lib/app.dart', side: 'RIGHT', line: 4, body: 'And this print?' });
+      text = await watch();
+    });
+
+    it('then it’s a reply in the note’s thread, and Claude hears of it with its next news, which it doesn’t wake for.', () => {
+      assert.deepEqual([gh.posted.slice(3), quiet], [[{ kind: 'reply', thread: 'T1', body: 'Inline the message.', mode: 'single' }], 'idle']);
+      assert.match(text, /\nN1 · lib\/app\.dart:3 · you commented on GitHub from it:\n> Inline the message\.\n/);
+    });
+  });
+
+  describe('when GitHub can’t take a draft, ', () => {
+    let answer: Awaited<ReturnType<InstanceType<typeof Notes>['reply']>>;
+
+    before(async () => {
+      await notes.act({ action: 'reply', n: 3, body: 'Draft it.', draft: true });
+      await watch();
+      gh.failing = 'gh is not logged in to GitHub: run `gh auth login`';
+      answer = await notes.reply('Claude', 3, 'Print the name once.', false);
+      gh.failing = null;
+    });
+
+    it('then the answer stays in the note’s thread, and says why.', () => {
+      const n3 = notes.view().notes[2];
+      assert.deepEqual([answer.drafted, answer.error, n3.comments.map((c) => `${c.by ?? 'You'}: ${c.body}`).pop(), n3.said.length], [null, 'gh is not logged in to GitHub: run `gh auth login`', 'Claude: Print the name once.', 0]);
+    });
+  });
+
+  describe('when a note is about a comment of the conversation, ', () => {
+    let text: string;
+
+    before(async () => {
+      await notes.act({ action: 'add', path: '', body: 'Is this right?', about: { kind: 'comment', comment: 'IC_9', author: 'grace', body: 'The benchmark is slower.', url: 'https://github.com/acme/app/pull/7#issuecomment-9' } });
+      text = await watch();
+    });
+
+    it('then it’s on the review, and Claude reads the comment, quoted.', () => {
+      assert.equal(notes.view().notes[3].review, true);
+      assert.match(text, /\nN4 · on the review\nAbout grace’s comment on GitHub \(https:\/\/github\.com\/acme\/app\/pull\/7#issuecomment-9\):\n> The benchmark is slower\.\nIs this right\?\n/);
+    });
+  });
+});
+
+describe('Given a notes file from before notes knew what they made on GitHub, ', () => {
+  it('when it’s read, then a note that quoted a thread is about it, and has made nothing.', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-notes-'));
+    const file = path.join(dir, 'pr-7.json');
+    const comment = { id: 'a1', by: null, body: 'Why?', at: '2020-06-01T00:00:00Z', edited: null, sent: 1 };
+    fs.writeFileSync(file, JSON.stringify({ version: 1, mode: 'local', live: true, opening: 'Go.', scope: 'open', base: null, head: null, next: 2, seq: 1, events: [], agents: {}, notes: [
+      { n: 1, path: 'lib/app.dart', file: false, side: 'RIGHT', line: 3, startSide: null, startLine: null, code: [], wrote: { head: 'h', path: 'lib/app.dart', line: 3, startLine: null, code: [] }, changed: false, gone: false, resolved: null, copied: false, quote: { thread: 'THREAD_1', author: 'grace', body: 'Rename it.', url: 'https://github.com/x' }, comments: [comment] },
+    ] }));
+    const note = new Notes(file).view().notes[0] as Record<string, unknown>;
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.deepEqual([note.about, note.said, 'quote' in note], [{ kind: 'thread', thread: 'THREAD_1', author: 'grace', body: 'Rename it.', url: 'https://github.com/x' }, [], false]);
   });
 });

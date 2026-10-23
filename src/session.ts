@@ -7,7 +7,7 @@ import { changedSince, LiveSession, openInEditor, type Side } from './live.js';
 import { Metrics } from './metrics.js';
 import type { PageConfig } from './page.js';
 import { ghReady, GitHubError, PullRequestConversation, type Action, type CommitFacts } from './github.js';
-import type { NotesContext, Post, Side as NoteSide } from './notes.js';
+import type { NotesContext, Side as NoteSide } from './notes.js';
 import { broughtBy, hasCommit, reviewedHead, sinceRows, type History } from './history.js';
 import { git, gitAsync, gitMaybe, runAsync } from './exec.js';
 import { fileHunks, generatedPatterns, parseHunks } from './pipeline/diff.js';
@@ -194,9 +194,16 @@ export class ReviewSession {
     return {
       repo: this.target.repo, base: this.target.baseSha, head: this.target.headSha, name, branch, checkout,
       change: (p, side, line) => this.changeAt(p, side, line),
-      post: gh ? (x: Post) => gh.act('thread' in x
-        ? { action: 'reply', mode: 'review', thread: x.thread, body: x.body }
-        : { action: 'thread', mode: 'review', draft: { path: x.path, body: x.body, line: x.line, side: x.side, startLine: x.startLine, startSide: x.startSide } }) : null,
+      gh: gh ? {
+        thread: (at, body, mode) => gh.postThread({ ...at, body }, mode),
+        reply: (thread, body, mode) => gh.postReply(thread, body, mode),
+        conversation: (body) => gh.postConversation(body),
+        summary: (body) => gh.setSummary(body),
+        edit: (comment, body) => gh.editComment(comment, body),
+        current: (comment) => gh.known(comment),
+        pending: () => gh.knownPending(),
+        stale: () => gh.knownStale(),
+      } : null,
     };
   }
 

@@ -30,8 +30,8 @@ export interface ConversationSpec {
   head: string;
   threads?: ThreadSpec[];
   reviews?: ReviewSpec[];
-  /** Set when a review is waiting to be finished. */
-  pending?: { id: string; comments: number } | null;
+  /** Set when a review is waiting to be finished, with its summary so far. */
+  pending?: { id: string; comments: number; body?: string } | null;
   /** The description as GitHub rendered it, when a test needs particular HTML. */
   html?: string;
 }
@@ -67,7 +67,7 @@ export function pullRequest(spec: ConversationSpec) {
     author: grace,
     ...reacts(),
     pendingReviews: {
-      nodes: spec.pending ? [{ id: spec.pending.id, body: '', comments: { totalCount: spec.pending.comments } }] : [],
+      nodes: spec.pending ? [{ id: spec.pending.id, body: spec.pending.body ?? '', comments: { totalCount: spec.pending.comments } }] : [],
     },
     reviewThreads: {
       pageInfo: empty,

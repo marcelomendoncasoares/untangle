@@ -64,7 +64,7 @@ export function usage(version: string): string {
     '  watch [directory | pr-url]  start the review if it isn’t running, wait for the notes and replies',
     '                              the agent hasn’t read, print them and exit',
     '  reply <N> <text>            answer in note N’s thread',
-    '  note <path:line> <text>     write a note of its own, from its review of the change',
+    '  note [path:line] <text>     write a note of its own: on lines, or on the review with its text alone',
     '  notes                       print the open notes, as Copy for agent gives them',
     '  stop                        close the review',
     '  feedback [text | -] [-idea] [pr-url]  draft a report for the user to check and send',
@@ -211,8 +211,8 @@ export type Command =
   /** `forward`: the review's flags as given, for a review watch starts. `given`: a target was named. */
   | { cmd: 'watch'; opts: Options; forward: string[]; agent: string | null; timeout: number; given: boolean }
   | { cmd: 'reply'; review: string | null; agent: string | null; resolve: boolean; note: number; text: string | null }
-  /** A note of the agent's own: on lines of a file (from startLine to line), or on the whole file (line null). */
-  | { cmd: 'note'; review: string | null; agent: string | null; removed: boolean; path: string; line: number | null; startLine: number | null; text: string }
+  /** A note of the agent's own: on lines of a file (from startLine to line), on the whole file (line null), or on the review itself (path null). */
+  | { cmd: 'note'; review: string | null; agent: string | null; removed: boolean; path: string | null; line: number | null; startLine: number | null; text: string }
   | { cmd: 'notes'; review: string | null; agent: string | null; all: boolean }
   | { cmd: 'stop'; review: string | null }
   | { cmd: 'skill'; install: boolean; update: boolean }
@@ -233,11 +233,13 @@ export const watchUsage = () => commandUsage('watch', 'hold a review as a coding
 export const replyUsage = () => commandUsage('reply', 'answer in a note’s thread', '[flags] <N> <text>', [
   'N is the note’s number (N2, or 2). The text is the rest of the line; - reads it from stdin.',
 ], REPLY_FLAGS);
-export const noteUsage = () => commandUsage('note', 'write a note of your own, on the review’s lines', '[flags] <path>[:<line>[-<line>]] <text>', [
+export const noteUsage = () => commandUsage('note', 'write a note of your own, on the review’s lines or on the review', '[flags] [<path>[:<line>[-<line>]]] <text>', [
   'Writes a note on the lines, from the agent’s own review of the change: the person reviewing answers',
   'in its thread, and untangle watch brings the answers. The path is the file’s in the repository, and',
   'its lines are numbered as on the review’s commit (with -removed, as on its base). A path alone is',
   'a note on the whole file. The text is the rest of the line; - reads it from stdin.',
+  'Its text alone, quoted, is a note on the review itself, for what has no line: a summary, a',
+  'question, or that a review found nothing to change.',
 ], NOTE_FLAGS);
 export const notesUsage = () => commandUsage('notes', 'print a review’s notes, as Copy for agent gives them', '[flags]', ['Prints the open notes, with their code and threads.'], NOTES_FLAGS);
 export const stopUsage = () => commandUsage('stop', 'close a review', '[flags]', ['Stops the review: its page closes and a waiting untangle watch says so.'], STOP_FLAGS);
@@ -307,10 +309,13 @@ export function parseCommand(argv: string[]): Command {
   if (first === 'note') {
     const { values, rest } = readFlags(more, NOTE_FLAGS, true);
     if (values.get('help')) return { cmd: 'help', text: noteUsage() };
+    const who = { review: values.has('review') ? String(values.get('review')) : null, agent: values.has('agent') ? String(values.get('agent')) : null };
+    // Its text alone (words, or - for stdin) is a note on the review itself; a lone path still asks for its text.
+    if (rest.length === 1 && (rest[0] === '-' || /\s/.test(rest[0].trim()))) return { cmd: 'note', ...who, removed: false, path: null, line: null, startLine: null, text: rest[0] };
     const at = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(rest[0] || '');
-    if (!at) throw new UsageError('on which lines? untangle note <path>[:<line>[-<line>]] <text>');
+    if (!at) throw new UsageError('on which lines? untangle note <path>[:<line>[-<line>]] <text>, or untangle note \'<text>\' on the review');
     const text = rest.slice(1).join(' ');
-    if (!text) throw new UsageError('what to write? untangle note <path>[:<line>[-<line>]] <text>');
+    if (!text) throw new UsageError('what to write? untangle note <path>[:<line>[-<line>]] <text>, or untangle note \'<text>\' on the review');
     const [from, to] = [at[2] ? Number(at[2]) : null, at[3] ? Number(at[3]) : null];
     return {
       cmd: 'note', review: values.has('review') ? String(values.get('review')) : null, agent: values.has('agent') ? String(values.get('agent')) : null,

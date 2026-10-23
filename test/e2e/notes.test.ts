@@ -143,8 +143,8 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
       shown = await read(page!, `[document.querySelector('.rv-btn').textContent.trim(), document.querySelector('.th.new.note .th-new-h b').textContent, document.querySelector('.th.new.note .cmp-hint').textContent, ...[...document.querySelectorAll('.th.new.note .cmp-f button')].map((b) => b.textContent)].join(' | ')`);
     });
 
-    it('then the button says Notes, and the box saves a note here, with one button.', () => {
-      assert.equal(shown, `Notes | Note on line +${callLine} | Saved locally · Markdown · Ctrl+Enter: Add note | Cancel | Add note`);
+    it('then the button says Notes, and the box saves a note here, or asks for a draft comment.', () => {
+      assert.equal(shown, `Notes | Note on line +${callLine} | Saved locally · Markdown · Ctrl+Enter: Add note | Cancel | Draft comment | Add note`);
     });
   });
 
@@ -197,8 +197,8 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
       await page!.eval('delete window.__copied');
     });
 
-    it('then what the agent wrote has a copy, and yours has edit and delete.', () => {
-      assert.equal(tools, 'Edit, Delete the note / Copy its text');
+    it('then yours has edit and delete, both have a copy, and each can be said on GitHub, Comment this last.', () => {
+      assert.equal(tools, 'Edit, Delete the note, Copy the note’s text, Comment this / Copy its text, Comment this');
     });
 
     it('then its words are on the clipboard as it wrote them, and a toast says whose.', () => {
@@ -255,7 +255,8 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
     });
   });
 
-  describe('when a note on the print is posted to GitHub, ', () => {
+  describe('when a note on the print is said on GitHub with Comment this, ', () => {
+    let box: string;
     let sent: string;
     let shown: string;
 
@@ -265,15 +266,23 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
       await page!.until(`!!document.querySelector('.th.new.note textarea')`);
       await fill(page!, '.th.new.note textarea', 'Print a greeting, not the name.');
       await page!.click('.th.new.note [data-act="nt-add"]');
-      await page!.until(`!!document.querySelector('.th.note[data-note="2"] [data-act="nt-post1"]')`);
-      await page!.click('.th.note[data-note="2"] [data-act="nt-post1"]');
-      await page!.until(`(document.querySelector('#vw-toast')?.textContent || '') === 'N2 is in your pending review on GitHub'`);
+      await page!.until(`!!document.querySelector('.th.note[data-note="2"] [data-act="nt-comment-this"]')`);
+      await page!.click('.th.note[data-note="2"] [data-act="nt-comment-this"]');
+      await page!.until(`!!document.querySelector('.th.note[data-note="2"] textarea[data-draft="nreply:2"]')`);
+      box = await read(page!, `[document.querySelector('textarea[data-draft="nreply:2"]').value, document.querySelector('.th.note[data-note="2"] .cmp-hint').textContent, ...[...document.querySelectorAll('.th.note[data-note="2"] .cmp-f button')].map((b) => b.textContent)].join(' | ')`);
+      await page!.click('.th.note[data-note="2"] [data-act="nt-comment"][data-mode="review"]');
+      await page!.until(`(document.querySelector('#vw-toast')?.textContent || '') === 'Added to your pending review'`);
       sent = posted(gh!, 'addPullRequestReviewThread');
-      shown = await read(page!, `[document.querySelector('.th.note[data-note="2"]') ? 'still a note' : 'left the notes', document.querySelector('[data-thread="THREAD_9"] .cm-tag.pending')?.textContent ?? 'no thread'].join(' | ')`);
+      await page!.until(`!!document.querySelector('[data-thread="THREAD_9"] .th-talk')`);
+      shown = await read(page!, `[document.querySelector('.code .th.note[data-note="2"]') ? 'apart' : 'in its thread', document.querySelector('[data-thread="THREAD_9"] .cm-tag.pending')?.textContent ?? 'no thread', document.querySelector('[data-thread="THREAD_9"] .th-talk').textContent.replace(/\\s+/g, ' ').trim()].join(' | ')`);
     });
 
-    it('then GitHub is asked for a thread on its line, in the pending review, and the note leaves the notes for it.', () => {
-      assert.deepEqual([sent, shown], [`{"pullRequestId":"PR_1","path":"lib/app.dart","body":"Print a greeting, not the name.","subjectType":"LINE","line":${printLine},"side":"RIGHT"}`, 'left the notes | Pending']);
+    it('then its box holds the note, as a comment for GitHub, with GitHub’s buttons.', () => {
+      assert.equal(box, 'Print a greeting, not the name. | Posts to GitHub · Markdown · Ctrl+Enter: Start a review | Cancel | Add single comment | Start a review');
+    });
+
+    it('then GitHub is asked for a thread on its line, in the pending review, and the note stays, in that thread.', () => {
+      assert.deepEqual([sent, shown], [`{"pullRequestId":"PR_1","path":"lib/app.dart","body":"Print a greeting, not the name.","subjectType":"LINE","line":${printLine},"side":"RIGHT"}`, 'in its thread | Pending | N2 · 1 note with Codex · only here']);
     });
   });
 
@@ -285,13 +294,13 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
       await page!.until(`!!document.querySelector('[data-thread="THREAD_9"] textarea[data-draft="reply:THREAD_9"]')`);
       shown = await read(page!, `[...document.querySelectorAll('[data-thread="THREAD_9"] .cmp-f button')].map((b) => b.textContent).join(' | ')`);
       await fill(page!, '[data-thread="THREAD_9"] textarea[data-draft="reply:THREAD_9"]', 'Say why it prints the name at all.');
-      await page!.click('[data-thread="THREAD_9"] [data-act="nt-quote"]');
-      await page!.until(`!!document.querySelector('.th.note[data-note="3"] .nt-quote')`);
-      shown += ' / ' + await read(page!, `(() => { const th = document.querySelector('.th.note[data-note="3"]'); return [th.querySelector('.nt-quote .muted').textContent, th.querySelector('.nt-quote .cm-body').textContent.trim(), th.querySelector('.cm .cm-body').textContent.trim()].join(' | '); })()`);
+      await page!.click('[data-thread="THREAD_9"] [data-act="nt-thread"]');
+      await page!.until(`[...document.querySelectorAll('[data-thread="THREAD_9"] .cm-body')].some((b) => b.textContent.includes('Say why'))`);
+      shown += ' / ' + await read(page!, `[...document.querySelector('[data-thread="THREAD_9"]').children].filter((el) => el.matches('.cm, .th-talk')).map((el) => el.matches('.th-talk') ? 'talk: ' + el.textContent.replace(/\\s+/g, ' ').trim() : (el.matches('.pending') ? 'GitHub' : 'note') + ': ' + el.querySelector('.cm-body').textContent.trim()).join(' | ')`);
     });
 
-    it('then the answer is a note on its line that quotes it, not a reply on GitHub.', () => {
-      assert.equal(shown, 'Cancel | Add note / On grace’s thread on GitHub | Print a greeting, not the name. | Say why it prints the name at all.');
+    it('then the answer joins the note’s talk in that thread, after the comment it made, kept here, not a reply on GitHub.', () => {
+      assert.equal(shown, 'Cancel | Draft comment | Add note / talk: N2 · 1 note with Codex · only here | GitHub: Print a greeting, not the name. | note: Say why it prints the name at all.');
     });
   });
 
@@ -312,7 +321,7 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
     });
 
     it('then its line counts the thread in GitHub’s color, and the notes apart, in the notes’ color.', () => {
-      assert.equal(counts, '1 threads on these lines, in GitHub’s color / 2 notes on these lines, in the notes’ color');
+      assert.equal(counts, '1 threads on these lines, in GitHub’s color / 1 notes on these lines, in the notes’ color');
     });
   });
 
