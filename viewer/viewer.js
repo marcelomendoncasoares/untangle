@@ -2311,12 +2311,12 @@
     }
     // untangle posted on GitHub on its own: GitHub's side is read again.
     if (was && d.gh !== was.gh) ghLoad(true);
-    // Where each agent's chat went since: it began listening, another chat took over, it left, or
-    // a line from untangle waits while it's busy.
+    // Where each agent's chat went since: it began listening or working, another chat took over,
+    // it left, or a line from untangle waits while it's busy.
     const before = new Map((was ? was.agents : []).map((a) => [a.name, a]));
     d.agents.forEach((a) => {
       const b = before.get(a.name);
-      if (!NT.seenAgents.has(a.name)) { NT.seenAgents.add(a.name); if (was && a.state === 'listening') news.push(`${a.name} is listening`); return; }
+      if (!NT.seenAgents.has(a.name)) { NT.seenAgents.add(a.name); if (was && (a.state === 'listening' || a.state === 'working')) news.push(agentLabel(a)); return; }
       if (!b) return;
       if (b.chat && a.chat && b.chat !== a.chat) news.push(`A new ${a.name} chat took over this review`);
       else if (a.state === 'left' && b.state !== 'left') news.push(`${a.name} left: its chat ended`);
@@ -3238,7 +3238,7 @@
     const said = {
       listening: a.kind === 'codex' ? `Its chat is open. Three seconds after your last note or reply, untangle puts a line in it with <code>codex queue</code>, and ${name} reads them.`
         : `A watch from its chat is waiting: what you write reaches it three seconds after your last note or reply.`,
-      working: `It has ${a.on.length ? nList(a.on) : 'what its last watch brought'}. What you write now ${a.kind === 'codex' ? 'reaches it in a line from untangle, after this turn' : `goes with its next ${watch}`}.`,
+      working: `${a.on.length ? `It has ${nList(a.on)}` : 'It’s busy in its chat'}. What you write now ${a.kind === 'codex' ? 'reaches it in a line from untangle, after this turn' : `goes with its next ${watch}`}.`,
       queued: a.kind === 'codex' && a.busy ? `${name} is busy with something you asked in its chat. The line from untangle waits in its queue, and starts its next turn.`
         : `untangle ${a.kind === 'codex' ? 'put' : 'typed'} a line into its chat: its next turn reads what’s new.`,
       deaf: !a.kind ? `No ${watch} of its own is waiting, so ${waits}.`
@@ -3256,7 +3256,7 @@
       h += `<div class="rv-f"><button type="button" class="btn sm" data-act="nt-copy">Copy for agent</button>`
         + (a.wake ? `<button type="button" class="btn sm primary" data-act="nt-wake" data-agent="${name}"${ntBusyAttr('wake:' + a.name)}>${NT.busy === 'wake:' + a.name ? 'Waking…' : `Wake ${name}`}</button>` : '') + '</div>';
     }
-    return h + composerHtml('agent', { local: true, rows: 2, placeholder: `Write to ${a.name} about the review as a whole`, buttons: [['Add note', 'data-act="nt-review-add"', true]] });
+    return h + composerHtml('agent', { local: true, rows: 2, placeholder: `Write to ${a.name} about the review`, buttons: [['Add note', 'data-act="nt-review-add"', true]] });
   }
   // The bar's labels, one per agent holding the review: where its chat is. Each opens its menu.
   let agentDrawn = '';

@@ -163,7 +163,8 @@ export class NoteError extends Error {
 
 /**
  * Where an agent's chat is, as the page says: a watch waits in it (or untangle rings it), it works
- * on notes it read, a line from untangle waits for its turn, nothing in it listens, or it ended.
+ * (on notes it read, or in a turn of its own), a line from untangle waits for its turn, nothing in
+ * it listens, or it ended.
  */
 export type AgentState = 'listening' | 'working' | 'queued' | 'deaf' | 'left';
 
@@ -689,19 +690,20 @@ export class Notes {
       if (turn && !turn.busy) h.idle = Math.max(h.idle, turn.since);
       // A line Wake typed into Claude's chat that its turn ended without reading.
       if (h.rung && chat?.kind === 'claude' && h.idle > h.rungAt) h.rung = null;
-      // Working: in a turn that its last watch's notes started or came into, or, when untangle
-      // can't tell, until it answers them.
+      // Working on notes: in a turn that its last watch's notes started or came into, or, when
+      // untangle can't tell, until it answers them. Any other turn is work too, on no note: the
+      // review asked for as its chat started, or what was asked in its chat since.
       const pending = h.on.filter((n) => !h.answered.has(n) && this.awaits(name, n));
-      const working = turn ? turn.busy && h.read > h.idle : pending.length > 0;
+      const onNotes = turn ? turn.busy && h.read > h.idle : pending.length > 0;
       const state: AgentState = h.watches ? 'listening'
         : alive === false ? 'left'
           : h.rung ? 'queued'
-            : working ? 'working'
+            : onNotes || turn?.busy ? 'working'
               : chat?.kind === 'codex' ? 'listening' : 'deaf';
       const news = state === 'deaf' && chat?.orca && turn && !turn.busy ? this.unseen(name) : null;
       return {
         name, kind: chat?.kind ?? null, chat: chat?.id ?? null, state,
-        on: state === 'queued' ? h.rung! : state === 'working' ? (pending.length ? pending : h.on) : [],
+        on: state === 'queued' ? h.rung! : state === 'working' && onNotes ? (pending.length ? pending : h.on) : [],
         busy: turn ? turn.busy : null, orca: !!chat?.orca, wake: news && news.count ? this.line(name, news) : null, error: h.error,
       };
     });

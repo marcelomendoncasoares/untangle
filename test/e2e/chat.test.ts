@@ -128,7 +128,7 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
       assert.deepEqual([deaf, saved, opened], [
         'st-deaf | Claude isn’t listening',
         'Note saved. Claude isn’t listening | no one is listening',
-        'Claude isn’t listening | Wake types into its chat, in Orcauntangle: 1 new note on the review of feature. Run untangle watch to read it. | Copy for agent | Wake Claude | Write to Claude about the review as a whole',
+        'Claude isn’t listening | Wake types into its chat, in Orcauntangle: 1 new note on the review of feature. Run untangle watch to read it. | Copy for agent | Wake Claude | Write to Claude about the review',
       ]);
     });
 
@@ -198,7 +198,7 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
 
     it('then the box takes the keys as the menu opens, and the note is on the review, yours, with the menu open and its box empty for the next.', () => {
       assert.deepEqual([typing, saved, note], [
-        'Write to Claude about the review as a whole',
+        'Write to Claude about the review',
         'Note saved, queued to Claude | agent | open',
         { review: true, comments: [[null, 'Start from the tests, then the greeting?']] },
       ]);

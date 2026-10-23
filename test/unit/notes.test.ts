@@ -506,6 +506,13 @@ describe('Given notes a Codex chat holds, ', () => {
     assert.deepEqual([got, Date.now() - t0 < 1000, notes.agents()[0].state], [{ idle: true, first: true }, true, 'listening']);
   });
 
+  it('when its chat is in a turn of its own, as for the review asked for as it started, then Codex is working, on no note, and listens once the turn ends.', () => {
+    s.chats.set('t', { busy: { busy: true, since: Date.now() } });
+    const busy = notes.agents()[0];
+    s.chats.delete('t');
+    assert.deepEqual([busy.state, busy.on, busy.busy, notes.agents()[0].state], ['working', [], true, 'listening']);
+  });
+
   it('when a burst of notes is written, then untangle puts one line in its chat a moment after the last, and the notes wait for its turn.', async () => {
     await add(notes, 3, 'Why a local?');
     await sleep(60);
