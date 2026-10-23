@@ -29,6 +29,8 @@ export interface RunInfo {
    */
   key?: string;
   claimed?: string;
+  /** The process list its pid is in (Linux's PID namespace): a command in another one can't see it. */
+  ns?: string | null;
 }
 
 /**
@@ -59,8 +61,21 @@ export function removeRun(pid: number): void {
   }
 }
 
-/** Whether a process runs. */
-export const pidAlive = (pid: number) => {
+/** This process's process list: on Linux, its PID namespace. Codex's sandbox has one of its own. */
+export const PID_NS = (() => {
+  try {
+    return fs.readlinkSync('/proc/self/ns/pid');
+  } catch {
+    return null;
+  }
+})();
+
+/**
+ * Whether a process runs. One in another process list, as a review is from Codex's sandbox, can't
+ * be seen: it's taken to run, and its server, asked, says whether it does.
+ */
+export const pidAlive = (pid: number, ns?: string | null) => {
+  if (ns && PID_NS && ns !== PID_NS) return true;
   try {
     process.kill(pid, 0);
     return true;
@@ -81,12 +96,14 @@ export function listRuns(): RunInfo[] {
   for (const name of names) {
     const m = /^(\d+)\.json$/.exec(name);
     if (!m) continue;
-    if (!pidAlive(Number(m[1]))) { removeRun(Number(m[1])); continue; }
+    let info: RunInfo | null = null;
     try {
-      out.push(JSON.parse(fs.readFileSync(path.join(runDir(), name), 'utf8')));
+      info = JSON.parse(fs.readFileSync(path.join(runDir(), name), 'utf8'));
     } catch {
       // Being written.
     }
+    if (!pidAlive(Number(m[1]), info?.ns)) { removeRun(Number(m[1])); continue; }
+    if (info) out.push(info);
   }
   return out.sort((a, b) => (a.started < b.started ? 1 : a.started > b.started ? -1 : 0));
 }

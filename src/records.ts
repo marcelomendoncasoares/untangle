@@ -145,9 +145,9 @@ export function listRecords(): Listed[] {
  */
 export async function serves(run: RunInfo): Promise<boolean> {
   if (listRecords().some((r) => r.pid === run.pid && r.stopped)) {
-    for (let i = 0; i < 100 && pidAlive(run.pid); i++) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 100 && pidAlive(run.pid, run.ns); i++) await new Promise((r) => setTimeout(r, 50));
   }
-  if (!pidAlive(run.pid)) return false;
+  if (!pidAlive(run.pid, run.ns)) return false;
   try {
     if ((await call(run, 'GET', 'summary')).status !== 403) return true;
   } catch (e) {

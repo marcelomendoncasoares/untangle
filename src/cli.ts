@@ -25,7 +25,7 @@ import { feedbackPanel, fonts, highlighter, progressPage, reviewPage, type PageC
 import { readRecord, recordFile, serves, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
 import { Manager, openManager } from './manager.js';
 import { reviews, type Summary } from './reviews.js';
-import { findRun, holder, listRuns, prKey, removeRun, wantedDir, wantedUrl, writeRun, type RunInfo } from './runs.js';
+import { findRun, holder, listRuns, PID_NS, prKey, removeRun, wantedDir, wantedUrl, writeRun, type RunInfo } from './runs.js';
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
 import { skill } from './skill.js';
@@ -185,7 +185,7 @@ async function review(opts: Options): Promise<number> {
     }
     // The run file: how untangle's commands (watch, reply, notes, stop) reach this review.
     const w = byUrl ? null : asked;
-    run = { pid: process.pid, url, token: server.token, dir: w ? w.dir : null, pr: byUrl ? asked?.pr ?? null : null, repoKey: w?.repoKey ?? undefined, branch: w?.branch ?? null, started: new Date().toISOString() };
+    run = { pid: process.pid, url, token: server.token, dir: w ? w.dir : null, pr: byUrl ? asked?.pr ?? null : null, repoKey: w?.repoKey ?? undefined, branch: w?.branch ?? null, started: new Date().toISOString(), ns: PID_NS };
     writeRun(run);
     process.on('exit', () => {
       removeRun(process.pid);

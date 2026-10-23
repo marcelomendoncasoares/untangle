@@ -1,10 +1,11 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { RunInfo } from '../../dist/runs.js';
-const { findRun, holder, wantedUrl, writeRun } = await import('../../dist/runs.js');
+const { findRun, holder, listRuns, PID_NS, pidAlive, wantedUrl, writeRun } = await import('../../dist/runs.js');
 
 const run = (pid: number, more: Partial<RunInfo>): RunInfo => ({ pid, url: `http://127.0.0.1:${pid}/`, token: 't', dir: null, pr: null, started: '2026-10-21T10:00:00.000Z', ...more });
 
@@ -82,6 +83,37 @@ describe('Given a pull request’s link, ', () => {
       writeRun(run(process.pid, { dir: '/work/app', repoKey: 'github.com/acme/app', branch: 'retry', key: 'pr-5', claimed: '2026-10-21T10:00:00.000Z' }));
       assert.equal(findRun(wantedUrl('https://github.com/acme/app/pull/5')!)?.pid, process.pid);
       assert.equal(findRun(wantedUrl('https://github.com/acme/app/pull/6')!), null);
+    },
+  );
+});
+
+describe('Given run files of reviews whose processes ended, ', () => {
+  let cache = '';
+  const was = process.env.UNTANGLE_CACHE;
+  // Process ids no process has now: each ran, and ended.
+  const ended = () => spawnSync('true').pid!;
+  before(() => {
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-runs-'));
+    process.env.UNTANGLE_CACHE = cache;
+  });
+  after(() => {
+    if (was === undefined) delete process.env.UNTANGLE_CACHE;
+    else process.env.UNTANGLE_CACHE = was;
+    fs.rmSync(cache, { recursive: true, force: true });
+  });
+
+  it(
+    'when one was written in another process list, as a review is seen from Codex’s sandbox, '
+    + 'then it’s listed, for its server to say whether it runs; one of this list, or of an untangle that didn’t say, is removed.',
+    { skip: !PID_NS && 'no process lists of their own here' },
+    () => {
+      const [other, here, older] = [ended(), ended(), ended()];
+      writeRun(run(other, { ns: 'pid:[1]' }));
+      writeRun(run(here, { ns: PID_NS }));
+      writeRun(run(older, {}));
+      const listed = listRuns().map((r) => r.pid);
+      const kept = [other, here, older].map((pid) => fs.existsSync(path.join(cache, 'run', `${pid}.json`)));
+      assert.deepEqual([listed, kept, pidAlive(other, 'pid:[1]'), pidAlive(other, PID_NS), pidAlive(other)], [[other], [true, false, false], true, false, false]);
     },
   );
 });
