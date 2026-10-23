@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import { TempRepo, type Person } from '../helpers/repo.ts';
 import type { Bell, Chat } from '../../dist/chats.js';
 import type { At, NotesContext, NotesGitHub } from '../../dist/notes.js';
@@ -832,6 +832,27 @@ describe('Given notes on a pull request on GitHub, and Claude watching, ', () =>
     it('then it’s on the review, and Claude reads the comment, quoted.', () => {
       assert.equal(notes.view().notes[3].review, true);
       assert.match(text, /\nN4 · on the review\nAbout grace’s comment on GitHub \(https:\/\/github\.com\/acme\/app\/pull\/7#issuecomment-9\):\n> The benchmark is slower\.\nIs this right\?\n/);
+    });
+  });
+
+  describe('when you ask again within the millisecond of Claude’s draft, ', () => {
+    let text: string;
+
+    before(async () => {
+      // The clock stands still for the three, as on a fast machine: only their order tells them apart.
+      mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      try {
+        await notes.act({ action: 'reply', n: 1, body: 'One line.', draft: true });
+        await notes.reply('Claude', 1, 'Inline the message.', false);
+        await notes.act({ action: 'reply', n: 1, body: 'With the test, too.', draft: true });
+      } finally {
+        mock.timers.reset();
+      }
+      text = await watch();
+    });
+
+    it('then the new ask still waits for Claude’s answer.', () => {
+      assert.match(text, /\nN1 · lib\/app\.dart:3 · replies in its thread · you ask for a draft comment\n/);
     });
   });
 });

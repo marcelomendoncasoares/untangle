@@ -326,6 +326,9 @@ export class Notes {
   // Closed by a pause: its chats hear it'll be back.
   private paused = false;
   private lastSent = 0;
+  // The last time the book stamped on a comment or on what a note said: each stamp comes after the
+  // one before, so a talk and what it said on GitHub never tie, even within a millisecond.
+  private stamped = 0;
   private readonly waiters = new Set<() => void>();
   // The agents holding the review in this run, and the watches waiting now (each from a chat).
   private readonly holders = new Map<string, Holder>();
@@ -454,10 +457,16 @@ export class Notes {
     return body;
   }
 
+  /** A time for a comment, or for what a note said: later than any stamped before. */
+  private stamp(): string {
+    this.stamped = Math.max(Date.now(), this.stamped + 1);
+    return new Date(this.stamped).toISOString();
+  }
+
   /** A comment, sent to the agents now, or held for later when live review is off (yours only). */
   private comment(by: By, body: string, draft = false): NoteComment {
     const held = by === null && !this.data.live;
-    const c: NoteComment = { id: crypto.randomBytes(6).toString('hex'), by, body, at: new Date().toISOString(), edited: null, sent: held ? null : ++this.data.seq, ...(draft && by === null ? { draft: true } : {}) };
+    const c: NoteComment = { id: crypto.randomBytes(6).toString('hex'), by, body, at: this.stamp(), edited: null, sent: held ? null : ++this.data.seq, ...(draft && by === null ? { draft: true } : {}) };
     if (!held) this.lastSent = Date.now();
     return c;
   }
@@ -892,7 +901,7 @@ export class Notes {
   private async say(note: Note, body: string, mode: PostMode, by: By): Promise<{ said: Said; conversation: unknown }> {
     const gh = this.ctx?.gh;
     if (!gh) throw new NoteError('Posting needs the pull request on GitHub, through gh (gh auth login).');
-    const at = new Date().toISOString();
+    const at = this.stamp();
     if (note.review) {
       if (by !== null) {
         const r = await gh.summary(body);
@@ -921,7 +930,7 @@ export class Notes {
     const gh = this.ctx?.gh;
     if (!gh) throw new Error('this review has no pull request on GitHub (or gh is logged out)');
     const prev = this.pendingDraft(note);
-    const at = new Date().toISOString();
+    const at = this.stamp();
     if (prev) {
       if (prev.said.kind === 'summary') await gh.summary(body);
       else await gh.edit(prev.said.id, body);
