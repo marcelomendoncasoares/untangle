@@ -246,7 +246,8 @@ export const stopUsage = () => commandUsage('stop', 'close a review', '[flags]',
 export const feedbackUsage = () => commandUsage('feedback', 'draft a report for the user to check and send', "['what happened' | -] [-idea] [pr-url]", [
   'Puts a draft on the running review’s page, with the system and what the review is running.',
   'With no answer, prints GitHub’s form, filled in. It never files an issue; the user sends it.',
-  'The text is one argument; - reads it from stdin. Without pr-url, finds this directory’s review.',
+  'The text is one argument: its first line is the report’s title, and the lines after it say what',
+  'happened; - reads it from stdin. Without pr-url, finds this directory’s review.',
   'With -list, lists your feedback gists and how to delete one; it changes nothing.',
 ], FEEDBACK_FLAGS);
 export const skillUsage = () => commandUsage('skill', 'teach Claude and Codex to hold a review', '[flags]', [

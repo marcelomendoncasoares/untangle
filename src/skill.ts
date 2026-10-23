@@ -78,8 +78,16 @@ post to GitHub.
 
 ## When untangle misbehaves
 
-If an untangle command hangs or fails, run \`untangle feedback '<what happened>'\`. It drafts a bug
-report for the user to check and send; tell them about it.
+If an untangle command hangs or fails, draft a bug report for the user to check and send, and tell
+them about it. Its first line is the title, what went wrong in a few words; the lines after it say
+what happened:
+
+\`\`\`sh
+untangle feedback - <<'EOF'
+untangle note says no review is running
+The watch had just said this chat holds the review. …
+EOF
+\`\`\`
 `;
 
 export const RULE = `# untangle runs outside Codex's sandbox: it writes its cache, serves the review's page and puts
