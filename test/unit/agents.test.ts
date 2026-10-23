@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-const { agentCommand, firstLine, sh } = await import('../../dist/agents.js');
+const { agentCommand, agentDirs, firstLine, resumeCommand, sh } = await import('../../dist/agents.js');
+const { cacheRoot } = await import('../../dist/cache.js');
 
 const link = 'https://github.com/acme/app/pull/12';
 
@@ -37,6 +38,32 @@ describe('Given an agent to start for a review, ', () => {
       assert.deepEqual(agentCommand({ kind: 'claude', resume: 'aaaa-bbbb', flags: '', message: '' }, link, 'app#12'), { command: `claude --resume aaaa-bbbb '/untangle ${link}'`, id: 'aaaa-bbbb' });
       assert.deepEqual(agentCommand({ kind: 'codex', resume: '019a-thread', flags: '-m o4', message: '' }, link, 'app#12'), { command: `codex resume 019a-thread -m o4 '$untangle ${link}'`, id: '019a-thread' });
       assert.deepEqual(agentCommand({ kind: 'codex', resume: null, flags: '', message: '' }, link, 'app#12'), { command: `codex --no-daemon '$untangle ${link}'`, id: null });
+    },
+  );
+
+  it(
+    'when the review is of a pull request’s link, '
+    + 'then the agent may write its working copy and the clone its commits go into, each named before the other options, new or resumed; a folder’s review gives none.',
+    () => {
+      const work = `${cacheRoot()}/work/github.com/acme/app/12`, clone = `${cacheRoot()}/repos/github.com/acme/app.git`;
+      const dirs = agentDirs(link);
+      const add = `--add-dir ${sh(work)} --add-dir ${sh(clone)}`;
+      assert.deepEqual([dirs, agentDirs('/work/app')], [[work, clone], []]);
+      assert.deepEqual([
+        agentCommand({ kind: 'claude', resume: null, session: 's1', flags: '--model opus', message: '' }, link, 'app#12', dirs).command,
+        agentCommand({ kind: 'claude', resume: 's1', flags: '', message: '' }, link, 'app#12', dirs).command,
+        agentCommand({ kind: 'codex', resume: null, flags: '-m o4', message: '' }, link, 'app#12', dirs).command,
+        agentCommand({ kind: 'codex', resume: 't1', flags: '', message: '' }, link, 'app#12', dirs).command,
+        resumeCommand({ kind: 'claude', id: 's1', folder: '/r' }, 'untangle: back', '', '/r', dirs),
+        resumeCommand({ kind: 'codex', id: 't1', folder: '/r' }, 'untangle: back', '-m o4', '/r', dirs),
+      ], [
+        `claude ${add} --session-id s1 -n 'Review app#12' --model opus '/untangle ${link}'`,
+        `claude ${add} --resume s1 '/untangle ${link}'`,
+        `codex ${add} --no-daemon -m o4 '$untangle ${link}'`,
+        `codex resume ${add} t1 '$untangle ${link}'`,
+        `claude ${add} --resume s1 'untangle: back'`,
+        `codex resume ${add} t1 -m o4 'untangle: back'`,
+      ]);
     },
   );
 

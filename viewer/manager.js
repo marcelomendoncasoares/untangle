@@ -545,15 +545,17 @@
     return out;
   }
 
-  // The command that starts the chat, as untangle will type it.
+  // The command that starts the chat, as untangle will type it: with the folders it may write, for
+  // a pull request's review, before its other options.
   function command() {
     const f = P.form, it = P.item;
     const msg = f.msg.trim();
     const first = `${f.agent === 'claude' ? '/untangle' : '$untangle'} ${it.target}${msg ? ' ' + msg : ''}`;
     const flags = (f.flags[f.agent] || '').trim();
     const resume = f.chat === 'resume' && f.resume;
-    const how = f.agent === 'claude' ? (resume ? `--resume ${sh(f.resume)}` : `--session-id ${f.session} -n ${sh('Review ' + it.name)}`) : resume ? `resume ${sh(f.resume)}` : '--no-daemon';
-    return [f.agent, how, flags, sh(first)].filter(Boolean).join(' ');
+    const add = f.dirs.map((d) => `--add-dir ${sh(d)}`).join(' ');
+    const how = f.agent === 'claude' ? [add, resume ? `--resume ${sh(f.resume)}` : `--session-id ${f.session} -n ${sh('Review ' + it.name)}`] : resume ? ['resume', add, sh(f.resume)] : [add, '--no-daemon'];
+    return [f.agent, ...how, flags, sh(first)].filter(Boolean).join(' ');
   }
 
   function formHtml() {
@@ -701,7 +703,14 @@
     P.stage = 'start';
     P.item = item;
     P.addFor = addFor || null;
-    P.form = { agent: addFor && first === 'none' ? 'claude' : first, chat: 'new', resume: null, own: false, msg: '', adv: false, session: crypto.randomUUID(), flags: { claude: agents.claude.flags, codex: agents.codex.flags } };
+    P.form = { agent: addFor && first === 'none' ? 'claude' : first, chat: 'new', resume: null, own: false, msg: '', adv: false, session: crypto.randomUUID(), flags: { claude: agents.claude.flags, codex: agents.codex.flags }, dirs: [] };
+    // A pull request's review lets its agent write its working copy: its command says so.
+    api('dirs?target=' + encodeURIComponent(item.target)).then((d) => {
+      if (P.item !== item || !P.form) return;
+      P.form.dirs = d.dirs;
+      const cmd = $('#f-cmd');
+      if (cmd) cmd.textContent = command();
+    }, () => {});
     palette();
   }
 

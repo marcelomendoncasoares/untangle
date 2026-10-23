@@ -163,7 +163,8 @@ has no line.
 
 An open pull request reviewed from its link gets a working copy of its branch, set up to push to
 it. The agent makes the changes your notes ask for there and commits them, the review follows its
-commits, and it pushes when you ask.
+commits, and it pushes when you ask. An agent started from the reviews page may write the working
+copy, Codex in its sandbox too.
 
 A talk with the agent can end in a comment on the pull request, in the same thread:
 

@@ -4,9 +4,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cacheRoot } from './cache.js';
+import { cacheRoot, cloneDir, workDir } from './cache.js';
 import { has } from './exec.js';
 import { listRecords } from './records.js';
+import { wantedUrl } from './runs.js';
 
 export type AgentKind = 'claude' | 'codex';
 
@@ -30,30 +31,45 @@ export function firstLine(kind: AgentKind, target: string, message: string): str
 }
 
 /**
+ * The folders an agent may write besides the one its chat starts in, for a pull request's review:
+ * the working copy of its branch, where it commits, and the clone its commits go into. Codex's
+ * sandbox lets it write only where its chat starts.
+ */
+export function agentDirs(target: string): string[] {
+  const w = wantedUrl(target);
+  return w?.repoKey && w.key ? [workDir(w.repoKey, Number(w.key.slice('pr-'.length))), cloneDir(w.repoKey)] : [];
+}
+
+// Each folder an agent may write, as both agents take it. Claude's --add-dir takes every word up
+// to the next option, so another option always follows.
+const addDirs = (dirs: string[]) => dirs.map((d) => `--add-dir ${sh(d)}`).join(' ');
+
+/**
  * The command that starts the chat, and the id it'll have when untangle can give it one: Claude
  * starts with the session id untangle chose, so the review's record has it before Claude says a
- * word; Codex's thread comes from its first watch.
+ * word; Codex's thread comes from its first watch. `dirs`: folders it may write besides its own.
  */
-export function agentCommand(a: AgentChoice, target: string, name: string): { command: string; id: string | null } {
+export function agentCommand(a: AgentChoice, target: string, name: string, dirs: string[] = []): { command: string; id: string | null } {
   const first = sh(firstLine(a.kind, target, a.message));
-  const flags = a.flags.trim();
+  const flags = a.flags.trim(), add = addDirs(dirs);
   if (a.kind === 'claude') {
     const id = a.resume || a.session || crypto.randomUUID();
     const how = a.resume ? `--resume ${sh(a.resume)}` : `--session-id ${id} -n ${sh(`Review ${name}`)}`;
-    return { command: ['claude', how, flags, first].filter(Boolean).join(' '), id };
+    return { command: ['claude', add, how, flags, first].filter(Boolean).join(' '), id };
   }
-  const how = a.resume ? `resume ${sh(a.resume)}` : '--no-daemon';
-  return { command: ['codex', how, flags, first].filter(Boolean).join(' '), id: a.resume };
+  const how = a.resume ? ['resume', add, sh(a.resume)] : [add, '--no-daemon'];
+  return { command: ['codex', ...how, flags, first].filter(Boolean).join(' '), id: a.resume };
 }
 
 /**
  * The command that resumes a chat that held a review, with one line that says the review is back.
  * Claude finds a chat by its folder, so the command starts there.
  */
-export function resumeCommand(c: { kind: AgentKind; id: string; folder: string | null }, line: string, flags: string, here: string): string {
+export function resumeCommand(c: { kind: AgentKind; id: string; folder: string | null }, line: string, flags: string, here: string, dirs: string[] = []): string {
   const cd = c.kind === 'claude' && c.folder && c.folder !== here ? `cd ${sh(c.folder)} && ` : '';
-  const how = c.kind === 'claude' ? `claude --resume ${sh(c.id)}` : `codex resume ${sh(c.id)}`;
-  return cd + [how, flags.trim(), sh(line)].filter(Boolean).join(' ');
+  const add = addDirs(dirs);
+  const how = c.kind === 'claude' ? ['claude', add, `--resume ${sh(c.id)}`] : ['codex', 'resume', add, sh(c.id)];
+  return cd + [...how, flags.trim(), sh(line)].filter(Boolean).join(' ');
 }
 
 /** The flags an agent last started with. */

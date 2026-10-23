@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
-import { agentCommand, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
+import { agentCommand, agentDirs, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
 import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
 import { rehomeCheckouts } from './checkouts.js';
 import { call, failed, Gone } from './client.js';
@@ -508,12 +508,30 @@ export class Manager {
    */
   async chat(target: string, agent: AgentChoice, ws?: { worktree: string } | null): Promise<{ chat: { id: string | null; handle: string | null }; command: string | null }> {
     const name = nameOf(target);
-    const { command, id } = agentCommand(agent, target, name);
+    const { command, id } = agentCommand(agent, target, name, await this.writable(target));
     const cli = orcaCli();
     const space = ws === undefined ? (cli ? await reviewsWorkspace(cacheRoot(), cli) : null) : ws;
     const handle = space ? await newTerminal(space.worktree, `${name.replace(/^[^#]*#/, '#')} · ${agent.kind === 'claude' ? 'Claude' : 'Codex'}`, command, cli) : null;
     rememberStart(agent, { id, handle });
     return { chat: { id, handle }, command: handle ? null : command };
+  }
+
+  /**
+   * The folders an agent may write for a review: a pull request's working copy and the clone its
+   * commits go into, once they're there. The review makes them as it starts, so they're waited for,
+   * until it's built without them (a closed pull request), stops, or a minute has passed. A folder
+   * is given only once it's there: an agent's sandbox may make a missing one, empty, before the
+   * review could.
+   */
+  private async writable(target: string): Promise<string[]> {
+    const dirs = agentDirs(target), w = wantedUrl(target);
+    if (!dirs.length || !w?.repoKey || !w.key) return [];
+    const run = findRun(w), file = recordFile(w.repoKey, w.key), end = Date.now() + 60_000;
+    for (;;) {
+      if (fs.existsSync(dirs[0])) return dirs;
+      if (!run || !pidAlive(run.pid) || readRecord(file)?.pid === run.pid || Date.now() > end) return [];
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
   /**
@@ -623,7 +641,7 @@ export class Manager {
     const cli = orcaCli();
     if (cli && c.orca && !startedHere(c) && (await orca(['terminal', 'send', '--terminal', c.orca.handle, '--text', line, '--enter'], cli)).ok) return { data: { ...(started.data as object), told: true } };
     const ws = cli ? await reviewsWorkspace(cacheRoot(), cli) : null;
-    const command = resumeCommand(c, line, flagsOf(c.kind), ws ? ws.folder : '');
+    const command = resumeCommand(c, line, flagsOf(c.kind), ws ? ws.folder : '', await this.writable(f.record.target));
     const handle = ws ? await newTerminal(ws.worktree, `${shortName(f.record).replace(/^[^#]*#/, '#')} · ${c.agent}`, command, cli) : null;
     rememberStart({ kind: c.kind, resume: c.id, flags: flagsOf(c.kind), message: '' }, { id: c.id, handle });
     return { data: { ...(started.data as object), chat: { id: c.id, handle }, command: handle ? null : command } };
@@ -849,6 +867,7 @@ export class Manager {
     if (route === 'folder' && method === 'GET') return { data: pathView(query.get('path') ?? '') };
     if (route === 'folders' && method === 'GET') return { data: await this.folders() };
     if (route === 'agents' && method === 'GET') return { data: { ...agentOptions(), orca: !!orcaCli() } };
+    if (route === 'dirs' && method === 'GET') return { data: { dirs: agentDirs(query.get('target') ?? '') } };
     if (route === 'start' && method === 'POST' && typeof (b as { target?: unknown }).target === 'string') return this.start((b as { target: string }).target.trim(), agentFrom((b as { agent?: unknown }).agent));
     if (route === 'tail' && method === 'GET') {
       const f = this.find(query.get('id'));
