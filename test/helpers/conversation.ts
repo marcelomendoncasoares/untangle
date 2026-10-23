@@ -34,6 +34,8 @@ export interface ConversationSpec {
   pending?: { id: string; comments: number; body?: string } | null;
   /** The description as GitHub rendered it, when a test needs particular HTML. */
   html?: string;
+  /** Comments on the conversation, by ada, in order. */
+  comments?: Array<{ id: string; body: string }>;
 }
 
 function reacts() {
@@ -98,7 +100,7 @@ export function pullRequest(spec: ConversationSpec) {
         },
       })),
     },
-    comments: { pageInfo: empty, nodes: [] },
+    comments: { pageInfo: empty, nodes: (spec.comments ?? []).map((c) => rawComment(c.id, c.body, ada)) },
     reviews: {
       pageInfo: empty,
       nodes: (spec.reviews ?? []).map((review) => ({

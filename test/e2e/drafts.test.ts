@@ -22,6 +22,8 @@ const afterApp = ['void greet(String name) {', '  print(name);', '}', '', 'void 
 const draft = 'Greeting ada by name reads well; a test for the greeting would keep it so.';
 const edited = 'Greeting ada by name reads well. Add a test for the greeting?';
 const summary = 'A small, clear change: the greeting takes a name. One ask: a test for it.';
+// A bot's comment, as bots write them: a marker for itself, a heading, a link, a name and code.
+const bench = '<!-- bench:7 -->\n## Benchmark\nSee [the run](https://example.test/run/7) for `greet_name`: _faster_ now.\n```\n12 ms --> 13 ms\n```';
 
 /** The + is a pointer target, so a busy machine can drop the first move. */
 async function showAdd(page: Browser, line: number): Promise<void> {
@@ -86,7 +88,7 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
     repo.branch('feature');
     repo.write('lib/app.dart', afterApp);
     const head = repo.commit({ subject: 'Name the greeting', author: ada('2020-06-02T15:00:00Z'), committer: ada('2020-06-02T15:00:00Z') });
-    spec = { number: 7, title: 'Add a greeting', url: 'https://github.com/acme/sample/pull/7', head, threads: [] };
+    spec = { number: 7, title: 'Add a greeting', url: 'https://github.com/acme/sample/pull/7', head, threads: [], comments: [{ id: 'IC_1', body: bench }] };
     gh = stubGh([]);
     base = [
       { match: ['pr', 'view'], stdout: { number: 7, title: 'Add a greeting', url: spec.url, state: 'OPEN', baseRefName: 'main', baseRefOid: repo.rev('main'), headRefName: 'feature', headRefOid: head } },
@@ -213,7 +215,7 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
     });
 
     it('then the review’s own row leads, the note is counted in its GitHub thread, and nothing is grouped under the sections.', () => {
-      assert.equal(rows, ['  The review ', '# Notes', '  None open: the + on a line writes one.', '# GitHub', '  From GitHub, just now', '  app.dart:6 1 notes 3'].join('\n'));
+      assert.equal(rows, ['  The review 1', '# Notes', '  None open: the + on a line writes one.', '# GitHub', '  From GitHub, just now', '  app.dart:6 1 notes 3'].join('\n'));
     });
   });
 
@@ -228,7 +230,7 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
       view = await read(page!, `[[...document.querySelectorAll('.fv-head .crumbs [data-tab], .fv-head .crumbs b')].map((el) => el.textContent).join(' / '), document.querySelector('[data-comment="PR_1"] .cm-tag').textContent, [...document.querySelectorAll('.fv-head .btn')].map((b) => b.textContent).join(', '), [...document.querySelectorAll('.conv-new .cmp-f button')].map((b) => b.textContent).join(', ')].join(' | ')`);
       await page!.click('[data-act="cards-fold"]');
       await page!.until(`!!document.querySelector('[data-comment="PR_1"].folded')`);
-      folded = await read(page!, `[document.querySelector('[data-act="cards-fold"]').textContent, document.querySelector('[data-comment="PR_1"] .cm-body').textContent.trim()].join(' | ')`);
+      folded = await read(page!, `[document.querySelector('[data-act="cards-fold"]').textContent, ...['PR_1', 'IC_1'].map((id) => document.querySelector(\`[data-comment="\${id}"] .cm-body\`).textContent.trim())].join(' | ')`);
       await page!.click('[data-act="cards-fold"]');
       await page!.until(`!document.querySelector('[data-comment="PR_1"].folded')`);
       open = await read(page!, `document.querySelector('[data-act="cards-fold"]').textContent`);
@@ -238,8 +240,8 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
       assert.equal(view, 'The review / Add a greeting | Description | Fold all, Open on GitHub | Draft comment, Add note');
     });
 
-    it('then Fold all folds each card to a line, and Open all opens them again.', () => {
-      assert.deepEqual([folded, open], ['Open all | Please look.', 'Fold all']);
+    it('then Fold all folds each card to a line of its text, and Open all opens them again.', () => {
+      assert.deepEqual([folded, open], ['Open all | Please look. | Benchmark See the run for greet_name: faster now. [code]', 'Fold all']);
     });
   });
 

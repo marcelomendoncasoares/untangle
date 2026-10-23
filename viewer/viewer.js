@@ -18,6 +18,10 @@
   const HISTORY = JSON.parse(($('#d-history') || { textContent: 'null' }).textContent || 'null');
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+  // Markdown on one line, as a preview reads it: no marks, tags or HTML comments, a link as its
+  // text, code as [code]. An underscore inside a word stays: crdt_nodes is a name, _so_ is emphasis.
+  const flat = (t) => (t || '').replace(/<!--[\s\S]*?-->/g, ' ').replace(/```[\s\S]*?```/g, '[code]').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<\/?[a-z][^>]*>/gi, ' ').replace(/^\s*(#{1,6}|>+)\s*/gm, '').replace(/[*`]+|(^|\W)_+|_+(?=\W|$)/g, '$1').replace(/\s+/g, ' ').trim();
   const fileName = (p) => p.slice(p.lastIndexOf('/') + 1);
   const wbr = (s) => esc(s).replace(/([.(])/g, '<wbr>$1');
   const fmt = (n) => n.toLocaleString('en-US');
@@ -2606,7 +2610,7 @@
     const folded = o.fold && GH.folded.has(c.id);
     const body = GH.editing === c.id
       ? composerHtml(editKey, { buttons: [['Update comment', `data-act="gh-edit" data-id="${esc(c.id)}" data-kind="${kind}"`, true]], cancel: 'edit-cancel' })
-      : folded ? `<div class="cm-body cm-folded">${esc(trunc((c.body || '').replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim(), 160)) || '…'}</div>`
+      : folded ? `<div class="cm-body cm-folded">${esc(trunc(flat(c.body), 160)) || '…'}</div>`
         : `<div class="cm-body">${c.html ? clean(c.html) : '<p class="muted">No description.</p>'}</div>`;
     const err = GH.errors.get('del:' + c.id);
     const when = `<span title="${esc(new Date(c.created).toLocaleString())}">${ago(c.created)}${c.edited ? ' · edited' : ''}</span>`;
@@ -3035,7 +3039,7 @@
     const sorted = d.notes.filter((n) => !n.review && !inThread(n)).sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.line || 0) - (y.line || 0));
     const row = (n) => {
       const last = n.comments[n.comments.length - 1];
-      const text = last.draft && !last.body ? 'Asked for a draft comment' : last.body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
+      const text = last.draft && !last.body ? 'Asked for a draft comment' : flat(last.body);
       const where = n.file ? 'file' : n.startLine != null ? `${n.startLine}–${n.line}` : n.line;
       const mk = n.resolved ? (n.resolved.by ? '<i class="mk ok ag" aria-hidden="true">✦</i>' : `<i class="mk ok">${ICON.check}</i>`) : `<i class="mk note${n.changed || n.gone ? ' ch' : ''}"></i>`;
       const who = last.by ? `${last.by}: ` : n.comments.length > 1 ? 'You: ' : '';
@@ -3056,7 +3060,6 @@
     const d = GH.on ? GH.data : null;
     const notes = NT.on ? NT.review : [];
     const open = notes.filter((n) => !n.resolved).length;
-    const flat = (t) => (t || '').replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
     // Its latest word: your pending summary, a note on the review, or the conversation's last comment.
     const latest = [];
     if (d) d.comments.forEach((c) => latest.push({ at: c.created, text: `${c.author.login}: ${flat(c.body)}` }));
@@ -3096,7 +3099,7 @@
     const sorted = d.threads.slice().sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.at || x.originalLine || 0) - (y.at || y.originalLine || 0));
     const row = (t) => {
       const c = t.comments[0];
-      const text = c ? c.body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim() : '';
+      const text = c ? flat(c.body) : '';
       const where = t.file ? 'file' : t.at != null ? t.at : t.originalLine;
       const pend = t.comments.some((x) => x.pending), drafted = t.comments.some((x) => draftOf(x));
       const mk = drafted ? '<i class="mk pend draft"></i>' : pend ? '<i class="mk pend"></i>' : t.resolved ? `<i class="mk ok">${ICON.check}</i>` : t.at == null && !t.file ? '<i class="mk away"></i>' : '<i class="mk gh"></i>';
@@ -6972,7 +6975,7 @@
       GH.data.threads.forEach((t) => {
         const c = t.comments[0];
         const where = `${fileName(t.path)}:${t.file ? 'file' : t.at != null ? t.at : t.originalLine}`;
-        const text = c ? c.body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim() : '';
+        const text = c ? flat(c.body) : '';
         const label = `${where} ${trunc(text, 70)}`;
         const r = fuzzy(label, q) || (c && fuzzy(c.author.login, q) ? { score: 400, at: [] } : null);
         if (!r) return;
@@ -6982,7 +6985,7 @@
     if (on('threads') && NT.data) {
       NT.data.notes.forEach((n) => {
         const where = n.review ? `N${n.n} the review` : `N${n.n} ${fileName(n.path)}:${n.file ? 'file' : n.line}`;
-        const text = n.comments[0].body.replace(/```[\s\S]*?```/g, '[code]').replace(/[#>*_`]/g, '').replace(/\s+/g, ' ').trim();
+        const text = flat(n.comments[0].body);
         const label = `${where} ${trunc(text, 70)}`;
         const r = fuzzy(label, q);
         if (!r) return;
