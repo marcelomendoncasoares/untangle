@@ -109,6 +109,7 @@ describe('Given a review no agent holds, in the manager inside Orca, ', { skip, 
     async () => {
       await page.click('.pal .chk');
       await page.until(`document.querySelector('#f-msg').value.startsWith('Do an initial review of this branch.')`);
+      assert.match(String(await page.eval(`document.querySelector('#f-msg').value`)), /say so in a note on the review\. Then keep watching the review for mine\.$/);
       await page.click('.pal .adv');
       await page.until(`!!document.querySelector('#f-cmd')`);
       // Typed at the message's end.
@@ -116,6 +117,28 @@ describe('Given a review no agent holds, in the manager inside Orca, ', { skip, 
       await page.type(' And the docs.');
       await page.until(`document.querySelector('#f-cmd').textContent.endsWith(' And the docs.\\'')`);
       assert.match(String(await page.eval(`document.querySelector('#f-cmd').textContent`)), new RegExp(`^claude --session-id [0-9a-f-]{36} -n 'Review ${path.basename(repo.dir)}' '/untangle ${fs.realpathSync(repo.dir)} Do an initial review of this branch\\. Read the change`));
+    },
+  );
+
+  it(
+    'when the first message is longer than the form has room for, and then short again, '
+    + 'then its box grows with it, as far as the window lets the form, scrolls past that, and fits it again.',
+    async () => {
+      // The box, the form and the window: whether all of the message shows, the box scrolls, the
+      // form is as tall as it may be, and the rest of the form needs no scrolling.
+      const box = `(() => { const t = document.querySelector('#f-msg'), p = t.closest('.pal'), b = t.closest('.pal-body'); return [t.scrollHeight <= t.clientHeight, getComputedStyle(t).overflowY, Math.abs(p.offsetHeight - parseFloat(getComputedStyle(p).maxHeight)) < 1, b.scrollHeight <= b.clientHeight].join(' '); })()`;
+      const set = (text: string) => page.eval(`(() => { const t = document.querySelector('#f-msg'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+      await page.click('.pal .adv');
+      await page.until(`!document.querySelector('#f-cmd')`);
+      const written = String(await page.eval(`document.querySelector('#f-msg').value`));
+      const fits = await page.eval(box);
+      await set('A point to look at.\n'.repeat(60));
+      const long = await page.eval(box);
+      await set(written);
+      const again = await page.eval(box);
+      await page.click('.pal .adv');
+      await page.until(`!!document.querySelector('#f-cmd')`);
+      assert.deepEqual([fits, long, again], ['true hidden false true', 'false auto true true', 'true hidden false true']);
     },
   );
 

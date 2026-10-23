@@ -55,7 +55,7 @@
   // The palette: New review. What you typed, the row lit, and GitHub's pull requests once they come;
   // then the review picked, and how its agent starts (the form), or the review an agent joins.
   const P = { open: false, q: '', hl: 0, pulls: null, loading: false, stage: 'pick', item: null, form: null, agents: null, addFor: null, folder: null, seen: null, folders: null, notice: '' };
-  const TEMPLATE = (pr) => `Do an initial review of this ${pr ? 'pull request' : 'branch'}. Read the change, then post your findings to untangle as notes on the lines they’re about, one note per point: bugs and edge cases first, then missing tests, then design and naming. Say what you’d change and why, and leave out style nits. If you find nothing to change, say so in a note on the review. Then tell me how many notes you posted, and keep watching the review for mine.`;
+  const TEMPLATE = (pr) => `Do an initial review of this ${pr ? 'pull request' : 'branch'}. Read the change, then post your findings to untangle as notes on the lines they’re about, one note per point: bugs and edge cases first, then missing tests, then design and naming. Say what you’d change and why, and leave out style nits. If you find nothing to change, say so in a note on the review. Then keep watching the review for mine.`;
   const AGENT = { claude: 'Claude', codex: 'Codex' };
   // Quoted for a shell, as untangle types it into the terminal.
   const sh = (t) => (/^[\w./:@%+=,-]+$/.test(t) ? t : `'${t.replace(/'/g, `'\\''`)}'`);
@@ -581,6 +581,26 @@
       <div class="pal-foot"><span class="note">${P.addFor ? `${AGENT[kind]} starts with the skill, and holds the review.` : kind === 'none' ? 'The review starts, and its page opens.' : `The review starts first, then ${AGENT[kind]} holds it with the skill.`}</span><span class="sp"></span><button type="button" class="btn sm" data-act="close-pal">Cancel<kbd>Esc</kbd></button><button type="button" class="btn sm primary" data-act="f-start">${P.addFor ? `Start ${AGENT[kind]}` : 'Start review'}<kbd>⏎</kbd></button></div>`;
   }
 
+  // The first message's box grows with what's written, as a comment box does, while the form has
+  // room in the window; past that, it scrolls.
+  function fitMsg() {
+    const ta = $('#f-msg'), body = ta && ta.closest('.pal-body'), pal = body && body.closest('.pal');
+    if (!pal) return;
+    const keep = body.scrollTop;
+    ta.style.height = 'auto';
+    const least = ta.offsetHeight, want = ta.scrollHeight;
+    // The room: the form as tall as it may be, less its head, its foot and the rest of its fields.
+    const room = parseFloat(getComputedStyle(pal).maxHeight) - (pal.offsetHeight - body.clientHeight) - (body.scrollHeight - least);
+    let height = Math.max(least, Math.min(want, room));
+    ta.style.height = `${height}px`;
+    // Measured in whole pixels, the room can come out a pixel over, and the form would scroll for
+    // it: the box gives it back.
+    const over = body.scrollHeight - body.clientHeight;
+    if (over > 0 && height > least) { height = Math.max(least, height - over); ta.style.height = `${height}px`; }
+    ta.style.overflowY = want > height ? 'auto' : 'hidden';
+    body.scrollTop = keep;
+  }
+
   function palette() {
     const box = $('#palette');
     if (!P.open) { if (box) box.remove(); return; }
@@ -595,6 +615,7 @@
       if (P.enter) { P.enter = false; palMotion(div, true); }
       const again = was && document.getElementById(was);
       if (again) { again.focus(); if (at != null && again.setSelectionRange) again.setSelectionRange(at, at); }
+      fitMsg();
       return;
     }
     const list = choices();
@@ -1011,7 +1032,7 @@
 
   document.addEventListener('input', (e) => {
     if ((e.target.id === 'f-msg' || e.target.id === 'f-flags') && P.form) {
-      if (e.target.id === 'f-msg') P.form.msg = e.target.value;
+      if (e.target.id === 'f-msg') { P.form.msg = e.target.value; fitMsg(); }
       else P.form.flags[P.form.agent] = e.target.value;
       const cmd = $('#f-cmd');
       if (cmd) cmd.textContent = command();
@@ -1109,7 +1130,7 @@
   });
 
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
-  addEventListener('resize', () => { if (S.menu) layer(); });
+  addEventListener('resize', () => { if (S.menu) layer(); if (P.open && P.stage === 'start') fitMsg(); });
   poll();
   // From a review's Start a review: the palette opens with the page.
   if (location.hash === '#new') { history.replaceState(null, '', location.pathname); openPalette(); }
