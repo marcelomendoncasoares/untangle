@@ -24,6 +24,7 @@ import { readingUnits, testCall } from './units.js';
 import { testOutline } from './outline.js';
 import { assembleIntroducedChains } from './chains.js';
 import { commitFamilies, subjectParts } from './commits.js';
+import { readModels } from './models.js';
 import { CALLABLE_KINDS, TYPE_KINDS, declarationAt, indexOf, memberAt as resolvedMemberAt, memberName } from './structure.js';
 
 const C = globalThis.ReviewCore;
@@ -55,6 +56,15 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
   const PROVENANCE = provenance;
   const OLD = Object.fromEntries(Object.entries(oldSides).map(([name, o]) => [name, { dir: path.resolve(o.dir) + '/', raw: o.raw, structure: o.structure }]));
   const gitShow = (rev, p) => { try { return execFileSync('git', ['-C', REPO, 'show', `${rev}:${p}`], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; } };
+  // The lines of a commit's files that match a pattern, as { p, text }; none when nothing matches.
+  const gitGrep = (rev, pattern, specs) => {
+    let text = '';
+    try { text = execFileSync('git', ['-C', REPO, 'grep', '-I', '-E', '-e', pattern, rev, '--', ...specs], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { text = e.stdout || ''; }
+    return text.split('\n').filter(Boolean).map((line) => {
+      const rest = line.startsWith(rev + ':') ? line.slice(rev.length + 1) : line, i = rest.indexOf(':');
+      return { p: rest.slice(0, i), text: rest.slice(i + 1) };
+    });
+  };
   const parser = await dartParser();
   const trees = new Set();
   const parse = (src) => {
@@ -1561,6 +1571,26 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
 
     // ---------- serialize
     const fileIndex = new Map(files.map((f, i) => [f, i]));
+    // The Serverpod models this comparison changes, for the Models view, each with the changed
+    // code that uses it: a use of its generated code already leads to its field.
+    const modelUsers = new Map();
+    decls.forEach((d) => {
+      if (!d.model) return;
+      const list = modelUsers.get(d.file) || [];
+      d.users.forEach((b) => {
+        const test = TEST_FILE.test(b.file.p), sp = blockNewSpan(b.file, b);
+        const key = test ? b.file.p : b.file.p + '::' + (b.member || '');
+        if (!list.some((u) => u.key === key)) list.push({ key, p: b.file.p, l: sp ? sp[0] : null, m: test ? null : b.member || null, test });
+      });
+      modelUsers.set(d.file, list);
+    });
+    const usersOf = (p) => (modelUsers.get(p) || []).sort((a, b) => Number(a.test) - Number(b.test) || (a.p < b.p ? -1 : a.p > b.p ? 1 : (a.l || 0) - (b.l || 0))).map((u) => (u.test ? { p: u.p, l: u.l, test: true } : { p: u.p, l: u.l, m: u.m }));
+    const models = adapterOn.serverpod ? readModels({
+      files, generated, repoPaths, review, usersOf,
+      show: (side, p) => gitShow(side === 'left' ? meta.left : meta.right, p),
+      grep: (side, pattern, specs) => gitGrep(side === 'left' ? meta.left : meta.right, pattern, specs),
+      index: (f) => fileIndex.get(f),
+    }) : [];
     // By commit: each commit's chain, what started it and what changed it later. The last
     // family holds the same changes.
     const familiesOut = (h) => {
@@ -1636,11 +1666,12 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       families: history ? familiesOut(history) : undefined,
       chains: chains.map((c) => ({ id: c.id, name: c.name, kind: c.kind, rootKind: c.root ? c.root.kind : null, also: c.also.map(label).filter((x, i, a) => x !== c.name && a.indexOf(x) === i), blocks: [...c.blocks].map((b) => b.id).sort(), files: c.files, graph: c.graph, ext: history ? extOut(c) : undefined, links: c.links, uses: [...c.uses].sort((a, b) => a - b), shares: [...c.shares].sort((a, b) => a - b), depth: c.depth, family: c.family, adds: [...c.blocks].reduce((x, b) => x + b.adds, 0), dels: [...c.blocks].reduce((x, b) => x + b.dels, 0), focus: Object.fromEntries(Object.entries(c.focus).map(([k, v]) => [k, [...v].sort((x, y) => x - y)])) })),
       generated: generated.map((f) => { const at = startsIn(f); return { p: f.p, s: f.s, a: f.a, d: f.d, gen: f.gen, hunks: f.hunks ? f.hunks.map((h) => ({ o: h.o, n: h.n, h: h.h, ...at(h), rows: h.l.map((l) => [l[0], l.slice(1)]) })) : null }; }),
+      models: models.length ? models : undefined,
     };
     out.compares[name] = ser;
     const inChain = new Set(chains.flatMap((c) => [...c.blocks]));
     if (history) log(`${name}: by commit, ${history.families.length} commit chains from ${PROVENANCE.commits.filter((c) => !c.merge).length} commits`);
-    log(`${name}: ${files.length} files, ${allBlocks.length} change blocks, ${edits.length} edits, ${groups.length} same-change groups (${groups.reduce((s, g) => s + g.edits.length, 0)} edits), ${chains.length} chains covering ${inChain.size} blocks, ${allBlocks.length - inChain.size} not in a chain, generated ${generated.length} (${generated.filter((g) => g.hunks).length} peekable)`);
+    log(`${name}: ${files.length} files, ${allBlocks.length} change blocks, ${edits.length} edits, ${groups.length} same-change groups (${groups.reduce((s, g) => s + g.edits.length, 0)} edits), ${chains.length} chains covering ${inChain.size} blocks, ${allBlocks.length - inChain.size} not in a chain, generated ${generated.length} (${generated.filter((g) => g.hunks).length} peekable)${models.length ? `, ${models.length} models (${models.filter((x) => x.test).length} in test packages, ${models.reduce((n, x) => n + x.warns.length, 0)} warnings)` : ''}`);
     chains.slice(0, 14).forEach((c) => log(`   chain ${String(c.blocks.size).padStart(3)} blocks · ${String(c.files).padStart(2)} files · ${c.graph.nodes.length} nodes · ${c.name}${c.also.length ? '  also: ' + c.also.map(label).join(', ') : ''}  links: ${c.links.length}`));
     const names = chains.map((c) => c.name); log('   duplicate chain names:', names.filter((n, i) => names.indexOf(n) !== i).length);
     groups.slice(0, 8).forEach((g) => { const e = edits[g.parts[0].edits[0].id]; log(`   group ×${g.count} ${e.op} in ${e.where}: ${e.from.slice(0, 40)} → ${e.to.slice(0, 40)}`); });

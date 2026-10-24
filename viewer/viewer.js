@@ -82,6 +82,7 @@
     listTree: path1('M1 2h12v1H1zM2.5 3h1v6.5h-1zM3.5 5.5H15v1H3.5zM3.5 9H15v1H3.5zM1 12.5h12v1H1z'),
     listFlat: path1('M1 2h14v1H1zM1 5.5h14v1H1zM1 9h14v1H1zM1 12.5h14v1H1z'),
     stack: svg('<path d="M2.5 4h11M4 8h8M5.5 12h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'),
+    warn: path1('M7.56 1h.88l6.54 12.26-.44.74H1.44L1 13.26 7.56 1zM8 2.28L2.28 13H13.7L8 2.28zM8.625 12v-1h-1.25v1h1.25zm-1.25-2V6h1.25v4h-1.25z'),
     history: path1('M13.507 12.324a7 7 0 0 0 .065-8.56A7 7 0 0 0 2 4.393V2H1v3.5l.5.5H5V5H2.811a6.008 6.008 0 1 1-.135 5.77l-.887.462a7 7 0 0 0 11.718 1.092zm-3.361-.97l.708-.707L8 7.792V4H7v4l.146.354 3 3z'),
   };
   // An icon button: its tooltip says what a click does; a toggle keeps one name and says whether it's on.
@@ -129,6 +130,9 @@
     // Test outlines: rows opened on their code ("<file>#<call>"), and folds opened (unchanged calls
     // under a group, code under unchanged sentences, changes outside the tests).
     olOpen: new Set(), olUnfold: new Set(), testsFilter: 'all',
+    // The Models view: which models it lists, the reviewed or test models opened, and the test
+    // packages unfolded.
+    modelsFilter: 'all', modelsOpen: new Set(), modelsTests: new Set(),
     search: { q: '', scope: 'unreviewed' },
     // Files shown whole, lines shown around each section of a diff ({ above, below } by its key),
     // and folders closed in the Files tab.
@@ -708,7 +712,7 @@
     const oldNo = meta.t === '-' ? meta.o : null;
     const c = o.c ? (meta.t === '-' ? (o.mv ? '' : 'L:' + meta.o) : n != null ? 'R:' + n : '') : '';
     const notes = (o.badges || '') + (o.toggle || '');
-    return `<div class="ln ${o.cls}${f.lang === 'md' ? ' md' : ''}${o.sel ? ' cm-sel' : ''}${o.mark || ''}"${indentAttr(text)}${n != null ? ` data-n="${n}"` : ''}${c ? ` data-c="${c}"` : ''}${o.w >= 0 ? ` data-w="${o.w}"` : ''}><span class="g">${o.tick || ''}</span><span class="no">${n != null ? n : meta.o != null ? meta.o : ''}</span><span class="sg">${sign}</span><span class="tx">${codeHtml(f, text, ranges, { emphasis: o.emphasis, n, o: oldNo, refs: o.refs, colors: o.colors })}</span>${o.lg || ''}${notes ? `<span class="bdgs">${notes}</span>` : ''}</div>` + (n != null ? peekAfter(f, n) : oldNo != null ? peekAfterOld(f, oldNo) : '') + (o.c ? threadsRow(f, meta, o.mv) : '');
+    return `<div class="ln ${o.cls}${f.lang === 'md' ? ' md' : ''}${o.sel ? ' cm-sel' : ''}${o.mark || ''}${modelWarnLine(f, meta)}"${indentAttr(text)}${n != null ? ` data-n="${n}"` : ''}${c ? ` data-c="${c}"` : ''}${o.w >= 0 ? ` data-w="${o.w}"` : ''}><span class="g">${o.tick || ''}</span><span class="no">${n != null ? n : meta.o != null ? meta.o : ''}</span><span class="sg">${sign}</span><span class="tx">${codeHtml(f, text, ranges, { emphasis: o.emphasis, n, o: oldNo, refs: o.refs, colors: o.colors })}</span>${o.lg || ''}${notes ? `<span class="bdgs">${notes}</span>` : ''}</div>` + (n != null ? peekAfter(f, n) : oldNo != null ? peekAfterOld(f, oldNo) : '') + (o.c ? threadsRow(f, meta, o.mv) : '');
   }
   // Each move annotation stays at the moved block's position. The removed body stays
   // collapsed; the added body's annotation immediately precedes its rows.
@@ -1343,6 +1347,7 @@
     return head + code + (current ? `<div class="pk-foot"><button type="button" class="linkish" data-open="${esc(v.path)}">Go to it in this review</button></div>` : '');
   }
   function peekHtml(p) {
+    if (p.model) return '<div class="peek" role="region" aria-label="Peek">' + modelPeekHtml(p) + '</div>';
     if (p.history) return '<div class="peek" role="region" aria-label="Peek">' + historyPeekHtml(p) + '</div>';
     if (p.ext) return '<div class="peek" role="region" aria-label="Peek">' + extPeekHtml(p) + '</div>';
     if (p.uses) return '<div class="peek" role="region" aria-label="Peek">' + usesPeekHtml(p) + '</div>';
@@ -1688,7 +1693,7 @@
       const g = !f && m.generated.find((x) => x.p === v.path);
       if (f) fileItems(f, false);
       else if (g) fileItems(g, true);
-    } else if (v.kind === 'standalone' || v.kind === 'group' || v.kind === 'tests') showing();
+    } else if (v.kind === 'standalone' || v.kind === 'group' || v.kind === 'tests' || v.kind === 'models') showing();
     else if (v.kind === 'source') {
       const s = sources.get(srcKey(v)) || {};
       const ed = editorItem({ side: v.side, p: v.path, ext: v.ext, abs: s.abs, line: v.line || 1 });
@@ -2785,14 +2790,14 @@
     if (line == null) return '';
     const k = f.p + '\n' + side + '\n' + line;
     const list = GH.on && GH.data ? GH.anchors.get(k) : null, notes = NT.data && NT.anchors.has(k) ? NT.anchors.get(k).filter((n) => !inThread(n)) : null;
-    let h = (list ? list.map((t) => threadHtml(t)).join('') : '') + (notes ? notes.map((n) => noteHtml(n)).join('') : '');
+    let h = modelWarnsAt(f, side, line) + (list ? list.map((t) => threadHtml(t)).join('') : '') + (notes ? notes.map((n) => noteHtml(n)).join('') : '');
     const c = state.compose;
     if (c && !compact() && c.path === f.p && c.side === side && c.line === line) h += newThreadHtml(c);
     return h;
   }
   // Threads under a unified row: on its new line, and on its old one (a removed or unchanged line).
   function threadsRow(f, meta, noLeft) {
-    if (!(GH.on && GH.data) && !NT.data && !state.compose) return '';
+    if (!(GH.on && GH.data) && !NT.data && !state.compose && state.view.kind !== 'models') return '';
     return (meta.t !== '-' ? threadsAt(f, 'RIGHT', meta.n) : '') + (!noLeft && meta.t !== '+' && meta.o != null ? threadsAt(f, 'LEFT', meta.o) : '');
   }
   // Whether a row of a hunk is in the range a comment is being written on.
@@ -3800,7 +3805,7 @@
     if (v.kind === 'chain') return m.chains[v.id] ? m.chains[v.id].name : 'the chain';
     if (v.kind === 'file') return fileName(v.path);
     if (v.kind === 'source') return v.ext != null ? v.label || 'the file' : fileName(v.path || '');
-    return { map: 'the chain map', standalone: 'Not in a chain', group: 'the same change', search: 'the search', conversation: 'the conversation', history: 'History', tests: 'Tests' }[v.kind] || 'the view before';
+    return { map: 'the chain map', standalone: 'Not in a chain', group: 'the same change', search: 'the search', conversation: 'the conversation', history: 'History', tests: 'Tests', models: 'Models' }[v.kind] || 'the view before';
   }
   // As a render starts: a view that isn't the step's is a new step, and the step it leaves keeps
   // where it was scrolled.
@@ -4867,6 +4872,185 @@
     }
     return h;
   }
+  // ---------- the Models view: the Serverpod models the review adds, changes or removes, by package.
+  // Each is its YAML diff, marked as anywhere else, with what can break under the line it's about,
+  // its generated files and migration a click away, and the code that uses it. A reviewed model
+  // folds to its line, as a reviewed test does; models in test packages fold at the end, outside
+  // the count, with no warnings.
+  const toggleIn = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
+  const modelsAll = () => M().raw.models || [];
+  const modelFile = (md) => M().files[md.f];
+  // The models in the lens: the ones in test packages apart, and how many of the others are left.
+  function modelsNow() {
+    const seen = modelsAll().filter((md) => !lensOn() || stats(modelFile(md).blocks).total);
+    const main = seen.filter((md) => !md.test);
+    return { main, tests: seen.filter((md) => md.test), left: main.filter((md) => stats(modelFile(md).blocks).open).length };
+  }
+  const MODEL_KINDS = { all: () => true, new: (md) => md.st === 'A', changed: (md) => md.st === 'M', removed: (md) => md.st === 'D', warn: (md) => md.warns.length > 0 };
+  const codeIn = (s) => `<code>${esc(s)}</code>`;
+  // A warning's words: a template, filled in with the model's own names.
+  function warnWords(w) {
+    if (w.k === 'required') return `<b>Required, with no default:</b> ${codeIn(w.cls)} data from before this change has no ${w.fields.map(codeIn).join(' or ')}, and won’t deserialize.`;
+    if (w.k === 'field-removed') return `<b>Removed, but the old version requires it:</b> ${codeIn(w.cls)} data without ${codeIn(w.field)} won’t deserialize there.`;
+    if (w.k === 'removed') return `<b>Removed:</b> ${codeIn(w.cls)} data from before this change won’t deserialize.`;
+    if (w.k === 'retyped') return `<b>Retyped from ${codeIn(w.from)} to ${codeIn(w.to)}:</b> ${codeIn(w.cls)} data from before this change won’t deserialize.`;
+    if (w.k === 'enum-order') return `<b>Serialized by index:</b> the values after ${codeIn(w.value)} change meaning.`;
+    if (w.k === 'no-migration') return `<b>${codeIn(w.table)} changes,</b> with no migration in this review.`;
+    if (w.k === 'not-regenerated') return `<b>Its generated code didn’t change:</b> run ${codeIn('serverpod generate')}.`;
+    return `<b>Serverpod:</b> ${esc(w.text || '')}`;
+  }
+  const warnHtml = (w) => `<div class="md-w" role="note">${ICON.warn}<span>${warnWords(w)}</span></div>`;
+  // The warnings on a line of a model's diff, drawn under it in the Models view.
+  function modelWarnsAt(f, side, line) {
+    if (state.view.kind !== 'models' || f.idx == null) return '';
+    const md = modelsAll().find((x) => x.f === f.idx);
+    return md ? md.warns.filter((w) => w.side === side && w.line === line).map(warnHtml).join('') : '';
+  }
+  // A line a warning is about: its number marked, in the Models view.
+  function modelWarnLine(f, meta) {
+    if (state.view.kind !== 'models' || f.idx == null) return '';
+    const md = modelsAll().find((x) => x.f === f.idx);
+    const side = meta.t === '-' ? 'LEFT' : 'RIGHT', line = meta.t === '-' ? meta.o : meta.n;
+    return md && md.warns.some((w) => w.side === side && w.line === line) ? ' md-wl' : '';
+  }
+  // In a stack, the pull requests whose commits wrote a model's changed lines, top first.
+  function modelLegs(f) {
+    if (!STACK || !hxOn()) return [];
+    const legs = new Set();
+    f.hunks.forEach((h, hi) => h.rows.forEach((r, ri) => { if (r[0] !== ' ') { const n = rowLeg(f, hi, ri); if (n != null) legs.add(n); } }));
+    return STACK.legs.map((l) => l.number).filter((n) => legs.has(n));
+  }
+  const andList = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
+  // What a model leads to: the changed code that uses it, its migration and its generated files.
+  function modelLinksHtml(md, f) {
+    const parts = [];
+    const go = (u, label) => `<button type="button" class="linkish" data-open="${esc(u.p)}"${u.l ? ` data-line="${u.l}"` : ''} title="${esc(u.p + (u.l ? ':' + u.l : ''))}">${label}</button>`;
+    if (md.used) {
+      const code = md.used.filter((u) => !u.test), tests = md.used.filter((u) => u.test);
+      const items = code.slice(0, 3).map((u) => go(u, codeIn(u.m || fileName(u.p))));
+      if (code.length > 3) items.push(`<span title="${esc(code.slice(3).map((u) => u.m || fileName(u.p)).join(', '))}">${code.length - 3} more</span>`);
+      if (tests.length === 1) items.push(go(tests[0], codeIn(fileName(tests[0].p))));
+      else if (tests.length) items.push(`<span title="${esc(tests.map((u) => fileName(u.p)).join(', '))}">${tests.length} test files</span>`);
+      parts.push(`<span class="md-lk"><b>Used by</b>${andList(items)}</span>`);
+    }
+    const peekBtn = (kind, p, label) => `<button type="button" class="linkish md-pk" data-act="model-peek" data-model="${esc(f.p)}" data-kind="${kind}" data-path="${esc(p)}" aria-expanded="${!!state.peek && state.peek.model === f.p && state.peek.path === p}" title="${esc(p)}">${label}</button>`;
+    if (md.mig) parts.push(`<span class="md-lk"><b>Migration</b>${peekBtn('mig', md.mig.p, codeIn(md.mig.v))}${md.mig.more ? ` <span title="${esc(md.mig.more.join(', '))}">and ${md.mig.more.length} more</span>` : ''}</span>`);
+    if (md.gen) parts.push(`<span class="md-lk"><b>Generated</b>${md.gen.map((g, i) => `${peekBtn('gen', g.p, codeIn(fileName(g.p)))}${g.gone ? ' removed' : ''}${i < md.gen.length - 1 ? ', ' : ''}`).join('')}</span>`);
+    return parts.length ? `<div class="md-links">${parts.join('')}</div>` : '';
+  }
+  // A generated file or a migration, in a peek in its model's card: a migration's statements for
+  // the table, the columns the model adds marked; a protocol.dart's hunks that name the model.
+  function modelPeekHtml(p) {
+    const md = modelsAll().find((x) => modelFile(x).p === p.model);
+    const g = M().generated.find((x) => x.p === p.path);
+    const close = '<button type="button" class="pk-x" data-act="close-peek">Close</button>';
+    const head = (src) => `<div class="pk-h"><b>${p.kind === 'mig' ? 'Migration' : 'Generated'}</b><span class="pk-loc">${esc(p.path)}</span><span class="pk-src">${src}</span><span class="sp"></span>${close}</div>`;
+    if (!md || !g) return head('not in this review');
+    if (!g.hunks) {
+      if (!CONFIG.served) return head('generated') + `<div class="pk-foot">This file’s ${fmt(g.a + g.d)} changed lines aren’t in this page.</div>`;
+      if (g.loadError) return head('generated') + `<div class="pk-foot">${esc(g.loadError)}</div>`;
+      if (!g.loading) {
+        g.loading = true;
+        api('generated?p=' + encodeURIComponent(g.p))
+          .then((r) => r.json().then((j) => { if (!r.ok) throw new Error(j.error || r.status); return j; }))
+          .then((j) => { g.hunks = j.hunks; })
+          .catch((e) => { g.loadError = `Couldn’t load this file’s diff: ${e.message}`; })
+          .then(() => { if (state.peek === p) render(); });
+      }
+      return head('generated') + '<div class="pk-foot">Loading the diff…</div>';
+    }
+    const want = p.kind === 'mig' && md.mig && md.mig.start ? [md.mig.start, md.mig.end] : null;
+    const hits = new Set(p.kind === 'mig' && md.mig ? md.mig.hits || [] : []);
+    const only = md.gen && md.gen.some((x) => x.p === p.path && x.only) ? new RegExp(`\\b${md.name}\\b`) : null;
+    const file = { p: g.p, lang: C.langOf(g.p) };
+    let body = '';
+    g.hunks.forEach((hk) => {
+      if (only && !hk.rows.some(([t, text]) => t !== ' ' && only.test(text))) return;
+      let o = hk.o, n = hk.n, rows = '';
+      hk.rows.forEach(([t, text], i) => {
+        const on = t === '+' ? null : o++, nn = t === '-' ? null : n++;
+        if (want && (nn == null || nn < want[0] || nn > want[1])) return;
+        rows += `<div class="pk-ln${t === '+' ? ' add' : t === '-' ? ' del' : ''}${nn != null && hits.has(nn) ? ' hit' : ''}"><span class="no">${on ?? ''}</span><span class="no">${nn ?? ''}</span><span class="sg">${t === '-' ? '−' : t === '+' ? '+' : ''}</span><span class="tx">${codeHtml(file, text, null, { colors: rowColors(hk.rows, g.p, i) })}</span></div>`;
+      });
+      if (rows) body += (want ? '' : `<div class="pk-hunk">@@ −${hk.o} +${hk.n} @@ ${esc(hk.h || '')}</div>`) + rows;
+    });
+    const note = want ? `The statements for ${codeIn(md.table)}, lines ${want[0]} to ${want[1]}${hits.size ? `, with the column${hits.size > 1 ? 's' : ''} it adds` : ''}.`
+      : g.s === 'D' ? 'Removed with the model.' : only ? `The hunks that name ${codeIn(md.name)}.` : `Its diff: ${plusMinus(g.a, g.d)}.`;
+    return head('generated') + `<p class="md-pk-n">${note}</p>`
+      + (body ? `<div class="pk-code" tabindex="0" aria-label="${esc(p.path)}" data-peek-code="model:${esc(p.path)}">${body}</div>` : '<div class="pk-foot">Nothing in it to show.</div>')
+      + `<div class="pk-foot"><button type="button" class="linkish" data-open="${esc(g.p)}"${want ? ` data-line="${want[0]}"` : ''}>Go to it in this review</button></div>`;
+  }
+  // A model's card: its line, which stays on top while its diff scrolls by, then the warnings about
+  // the whole model, its links, and its diff with the other warnings under their lines.
+  function modelCardHtml(md) {
+    const f = modelFile(md), st = stats(f.blocks), done = st.total > 0 && !st.open;
+    const foldable = done || md.test, open = !foldable || state.modelsOpen.has(f.p);
+    const legs = modelLegs(f).map((n) => { const l = legOf(n); return `<span class="md-chip leg${onLeg(n) ? ' on' : ''}" title="${esc(`Changed in #${n}${l ? `: ${l.title}` : ''}`)}">#${n}</span>`; }).join('');
+    const warned = md.warns.length ? `<span class="md-chip warn" title="${esc(plural(md.warns.length, 'warning'))}: what can break">${ICON.warn}${md.warns.length}</span>` : '';
+    const tick = st.total ? `<button type="button" class="tick md-tick${done ? ' on' : st.open < st.total ? ' part' : ''}" data-act="mark-file" data-file="${f.idx}" title="${done ? 'Reviewed: mark the model unreviewed' : 'Mark the whole model reviewed'}" aria-label="${done ? 'Mark the model unreviewed' : 'Mark the model reviewed'}" aria-pressed="${done}"></button>` : '';
+    const label = `<span class="md-nm">${esc(md.name)}</span><span class="md-fp">${esc(md.rel)}</span>`;
+    const name = foldable ? `<button type="button" class="md-open" data-act="model-open" data-model="${esc(f.p)}" aria-expanded="${open}" title="${open ? 'Fold it' : 'Open it'}">${label}${open ? '' : `<span class="md-sum">${esc(md.sum)}</span>`}</button>` : label;
+    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}<span class="sp"></span>${warned}${legs}${tick}</div></section>`;
+    const chips = (md.st === 'A' ? '<span class="md-chip new">new</span>' : md.st === 'D' ? '<span class="md-chip gone">removed</span>' : '')
+      + (md.en ? `<span class="md-chip">enum, ${md.en === 'byName' ? 'by name' : 'by index'}</span>` : '')
+      + (md.table ? `<span class="md-chip">table ${codeIn(md.table)}</span>` : '')
+      + (md.ext ? `<span class="md-chip">extends ${codeIn(md.ext)}</span>` : '');
+    let h = `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}${chips}<span class="sp"></span>${warned}${legs}${tick}</div>`;
+    const top = md.warns.filter((w) => w.line == null);
+    if (top.length) h += `<div class="md-ws">${top.map(warnHtml).join('')}</div>`;
+    h += modelLinksHtml(md, f);
+    if (state.peek && state.peek.model === f.p) h += peekHtml(state.peek);
+    const ctx = { key: 'models' };
+    return h + `<div class="md-diff"><div class="code" data-p="${esc(f.p)}">${sectionsHtml(f, f.hunks.map((hk, hi) => sectionOf(f, hi, 0, hk.rows.length, ctx)), ctx)}</div></div></section>`;
+  }
+  // What a test package's models all change, when they change the same, as its folded line says it.
+  function sharedHtml(list) {
+    const key = (r) => `${r.s}|${r.f}|${r.t ?? ''}`;
+    let common = list[0].rows.map(key);
+    list.forEach((md) => { const ks = new Set(md.rows.map(key)); common = common.filter((k) => ks.has(k)); });
+    const rows = list[0].rows.filter((r) => common.includes(key(r)));
+    const verb = { add: 'adds', del: 'removes', chg: 'changes', doc: 'changes' };
+    const what = rows.map((r) => `${verb[r.s]} ${codeIn(r.f + (r.t && r.s !== 'chg' ? ': ' + r.t : ''))}`).join(', ');
+    const more = list.filter((md) => md.rows.length > rows.length || md.st !== list[0].st).length;
+    if (list.length === 1) return `${codeIn(list[0].name)}, ${esc(list[0].sum)}`;
+    if (what) return `each ${what}${more ? `, and ${more} change more` : ''}`;
+    const n = (st) => list.filter((md) => md.st === st).length;
+    return [n('A') ? `${n('A')} new` : '', n('M') ? `${n('M')} changed` : '', n('D') ? `${n('D')} removed` : ''].filter(Boolean).join(', ');
+  }
+  const pkgName = (pkg) => (pkg ? codeIn(pkg) : 'The repository’s package');
+  function renderModels() {
+    const now = modelsNow(), filter = MODEL_KINDS[state.modelsFilter] ? state.modelsFilter : 'all';
+    const n = (k) => now.main.filter(MODEL_KINDS[k]).length;
+    const pkgs = [...new Set(now.main.map((md) => md.pkg))];
+    const warned = n('warn');
+    const where = pkgs.length === 1 ? (pkgs[0] ? ` in ${codeIn(pkgs[0])}` : '') : pkgs.length > 1 ? ` in ${pkgs.length} packages` : '';
+    const counts = now.main.length ? (now.left === now.main.length ? `${plural(now.main.length, 'model')} changed${where}` : now.left ? `${now.left} of ${plural(now.main.length, 'model')} left${where}` : `All ${plural(now.main.length, 'model')} reviewed${where}`) : '';
+    const facts = [counts, warned ? `<span class="md-wn">${warned} with ${warned > 1 ? 'warnings' : 'a warning'}</span>` : '', now.tests.length ? `${plural(now.tests.length, 'model')} in test packages, folded` : ''].filter(Boolean).join(' · ');
+    const b = (key, label, title, count) => `<button type="button" data-act="models-filter" data-v="${key}" aria-pressed="${filter === key}" title="${esc(title)}"${count === 0 && filter !== key ? ' disabled' : ''}>${label}<span class="dt" aria-hidden="true">·</span><i>${count}</i></button>`;
+    let h = headerHtml({
+      crumbs: '<b class="ui">Models</b>',
+      facts: facts || (lensOn() ? 'Nothing in the lens' : 'No model changes'),
+      nav: true,
+      pinned: now.main.length ? `<div class="ol-bar md-bar"><span class="mini-seg" role="group" aria-label="Which models">${b('all', 'All', 'Every model the review changes, outside test packages', now.main.length)}${b('new', 'New', 'The models it adds', n('new'))}${b('changed', 'Changed', 'The models it changes', n('changed'))}${b('removed', 'Removed', 'The models it removes', n('removed'))}${b('warn', 'Warnings', 'The models with a warning: what the change can break', warned)}</span></div>` : '',
+    });
+    if (!now.main.length && !now.tests.length) return h + `<div class="empty">${modelsAll().length ? 'No model changes in the lens.' : 'No Serverpod model changed in this comparison.'}</div>`;
+    const shown = now.main.filter(MODEL_KINDS[filter]);
+    pkgs.forEach((pkg) => {
+      const list = shown.filter((md) => md.pkg === pkg), total = now.main.filter((md) => md.pkg === pkg).length;
+      if (list.length) h += `<div class="md-pkg">${pkgName(pkg)}<span>${list.length === total ? plural(total, 'model') : `${list.length} of ${plural(total, 'model')}`}</span></div><div class="md-cards">${list.map(modelCardHtml).join('')}</div>`;
+    });
+    if (now.main.length && !shown.length) h += `<div class="empty">No ${{ new: 'new', changed: 'changed', removed: 'removed', warn: 'warned' }[filter]} models in this comparison.</div>`;
+    if (filter !== 'all' || !now.tests.length) return h;
+    const byPkg = new Map();
+    now.tests.forEach((md) => { if (!byPkg.has(md.pkg)) byPkg.set(md.pkg, []); byPkg.get(md.pkg).push(md); });
+    byPkg.forEach((list, pkg) => {
+      const open = state.modelsTests.has(pkg);
+      h += `<div class="md-pkg">${pkgName(pkg)}<span>A test package · ${plural(list.length, 'model')}, outside the count</span></div><div class="md-cards">`
+        + `<button type="button" class="md-tg" data-act="models-tests" data-pkg="${esc(pkg)}" aria-expanded="${open}"><span class="car">${open ? ICON.chevronDown : ICON.chevronRight}</span><span><b>${plural(list.length, 'model')}</b>, folded: ${sharedHtml(list)}</span><span class="md-tg-x">${open ? 'Fold' : 'Open'}</span></button>`
+        + (open ? list.map(modelCardHtml).join('') : '') + '</div>';
+    });
+    return h;
+  }
   function renderMap(famId) {
     const m = M();
     if (m.byCommit) return renderCommitMap();
@@ -5653,6 +5837,11 @@
       if (hxOn()) pin += `<button type="button" class="sb-row map" data-act="history-open"${v.kind === 'history' ? ' aria-current="true"' : ''} title="The commits: each one, what it touched, its checks and reviews"><span class="tw">${ICON.history}</span><span class="nm ui">History</span><span class="cnt">${HISTORY.commits.length}</span></button>`;
       const tt = testsTotals();
       if (tt.outlined) pin += `<button type="button" class="sb-row map" data-act="tests-open"${v.kind === 'tests' ? ' aria-current="true"' : ''} title="The sentences the tests add, reword, regroup or remove, on one page"><span class="tw">${ICON.tests}</span><span class="nm ui">Tests</span><span class="cnt">${tt.all || ''}</span></button>`;
+      if (modelsAll().length) {
+        const mn = modelsNow();
+        const said = mn.main.length ? `${plural(mn.main.length, 'model')} changed, ${mn.left ? `${mn.left} to review` : 'all reviewed'}` : 'Only models in test packages changed';
+        pin += `<button type="button" class="sb-row map" data-act="models-open"${v.kind === 'models' ? ' aria-current="true"' : ''} title="The Serverpod models the review adds, changes or removes, on one page: ${said}"><span class="tw">${ICON.symbol}</span><span class="nm ui">Models</span><span class="cnt">${mn.main.length ? (mn.left || `<span class="md-all" aria-label="all reviewed">${ICON.check}</span>`) : ''}</span></button>`;
+      }
       if (m.byCommit) {
         // A commit's chain is one row, in the order the commits were made; renames come last.
         h += m.families.filter((f) => !f.same).map((f) => row(f.chains[0], 0, 0)).join('');
@@ -6386,7 +6575,7 @@
     lit = '';
     const page = document.createElement('template');
     try {
-      page.innerHTML = v.kind === 'chain' ? renderChain(v.id) : v.kind === 'map' ? renderMap(v.family) : v.kind === 'standalone' ? renderStandalone() : v.kind === 'group' ? renderGroup(v.id) : v.kind === 'search' ? renderSearch() : v.kind === 'source' ? renderSource(v) : v.kind === 'conversation' ? renderConversation() : v.kind === 'history' ? renderHistory() : v.kind === 'tests' ? renderTests() : renderFile(v.path);
+      page.innerHTML = v.kind === 'chain' ? renderChain(v.id) : v.kind === 'map' ? renderMap(v.family) : v.kind === 'standalone' ? renderStandalone() : v.kind === 'group' ? renderGroup(v.id) : v.kind === 'search' ? renderSearch() : v.kind === 'source' ? renderSource(v) : v.kind === 'conversation' ? renderConversation() : v.kind === 'history' ? renderHistory() : v.kind === 'tests' ? renderTests() : v.kind === 'models' ? renderModels() : renderFile(v.path);
     } catch (e) {
       page.innerHTML = `<div class="empty">This view failed to render: ${esc(e && e.message ? e.message : String(e))}. Reloading the page may help; if not, it’s a bug in untangle.</div>`;
       console.error(e);
@@ -6774,7 +6963,7 @@
   }
   // The review pill: where you are among the view's changes to review, and the action that does
   // the most, marking the change and going to the next.
-  const PILL_VIEWS = new Set(['chain', 'file', 'standalone', 'group', 'tests']);
+  const PILL_VIEWS = new Set(['chain', 'file', 'standalone', 'group', 'tests', 'models']);
   let pillHtml = '';
   const openIn = (el) => stopAdds.get(el) || 1;
   function renderPill() {
@@ -7184,7 +7373,7 @@
         const st = stats(blocksOf(c.blocks)), n = splitName(c.name);
         out.chains.push({ score: r.score + (st.open ? 40 : 0) - c.depth, icon: ICON.chain, html: (n.own ? `<span class="own">${matched(n.own, r.at)}</span>` : '') + matched(n.name, r.at, n.own.length), hint: st.open ? `${st.open} to review` : 'reviewed', go: goView({ kind: 'chain', id: c.id }, 'chains') });
       });
-      [['Chain map', { kind: 'map', family: null }, ICON.map], ['Not in a chain', { kind: 'standalone' }, ICON.chain]].forEach(([label, v, icon]) => {
+      [['Chain map', { kind: 'map', family: null }, ICON.map], ['Not in a chain', { kind: 'standalone' }, ICON.chain], ...(modelsAll().length ? [['Models', { kind: 'models' }, ICON.symbol]] : [])].forEach(([label, v, icon]) => {
         const r = q && fuzzy(label, q);
         if (r) out.chains.push({ score: r.score - 100, icon, ui: true, html: matched(label, r.at), hint: '', go: goView(v, 'chains') });
       });
@@ -7834,6 +8023,18 @@
     if (act === 'back') return navBack();
     if (act === 'tests-open') { state.view = { kind: 'tests' }; state.peek = null; state.focus = null; return render({ top: true }); }
     if (act === 'tests-filter') { state.testsFilter = d.v; return render({ top: true }); }
+    if (act === 'models-open') { state.view = { kind: 'models' }; state.peek = null; state.focus = null; return render({ top: true }); }
+    if (act === 'models-filter') { state.modelsFilter = d.v; return render({ top: true }); }
+    if (act === 'models-tests') { toggleIn(state.modelsTests, d.pkg); return render(); }
+    if (act === 'model-open') { toggleIn(state.modelsOpen, d.model); return render(); }
+    if (act === 'model-peek') {
+      const same = state.peek && state.peek.model === d.model && state.peek.path === d.path;
+      state.peek = same ? null : { model: d.model, kind: d.kind, path: d.path };
+      render();
+      // Opened low in the view, it comes up into it once it has grown.
+      if (!same) setTimeout(() => { const el = main.querySelector('.md-card .peek'); if (el) el.scrollIntoView({ block: 'nearest', behavior: moving() ? 'smooth' : 'auto' }); }, 220);
+      return;
+    }
     if (act === 'tests-mode') { UI.testsMode = d.v; saveUI(); return render(); }
     if (act === 'history-open') { state.view = { kind: 'history' }; state.peek = null; state.focus = null; loadCommits(); return render({ top: true }); }
     if (act === 'lens-all') { if (MENU.open === 'stack') MENU.open = null; return setLens(null); }
@@ -8430,7 +8631,7 @@
     const m = M(), t = stats(m.files.flatMap((f) => f.blocks)), v = state.view;
     const pr = CONFIG.url && /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(CONFIG.url);
     const size = `${plural(m.files.length, 'file')} · ${plural(m.chains.length, 'chain')}${m.byCommit ? ', by commit' : ''} · ${plural(t.total, 'change')}, ${t.open} to review`;
-    const kind = { map: 'the chain map', chain: 'a chain', file: 'a file', standalone: 'Not in a chain', group: 'a same change', tests: 'the Tests view', history: 'History', search: 'a search', conversation: 'the conversation', source: 'a file’s source' }[v.kind] || v.kind;
+    const kind = { map: 'the chain map', chain: 'a chain', file: 'a file', standalone: 'Not in a chain', group: 'a same change', tests: 'the Tests view', models: 'the Models view', history: 'History', search: 'a search', conversation: 'the conversation', source: 'a file’s source' }[v.kind] || v.kind;
     // A fold by its label, without the names and counts after it.
     const folded = [...main.querySelectorAll('.ol-fold[aria-expanded="false"]')].map((el) => `${el.textContent.split(/[:·]/)[0].trim()} folded`);
     const pill = $('#vw-pill');
@@ -8552,6 +8753,7 @@
       else if (r.kind === 'standalone') state.view = { kind: 'standalone' };
       else if (r.kind === 'history' && HX) state.view = { kind: 'history' };
       else if (r.kind === 'tests') state.view = { kind: 'tests' };
+      else if (r.kind === 'models' && (MODEL.compares.base.models || []).length) state.view = { kind: 'models' };
       if (r.from && CONFIG.head && r.from !== CONFIG.head) glowFrom = r.from;
       if (r.lens && HX && r.lens.kind === 'commits') { const shas = (r.lens.shas || []).filter((x) => HX.index.has(x)); if (shas.length) state.lens = { kind: 'commits', shas }; }
       else if (r.lens && HX && r.lens.kind === 'since' && r.lens.from) resumeSince = r.lens;

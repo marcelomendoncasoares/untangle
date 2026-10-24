@@ -127,6 +127,18 @@ touch screen they show on every test, and ⋯ can keep them to the test you open
 
 ![The Tests view: new and reworded sentences, each with its commit](docs/images/tests.png)
 
+### Model changes, on one page
+
+In a Serverpod project, the Models view lists every model the pull request adds, changes or
+removes, by package. Each one is its YAML diff, marked as anywhere else, with its name kept on top
+while a long diff scrolls. What the change can break shows under the line it's about, read from
+the files: a field added as required with no default, a required field removed, a field retyped, a
+model removed, an enum's values shifted while it's serialized by index, a table changed with no
+migration, generated code that wasn't regenerated, and Serverpod's own migration warnings. A model
+links the changed code that uses it, and opens its generated files and its migration's statements
+for its table in a peek. A reviewed model folds to its line; models in test packages fold at the
+end, outside the count, with no warnings.
+
 ### The commits, as a lens
 
 The Commits tab draws the pull request's commits as a graph. Pick one, or a range, and every view
@@ -328,13 +340,17 @@ adapters switch on by what the repository contains:
 
 Files that `.gitattributes` marks `linguist-generated` are generated too. A `.review.yaml` at the
 repository's root, read at the pull request's head, adds patterns, turns an adapter on or off, or
-maps generated classes to YAML models of your own under `models`, as the Serverpod adapter does:
+maps generated classes to YAML models of your own under `models`, as the Serverpod adapter does.
+Models under a folder named `test`, `tests`, `test_*` or `integration_test`, or in a package with
+test as a word in its name, are test models; `tests` names more folders:
 
 ```yaml
 generated:
   - lib/src/api/**
 adapters:
   protobuf: false
+tests:
+  - examples/**
 ```
 
 ### With a coding agent
