@@ -10,9 +10,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitAsync, gitMaybe } from './exec.js';
+import type { StackTarget } from './stack.js';
 
 export interface HistoryCommit {
   sha: string;
+  leg: number | null;
+  brings: number | null;
   /** Parents in the history, the first one first. */
   parents: string[];
   /** Parents outside it: where the branch starts, or what a merge brought in. */
@@ -43,6 +46,7 @@ export type CommitFile = [number, string, number, number] | [number, string, num
 
 export interface History {
   version: string;
+  stack: Stack | null;
   base: string;
   head: string;
   /** Newest first, in topological order. */
@@ -54,6 +58,12 @@ export interface History {
    * commits) that wrote an added line or removed a line, -1 for context and the unknown.
    */
   rows: Array<number[][] | null>;
+}
+
+export interface Stack {
+  base: { ref: string; sha: string; squashed: number | null };
+  legs: Array<{ number: number; title: string; url: string; branch: string; head: string; draft: boolean; author: string | null; commits: number[] }>;
+  above: Array<{ number: number; title: string; url: string; branch: string }>;
 }
 
 interface ModelFile {
@@ -92,7 +102,7 @@ async function readCommits(repo: string, base: string, head: string): Promise<Hi
   });
   const inRange = new Set(list.map((c) => c.sha));
   const commits: HistoryCommit[] = list.map((c) => ({
-    sha: c.sha, parents: c.all.filter((p) => inRange.has(p)), outside: c.all.filter((p) => !inRange.has(p)), brought: 0,
+    sha: c.sha, leg: null, brings: null, parents: c.all.filter((p) => inRange.has(p)), outside: c.all.filter((p) => !inRange.has(p)), brought: 0,
     subject: c.subject, body: c.body, author: c.author, email: c.email, at: c.at, committer: c.committer, cemail: c.cemail, cat: c.cat, files: [], more: 0,
   }));
   // A merge from outside: the commits its other parents brought that its first parent didn't have.
@@ -105,6 +115,31 @@ async function readCommits(repo: string, base: string, head: string): Promise<Hi
     c.brought = counts.reduce((a, b) => a + b, 0);
   }));
   return commits;
+}
+
+async function withLegs(repo: string, base: string, commits: HistoryCommit[], stack: StackTarget): Promise<Stack> {
+  // Overwrite from the top down: the lowest head that contains a commit owns it.
+  const bySha = new Map(commits.map((c) => [c.sha, c]));
+  for (const leg of stack.legs) {
+    const shas = (await gitAsync(repo, ['rev-list', `${base}..${leg.head}`])).trim().split('\n');
+    for (const sha of shas) {
+      const c = bySha.get(sha);
+      if (c) c.leg = leg.pr.number;
+    }
+  }
+  const order = new Map(stack.legs.map((l, i) => [l.pr.number, i]));
+  const parents = new Map((await gitAsync(repo, ['log', '--format=%H %P', `${base}..${stack.legs[0].head}`])).trim().split('\n').map((s) => {
+    const [sha, ...all] = s.split(' ');
+    return [sha, all] as const;
+  }));
+  for (const c of commits) {
+    const parent = parents.get(c.sha)?.slice(1).map((p) => bySha.get(p)).find((p) => p?.leg != null && order.get(p.leg)! > order.get(c.leg!)!);
+    c.brings = parent?.leg ?? null;
+  }
+  return {
+    base: stack.base, above: stack.above,
+    legs: stack.legs.map(({ pr, head }) => ({ number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, head, draft: !!pr.isDraft, author: pr.author ?? null, commits: commits.flatMap((c, i) => c.leg === pr.number ? [i] : []) })),
+  };
 }
 
 /**
@@ -254,22 +289,57 @@ function forkLines(diff: string): (line: number) => number | null {
  * The review's history: read from history.json in the review's folder when it holds these
  * commits, else from git (and written there).
  */
-export async function readHistory(repo: string, base: string, head: string, files: ModelFile[], dir: string | null): Promise<History> {
+export async function readHistory(repo: string, base: string, head: string, files: ModelFile[], dir: string | null, stack: StackTarget | null = null): Promise<History> {
   const file = dir ? path.join(dir, 'history.json') : null;
+  const stamp = stack ? JSON.stringify({ base: stack.base, above: stack.above, legs: stack.legs.map(({ pr, head }) => [pr.number, pr.title, pr.url, pr.headRefName, head, !!pr.isDraft, pr.author ?? null]) }) : null;
   if (file) {
     try {
-      const h = JSON.parse(fs.readFileSync(file, 'utf8')) as History;
-      if (h.version === VERSION && h.base === base && h.head === head && h.rows.length === files.length) return h;
+      const h = JSON.parse(fs.readFileSync(file, 'utf8')) as History & { stamp?: string | null };
+      if (h.version === VERSION && h.base === base && h.head === head && h.rows.length === files.length && h.stamp === stamp) {
+        const { stamp: _, ...history } = h;
+        return history;
+      }
     } catch {
       // Not read yet.
     }
   }
   const commits = await readCommits(repo, base, head);
+  const historyStack = stack ? await withLegs(repo, base, commits, stack) : null;
   const [rows, paths] = await Promise.all([attribute(repo, base, head, commits, files), readFiles(repo, base, head, commits)]);
-  const history: History = { version: VERSION, base, head, commits, paths, rows };
+  // Reverse blame can credit the carrying merge for a lower leg's deletion. A conflict's
+  // resolution stays on the merge when the line is still present in the parent it brought.
+  const index = new Map(commits.map((c, i) => [c.sha, i]));
+  const inheritedDiffs = new Map<string, string>();
+  for (let fi = 0; fi < rows.length; fi++) {
+    const f = files[fi];
+    if (!rows[fi] || !f.hunks) continue;
+    for (let hi = 0; hi < f.hunks.length; hi++) {
+      const h = f.hunks[hi];
+      let old = h.o, line = h.n;
+      for (let ri = 0; ri < h.rows.length; ri++) {
+        const kind = h.rows[ri][0], at = rows[fi]![hi][ri], c = commits[at];
+        if (c?.brings != null) {
+          const parent = c.parents.find((p) => commits[index.get(p)!]?.leg === c.brings);
+          if (parent) {
+            const from = kind === '-' ? base : parent, to = kind === '-' ? parent : head, key = `${from}:${to}:${f.p}`;
+            let diff = inheritedDiffs.get(key);
+            if (diff === undefined) {
+              diff = await gitAsync(repo, ['diff', '--no-ext-diff', '--no-textconv', '--unified=0', from, to, '--', f.p]);
+              inheritedDiffs.set(key, diff);
+            }
+            const inherited = kind === '-' ? diffHunks(diff, 'minus').get(f.p)?.some(([from, count]) => old >= from && old < from + count) : forkLines(diff)(line) != null;
+            if (inherited) rows[fi]![hi][ri] = index.get(parent)!;
+          }
+        }
+        if (kind !== '+') old++;
+        if (kind !== '-') line++;
+      }
+    }
+  }
+  const history: History = { version: VERSION, stack: historyStack, base, head, commits, paths, rows };
   if (file) {
     try {
-      fs.writeFileSync(file, JSON.stringify(history));
+      fs.writeFileSync(file, JSON.stringify({ ...history, stamp }));
     } catch {
       // A cache: the next run reads git again.
     }

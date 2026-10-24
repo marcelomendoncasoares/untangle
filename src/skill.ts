@@ -37,6 +37,12 @@ when the user asks. Without a working copy, propose a change in the reply instea
 a review of the change, do it now, as described below. Then tell the user the review is open and
 end the turn.
 
+When the review covers a stack of pull requests, each note names the pull request its line is
+in. When a note on a lower pull request asks for a change, make it on that pull request's branch,
+in the working copy the watch names, and commit it there; then merge that branch into each branch
+above it, in order, up to the reviewed pull request's. When the user asks to push, push the lowest
+branch first.
+
 ## Reviewing the change
 
 Read the change against the review's base and reviewed head: \`git diff <base>...<reviewed-head>\`

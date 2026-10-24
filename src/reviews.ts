@@ -10,6 +10,7 @@ import type { AgentView } from './notes.js';
 import { dirSize, listRecords, type Listed } from './records.js';
 import { keptDirs } from './space.js';
 import { listRuns } from './runs.js';
+import type { StackRecord } from './stack.js';
 
 /** What a running review says of itself, through its summary route. */
 export interface Summary {
@@ -34,6 +35,7 @@ export interface Summary {
   /** A newer head being built, when it's refreshing. */
   refreshing: unknown;
   local: LocalSummary | null;
+  stack?: StackRecord | null;
 }
 
 /** The summary of each running review, by its process, asked of them all at once. */

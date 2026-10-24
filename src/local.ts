@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { gitAsync } from './exec.js';
 import { fetchPr, githubRepo, latestHead, type Target } from './target.js';
 import { fetchTip, followGitHub, githubUrl } from './work.js';
+import { StackChanges, type LiveStack } from './stack-live.js';
 
 export interface LocalSource {
   work: string | null;
@@ -57,6 +58,10 @@ export async function recordedLocal(r: { dir: string | null; local?: LocalSource
 }
 
 export class LocalChanges {
+  private readonly stacks: StackChanges | null;
+  get stack(): LiveStack | null {
+    return this.stacks ? { ...this.stacks.value, legs: this.stacks.value.legs.map((l, i) => i ? l : { ...l, local: this.local }) } : null;
+  }
   local: Local | null = null;
   source: LocalSource | null = null;
   latest: string | null = null;
@@ -74,6 +79,7 @@ export class LocalChanges {
   constructor(private readonly target: Target, private readonly byUrl: boolean, private readonly held: () => boolean, private readonly changed: () => void) {
     if (target.work) this.source = { work: target.work.dir, branch: target.work.githubBranch, ref: target.work.ref };
     this.latest = target.headSha;
+    this.stacks = target.stack ? new StackChanges(target, byUrl, held, () => ({ local: this.local, head: this.latest })) : null;
     this.timer = setInterval(() => this.check(), 500);
     this.timer.unref();
     this.check();
@@ -82,11 +88,13 @@ export class LocalChanges {
   stop(): void {
     this.stopped = true;
     clearInterval(this.timer);
+    this.stacks?.stop();
   }
 
   /** A page gets a read started after its ask, shared with other asks for two seconds. */
   async check(pageAsked = false): Promise<void> {
     if (this.stopped) return;
+    this.stacks?.check(pageAsked);
     const now = Date.now(), held = this.held();
     let pageRead: Promise<void> | null = null;
 

@@ -32,6 +32,7 @@ import { skill } from './skill.js';
 import { isPrUrl, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
 import { upgrade, upgradeNotice } from './upgrade.js';
 import { VERSION } from './version.js';
+import { stackIdentity, stackRecord } from './stack.js';
 
 // After its last page closes, untangle waits this long for a page to open again (a reload)
 // before it stops.
@@ -252,6 +253,7 @@ async function review(opts: Options): Promise<number> {
       active,
       refreshing: refreshing ? refreshView() : null,
       local: localSummary(local?.local ?? null),
+      stack: stackRecord(target?.stack),
     };
   };
 
@@ -365,13 +367,14 @@ async function review(opts: Options): Promise<number> {
       analyses: [...(was?.analyses ?? []).filter(([b, h]) => b !== pair[0] || h !== pair[1]), pair],
       freed: null,
       local: t.work ? { work: t.work.dir, branch: t.work.githubBranch, ref: t.work.ref } : was?.local ?? null,
+      stack: stackRecord(t.stack),
     };
     local?.stop();
     local = new LocalChanges(t, byUrl, () => notes?.watched() ?? false, recordSoon);
     recordNow();
   };
 
-  const resolve = (progress: Narrator) => (byUrl ? resolveUrl(opts.target, (l) => progress.detail(l)) : resolveDirectory(dir, opts.base, (l) => progress.detail(l)));
+  const resolve = (progress: Narrator) => (byUrl ? resolveUrl(opts.target, (l) => progress.detail(l), opts.base) : resolveDirectory(dir, opts.base, (l) => progress.detail(l)));
   // What a review is called: in the terminal and the page, and the branch that keeps its marks.
   const names = (t: Target) => {
     const pr = t.pr;
@@ -395,7 +398,7 @@ async function review(opts: Options): Promise<number> {
     progress.step('history');
     try {
       const t0 = Date.now();
-      const history = await readHistory(t.repo, t.baseSha, t.headSha, data.model.compares.base.files, reviewDir(t.repoKey, t.baseSha, t.headSha));
+      const history = await readHistory(t.repo, t.baseSha, t.headSha, data.model.compares.base.files, reviewDir(t.repoKey, t.baseSha, t.headSha), t.stack ?? null);
       progress.verbose(`${history.commits.length} commits, lines attributed in ${Date.now() - t0} ms`);
       return { ...data, history };
     } catch (e) {
@@ -409,6 +412,7 @@ async function review(opts: Options): Promise<number> {
     built.data = await withHistory(t, built.data, progress);
     const l = new LiveSession(t, { step: () => {}, detail: () => {}, note: (x) => say.verbose(x), verbose: (x) => say.verbose(x) }, built.checkouts);
     const s = new ReviewSession(t, built.data, l, editorFrom(opts.editor), { key: n.key, url: t.pr ? t.pr.url : null, where: n.where, snapshotKey: n.snapshotKey }, progress, built.data.history ?? null);
+    await s.prepareStack();
     return { live: l, session: s, render: reviewPage(built.data, n.title, 'served') };
   };
 
@@ -418,7 +422,7 @@ async function review(opts: Options): Promise<number> {
   const refreshView = () => (refreshing ? { state: refreshing.state, head: refreshing.head, steps: refreshing.status.steps, plan: refreshing.status.plan ?? null, error: refreshing.error } : { state: 'idle', head: target?.headSha || null });
   const check = async (ask: boolean) => {
     await local?.check(true);
-    return { data: { ...refreshView(), latest: ask ? local?.latest ?? null : undefined, watched: notes?.watched() || false, local: local?.local ?? null } };
+    return { data: { ...refreshView(), latest: ask ? local?.latest ?? null : undefined, watched: notes?.watched() || false, local: local?.local ?? null, stack: local?.stack ?? null } };
   };
   const refresh = async (): Promise<{ status?: number; data: unknown }> => {
     if (!target) return { status: 503, data: { error: 'the review is still being built' } };
@@ -439,7 +443,7 @@ async function review(opts: Options): Promise<number> {
       Object.assign(r, { state: 'failed', error: (e as Error).message });
       return { data: refreshView() };
     }
-    if (t.headSha === target.headSha && t.baseSha === target.baseSha) {
+    if (t.headSha === target.headSha && t.baseSha === target.baseSha && stackIdentity(t.stack) === stackIdentity(target.stack)) {
       refreshing = null;
       target = t;
       attachNotes(t, session!);

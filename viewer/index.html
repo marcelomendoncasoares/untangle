@@ -598,6 +598,58 @@ button.sb-group:hover { color: var(--text-2); }
 .lp-f span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lp-f .btn { background: var(--hover); }
 .lp-f .btn:hover { background: var(--hair-2); }
+/* A stack: its chip before the title, and its list, top first, each pull request a lens. */
+.t-stack { appearance: none; display: inline-flex; flex: none; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 7px; border: 0; border-radius: 7px; background: var(--raised); color: var(--text); font: 600 12px/1 var(--ui); white-space: nowrap; cursor: pointer; }
+.t-stack svg { width: 14px; height: 14px; color: var(--text-2); }
+.t-stack svg:last-child { width: 11px; height: 11px; color: var(--text-3); }
+.t-stack:hover, .t-stack[aria-expanded="true"] { background: var(--hover); }
+.t-stack.warn { background: var(--accent-soft); color: var(--accent-ink); }
+.t-stack.warn svg { color: var(--accent-ink); }
+.menu.stack-pop { width: min(480px, calc(100vw - 16px)); max-width: none; max-height: min(78vh, 680px); padding: 10px 8px 8px; gap: 2px; overflow-y: auto; }
+.sp-h { display: flex; align-items: baseline; gap: 8px; padding: 0 8px 6px; white-space: nowrap; }
+.sp-h b { font-size: 13px; font-weight: 600; color: var(--text); }
+.sp-h span { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--text-3); }
+.sp-above { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 4px; padding: 7px 8px; border-radius: 8px; background: var(--sheet); font-size: 12px; color: var(--text-3); }
+.sp-above b { margin-right: 2px; font-weight: 600; color: var(--text-2); }
+.sp-above a { padding: 3px 6px; border-radius: 5px; background: var(--hover); color: var(--text); font: 500 11px/1 var(--code); text-decoration: none; }
+.sp-above a:hover { background: var(--hair-2); }
+.sp-legs { position: relative; display: grid; gap: 1px; }
+.sp-legs::before { content: ""; position: absolute; left: 15px; top: 16px; bottom: 14px; width: 2px; border-radius: 1px; background: var(--hair-2); }
+.sp-leg { appearance: none; position: relative; display: grid; grid-template-columns: 16px 40px minmax(0, 1fr) auto auto; align-items: center; column-gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: 7px; background: none; color: var(--text); font: 400 12.5px/1.3 var(--ui); text-align: left; white-space: nowrap; cursor: pointer; }
+.sp-leg > :nth-child(4) { display: inline-flex; gap: 4px; }
+button.sp-leg:hover, button.sp-leg:focus-visible { background: var(--hover); outline: none; }
+.sp-leg[aria-pressed="true"] { background: var(--accent-soft); }
+.sp-dot { position: relative; z-index: 1; width: 10px; height: 10px; margin-left: 1px; border-radius: 50%; background: var(--raised); box-shadow: inset 0 0 0 2px var(--accent); }
+.sp-leg.done .sp-dot { background: var(--done); box-shadow: 0 0 0 3px var(--raised); }
+.sp-leg.root { cursor: default; }
+.sp-leg.root .sp-dot { border-radius: 3px; box-shadow: inset 0 0 0 2px var(--text-3); }
+.sp-num { font: 600 11.5px/1 var(--code); color: var(--text-2); }
+.sp-leg.root .sp-num, .sp-leg.root .sp-t { color: var(--text-3); }
+.sp-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sp-leg.done .sp-t { color: var(--text-2); }
+.sp-t code { font: 500 11px var(--code); color: var(--text-3); }
+.sp-tag { padding: 3px 6px; border-radius: 4px; background: var(--hover); color: var(--text-2); font: 600 10.5px/1 var(--ui); }
+.sp-tag.warn { background: var(--accent-soft); color: var(--accent-ink); }
+.sp-n { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sp-n b { font-weight: 600; color: var(--accent-ink); }
+.sp-n.ok svg { width: 12px; height: 12px; color: var(--done); }
+.sp-f { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; padding: 8px 8px 0; border-top: 1px solid var(--hair); font-size: 12px; color: var(--text-3); }
+.sp-f .btn { background: var(--hover); }
+.sp-f .btn[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--text-3); }
+/* A stack's pull request over its commits, in the Commits tab and in "Changes from". */
+.cm-leg, .lp-leg { appearance: none; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; column-gap: 8px; width: 100%; height: 30px; margin-top: 4px; padding: 0 8px 0 0; border: 0; border-radius: 6px; background: var(--hover-soft); color: var(--text); font: 600 12px/1.2 var(--ui); text-align: left; cursor: pointer; }
+.cm-leg:first-child, .lp-leg:first-child { margin-top: 0; }
+.cm-leg > .lanes, .lp-leg > .lanes { align-self: stretch; }
+.cm-leg:hover, .lp-leg:hover, .cm-leg:focus-visible, .lp-leg:focus-visible { background: var(--hover); outline: none; }
+.cm-leg.in, .lp-leg.in { background: var(--accent-soft); }
+.lg-n { font: 600 11px/1 var(--code); color: var(--text-2); }
+.lg-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-w { padding: 3px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-ink); font: 600 10.5px/1 var(--ui); white-space: nowrap; }
+.cm-leg .cm-n, .lp-leg .cm-n { grid-row: auto; grid-column: auto; }
+/* The pull request that wrote a run of lines, at its first line's end. */
+.lg-tag { flex: none; align-self: center; position: sticky; right: 8px; margin: 0 8px 0 auto; padding: 1px 5px; border-radius: 4px; background: var(--raised); color: var(--text-3); font: 600 10px/1.4 var(--code); white-space: nowrap; user-select: none; }
+.lg-tag.on { background: var(--text); color: var(--ground); }
+.lens-out .lg-tag { visibility: hidden; }
 /* Lanes: the branch in grey, other lanes lighter, an old head's dashed. */
 .lanes { display: block; flex: none; overflow: visible; }
 .lanes .lane { fill: none; stroke: #4A4A55; stroke-width: 1.5; }
@@ -1107,6 +1159,21 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
 .th-new-h b { color: var(--text); font-weight: 600; }
 .th-new-h svg { width: 14px; height: 14px; color: var(--gh); }
 .th-new-h .muted { font-size: 12px; }
+/* In a stack: where a new comment goes, a lower pull request's thread, a note's pull request. */
+.th-to { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px 2px 5px; border-radius: 999px; background: var(--gh-soft); color: var(--gh); font: 500 11.5px/1.3 var(--ui); white-space: nowrap; }
+.th-new-h .th-to svg { width: 12px; height: 12px; color: currentColor; }
+.th-to b { font-weight: 600; color: var(--text); }
+.th-to.muted { background: none; color: var(--text-3); }
+.th-to.warn { background: var(--accent-soft); color: var(--accent-ink); }
+.th-leg { display: flex; align-items: center; gap: 6px; margin: 10px 14px 0; font-size: 12px; color: var(--text-3); }
+.th-leg svg { flex: none; width: 13px; height: 13px; color: var(--gh); }
+.th-leg b { font-weight: 600; color: var(--text-2); }
+.sb-row .nm .lgp { margin-right: 5px; font-weight: 600; color: var(--gh); }
+.cm-tag.leg { font-family: var(--code); font-weight: 600; color: var(--text); background: var(--hair-2); }
+.rv-legs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 6px 10px; padding: 2px; border-radius: 8px; background: var(--hover); }
+.rv-legs button { appearance: none; flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 56px; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--text-2); font: 600 11.5px/1 var(--code); cursor: pointer; }
+.rv-legs button[aria-checked="true"] { background: var(--raised); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .4); }
+.rv-legs i { padding: 2px 5px; border-radius: 999px; background: var(--gh); color: #06101F; font: 700 10px/1 var(--ui); font-style: normal; }
 .th.new .cmp { margin: 0 12px 12px; }
 /* Comments: the author once per run of them, each with its time; tools under the pointer. */
 .cm { position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 0 10px; padding: 4px 14px 6px; }

@@ -12,6 +12,8 @@ import { cacheRoot, tilde } from './cache.js';
 import { bell as chatBell, type Bell, type Chat } from './chats.js';
 import { gitMaybe } from './exec.js';
 import { writeAtomic } from './server.js';
+import type { StackTarget } from './stack.js';
+import type { WorkingCopy } from './work.js';
 
 export type Side = 'LEFT' | 'RIGHT';
 /** Which notes a copy takes: the open ones, the open ones not copied yet, or all of them. */
@@ -55,6 +57,7 @@ export interface Said {
 
 export interface Note {
   n: number;
+  pr: number | null;
   /** On the review itself, not on its code: no path, lines or code, and nothing to follow through new commits. */
   review?: boolean;
   path: string;
@@ -115,6 +118,9 @@ export interface NotesContext {
   /** The head's checkout untangle made, reviewing a pull request from its link: an agent reads the code there. */
   checkout: string | null;
   work?: { dir: string; branch: string } | null;
+  stack?: StackTarget | null;
+  leg?(at: At, thread?: string): number | null;
+  legWork?(pr: number): Promise<WorkingCopy | null>;
   /** The change a line is in: its chain's name and the commit that started it. */
   change(path: string, side: Side, line: number): { name: string; sha: string | null } | null;
   /** The pull request on GitHub, to post to; null without one, or without gh. */
@@ -122,7 +128,7 @@ export interface NotesContext {
 }
 
 /** A thread's lines, for a comment on them; none for one on the whole file. */
-export interface At { path: string; line?: number; side?: Side; startLine?: number; startSide?: Side }
+export interface At { path: string; line?: number; side?: Side; startLine?: number; startSide?: Side; pr?: number | null }
 /** Single: posted at once. Review: into the pending review, which GitHub starts when there's none. */
 export type PostMode = 'single' | 'review';
 
@@ -141,7 +147,7 @@ export interface NotesGitHub {
   /** The pending review now: its id and summary. Null when none is pending, or unknown. */
   pending(): { id: string; body: string } | null;
   /** GitHub's pull request is on newer commits than the review: lines can't take new threads. */
-  stale(): boolean;
+  stale(pr?: number | null): boolean;
 }
 
 export type NoteAction =
@@ -363,6 +369,7 @@ export class Notes {
       if (note.about === undefined) note.about = note.quote && typeof note.quote.thread === 'string' ? { kind: 'thread', ...note.quote } : null;
       delete note.quote;
       note.said ??= [];
+      note.pr ??= null;
     }
   }
 
@@ -372,6 +379,9 @@ export class Notes {
     this.lines.clear();
     const d = this.data;
     if (d.notes.length && d.head && (d.head !== ctx.head || d.base !== ctx.base)) this.move({ base: d.base || ctx.base, head: d.head }, ctx);
+    for (const note of d.notes) {
+      if (!note.review && note.pr == null && !note.gone) note.pr = ctx.leg?.({ path: note.path, side: note.side, line: note.line ?? undefined }) ?? null;
+    }
     d.base = ctx.base;
     d.head = ctx.head;
     if (d.notes.length) this.save();
@@ -497,7 +507,7 @@ export class Notes {
     const about = this.about(a);
     if (a.review || about?.kind === 'comment' || about?.kind === 'pr') {
       const note: Note = {
-        n: d.next++, review: true, path: '', file: false, side: 'RIGHT', line: null, startSide: null, startLine: null, code: [],
+        n: d.next++, pr: null, review: true, path: '', file: false, side: 'RIGHT', line: null, startSide: null, startLine: null, code: [],
         wrote: { head: ctx.head, path: '', line: null, startLine: null, code: [] }, changed: false, gone: false,
         resolved: null, copied: false, about, comments: [this.comment(by, body, draft)], said: [],
       };
@@ -519,11 +529,12 @@ export class Notes {
     const startSide = startLine == null ? null : side;
     const code = this.codeOf(sha, a.path, startLine, line);
     const note: Note = {
-      n: d.next++, path: a.path, file, side, line, startSide, startLine, code,
+      n: d.next++, pr: ctx.leg?.({ path: a.path, side, line: line ?? undefined }, about?.kind === 'thread' ? about.thread : undefined) ?? null, path: a.path, file, side, line, startSide, startLine, code,
       wrote: { head: ctx.head, path: a.path, line, startLine, code }, changed: false, gone: false,
       resolved: null, copied: false, about, comments: [this.comment(by, body, draft)], said: [],
     };
     d.notes.push(note);
+    if (note.pr != null) void ctx.legWork?.(note.pr).catch(() => {});
     return note;
   }
 
@@ -553,7 +564,22 @@ export class Notes {
   header(): string {
     const ctx = this.ctx;
     if (!ctx) return 'My review notes.';
-    return `My review notes on ${ctx.name}${ctx.branch ? ` (branch ${ctx.branch}, at ${short(ctx.head)})` : ` (at ${short(ctx.head)})`}. Line numbers are on that commit.${this.checkedOut()}`;
+    return `My review notes on ${ctx.name}${ctx.branch ? ` (branch ${ctx.branch}, at ${short(ctx.head)})` : ` (at ${short(ctx.head)})`}. Line numbers are on that commit.${this.checkedOut()}${this.stackText()}`;
+  }
+
+  private stackText(): string {
+    const stack = this.ctx?.stack;
+    if (!stack) return '';
+    const top = stack.legs[0].pr;
+    return `\nThe review covers a stack: #${top.number} and the pull requests under it, down to ${stack.base.ref}. Each note names the pull request its line is in. When a note on a lower pull request asks for a change, make it on that pull request’s branch, in the working copy named with the note, and commit it there; then merge that branch into each branch above it, in order, up to ${top.headRefName}. When asked to push, push the lowest branch first.`;
+  }
+
+  private legText(note: Note, seen: Set<number>): string {
+    const stack = this.ctx?.stack;
+    const leg = stack?.legs.find((l) => l.pr.number === note.pr);
+    if (!leg || leg === stack!.legs[0] || seen.has(leg.pr.number)) return '';
+    seen.add(leg.pr.number);
+    return leg.work ? `\n#${leg.pr.number}’s branch, ${leg.work.branch}, is checked out at ${tilde(leg.work.dir)}, for changes.\n` : `\n#${leg.pr.number}’s branch is ${leg.pr.headRefName}.\n`;
   }
 
   // Where that commit's code is, when untangle cloned it for a pull request's link: an agent with
@@ -624,7 +650,7 @@ export class Notes {
 
   /** One note for the agent: where it is, the change it's in, what it's about, its code and its thread. */
   noteText(note: Note, live = false): string {
-    const lines = [`N${note.n} · ${this.place(note)}${note.resolved ? ' (resolved)' : ''}`];
+    const lines = [`N${note.n} · ${this.place(note)}${note.resolved ? ' (resolved)' : ''}${note.pr != null ? ` · #${note.pr}` : ''}`];
     const change = !note.file && note.line != null && !note.gone && this.ctx ? this.ctx.change(note.path, note.side, note.line) : null;
     if (change) lines.push(`In the change "${change.name}"${change.sha ? ` (${short(change.sha)})` : ''}`);
     lines.push(...this.aboutText(note));
@@ -645,7 +671,8 @@ export class Notes {
   /** The copy for the agent: the head, the opening line, then the notes, those on the review first. */
   exportText(scope: Scope, opening = this.data.opening): string {
     const list = this.inScope(scope).sort((x, y) => Number(!!y.review) - Number(!!x.review));
-    return [this.header() + '\n', opening.trim() && opening.trim() + '\n', ...(list.length ? list.map((n) => this.noteText(n)) : ['No notes to send.\n'])].filter(Boolean).join('\n');
+    const seen = new Set<number>();
+    return [this.header() + '\n', opening.trim() && opening.trim() + '\n', ...(list.length ? list.map((n) => this.noteText(n) + this.legText(n, seen)) : ['No notes to send.\n'])].filter(Boolean).join('\n');
   }
 
   // ---- The page
@@ -921,8 +948,9 @@ export class Notes {
       return { conversation: r.conversation, said: { id: r.comment, thread, kind: 'reply', by, body, at, pending: mode === 'review' } };
     }
     if (note.gone) throw new NoteError(`N${note.n}’s lines are gone since ${short(note.wrote.head)}`);
-    if (gh.stale()) throw new NoteError('GitHub has newer commits than this review: refresh the review to comment on its lines', 409);
+    if (gh.stale(note.pr)) throw new NoteError('GitHub has newer commits than this review: refresh the review to comment on its lines', 409);
     const where: At = note.file ? { path: note.path } : { path: note.path, line: note.line!, side: note.side, ...(note.startLine != null ? { startLine: note.startLine, startSide: note.startSide || note.side } : {}) };
+    if (note.pr != null) where.pr = note.pr;
     const r = await gh.thread(where, body, mode);
     return { conversation: r.conversation, said: { id: r.comment, thread: r.thread, kind: 'thread', by, body, at, pending: mode === 'review' } };
   }
@@ -980,7 +1008,7 @@ export class Notes {
   private threadText(note: Note, state?: string): string {
     const [first, ...rest] = note.comments;
     const ask = this.askOf(note) ? ' · you ask for a draft comment' : '';
-    return [`N${note.n} · ${this.place(note)} · ${rest.length === 1 ? 'a reply' : 'replies'} in its thread${state ? ` · ${state}` : ''}${ask}`, ...this.aboutText(note), ...this.said(first, true).split('\n').map((l) => '> ' + l), ...rest.map((c) => this.said(c)), ...this.askText(note, true)].join('\n') + '\n';
+    return [`N${note.n} · ${this.place(note)} · ${rest.length === 1 ? 'a reply' : 'replies'} in its thread${state ? ` · ${state}` : ''}${ask}${note.pr != null ? ` · #${note.pr}` : ''}`, ...this.aboutText(note), ...this.said(first, true).split('\n').map((l) => '> ' + l), ...rest.map((c) => this.said(c)), ...this.askText(note, true)].join('\n') + '\n';
   }
 
   /**
@@ -992,12 +1020,13 @@ export class Notes {
     const a = this.data.agents[agent];
     const ctx = this.ctx!;
     const opening = this.data.opening.trim();
-    const at = `on ${ctx.name} at ${short(ctx.head)}. Line numbers are on that commit.${this.checkedOut()}`;
+    const at = `on ${ctx.name} at ${short(ctx.head)}. Line numbers are on that commit.${this.checkedOut()}${this.stackText()}`;
+    const seen = new Set<number>();
     let text: string, notes: Note[], replies = 0, read: Note[];
     if (h.fresh) {
       notes = read = this.data.notes.filter((n) => !n.resolved);
       text = `untangle: you hold this review now: another ${agent} chat held it. Here ${notes.length === 1 ? 'is its open note' : `are its ${notes.length} open notes`}, ${at}\n\n`
-        + [opening && opening + '\n', ...notes.map((n) => this.noteText(n, true))].filter(Boolean).join('\n');
+        + [opening && opening + '\n', ...notes.map((n) => this.noteText(n, true) + this.legText(n, seen))].filter(Boolean).join('\n');
     } else {
       const u = this.unseen(agent);
       ({ notes, replies } = u);
@@ -1005,9 +1034,9 @@ export class Notes {
       const parts: string[] = [];
       if (notes.length) {
         if (opening) parts.push(opening + '\n');
-        parts.push(...notes.map((n) => this.noteText(n, true)));
+        parts.push(...notes.map((n) => this.noteText(n, true) + this.legText(n, seen)));
       }
-      parts.push(...u.threads.map((n) => this.threadText(n, u.states.get(n.n))), ...u.lines.map((l) => l + '\n'));
+      parts.push(...u.threads.map((n) => this.threadText(n, u.states.get(n.n)) + this.legText(n, seen)), ...u.lines.map((l) => l + '\n'));
       text = `untangle: ${and([notes.length && plural(notes.length, 'note', 'notes'), replies && plural(replies, 'reply', 'replies'), u.lines.length && plural(u.lines.length, 'change', 'changes')])} you haven’t read, ${at}\n\n${parts.join('\n')}`;
     }
     const first = !a.told;
@@ -1042,8 +1071,10 @@ export class Notes {
     }
     if (opts.again) h.again = opts.again;
     this.save();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let timer: NodeJS.Timeout | null = null, quiet: NodeJS.Timeout | null = null;
+      let preparing = false, prepareUntil: number | null = null;
+      const prepared = new Set<number>();
       const w = { agent, chat: chat?.id ?? null, end: (answer: WatchAnswer) => done(answer) };
       const done = (answer: WatchAnswer | null) => {
         if (!this.watches.delete(w)) return;
@@ -1058,7 +1089,34 @@ export class Notes {
       const idle = (): WatchAnswer => { const first = !a.told; a.told = true; this.save(); return { idle: true, first }; };
       const check = () => {
         if (this.closed) return done(this.paused ? { closed: true, paused: true } : { closed: true });
-        if (!this.ctx) return;
+        if (!this.ctx || preparing) return;
+        if (this.ctx.stack && (h.fresh || this.unseen(agent).count)) {
+          const u = this.unseen(agent);
+          const ns = h.fresh ? this.data.notes.filter((n) => !n.resolved) : [...u.notes, ...u.threads];
+          const legs = [...new Set(ns.flatMap((n) => n.pr == null || prepared.has(n.pr) || !this.ctx!.stack!.legs.some((l) => l.pr.number === n.pr) ? [] : [n.pr]))];
+          if (legs.length) {
+            preparing = true;
+            prepareUntil ??= Date.now() + 60_000;
+            if (timer) { clearTimeout(timer); timer = null; }
+            let limit: NodeJS.Timeout;
+            void Promise.race([
+              Promise.all(legs.map(async (pr) => {
+                const work = await this.ctx!.legWork?.(pr);
+                if (this.ctx!.checkout && !work) throw new Error(`could not open #${pr}'s working copy`);
+              })),
+              new Promise<void>((_, fail) => { limit = setTimeout(() => fail(new Error('the stack’s working copies were not ready within a minute')), Math.max(0, prepareUntil! - Date.now())); }),
+            ]).then(() => {
+              clearTimeout(limit!);
+              legs.forEach((pr) => prepared.add(pr));
+              preparing = false;
+              if (this.watches.has(w)) check();
+            }, (e) => {
+              clearTimeout(limit!);
+              if (this.watches.has(w)) { done(null); reject(new NoteError((e as Error).message, 502)); }
+            });
+            return;
+          }
+        }
         if (h.fresh) return done(this.deliver(agent));
         if (!this.unseen(agent).count) { if (opts.brief) done(idle()); return; }
         const wait = QUIET - (Date.now() - this.lastSent);

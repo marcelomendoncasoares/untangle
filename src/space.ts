@@ -10,9 +10,9 @@ import path from 'node:path';
 import { cacheRoot, cloneDir, reviewDir, worktreeDir } from './cache.js';
 import { linkOf } from './checkouts.js';
 import { gitAsync, gitMaybe } from './exec.js';
-import { recordedLocal } from './local.js';
+import { readLocal, recordedLocal } from './local.js';
 import { notesFile } from './notes.js';
-import { listRecords, readRecord, recordDirs, recordFile, recordId, writeRecord, type Listed } from './records.js';
+import { listRecords, readRecord, recordDirs, recordFile, recordId, recordWorks, writeRecord, type Listed } from './records.js';
 import { listRuns, olderRuns, type RunInfo } from './runs.js';
 import { dropMarks, marksRef, MARKS } from './snapshot.js';
 
@@ -25,7 +25,7 @@ const STATE = 'state.json';
 
 /** The folders a review keeps: an open one its current checkouts and its analyses, a closed one all it names until it's freed. */
 export function keptDirs(r: Listed): string[] {
-  const work = r.local?.work ? [r.local.work] : [];
+  const work = recordWorks(r);
   if (r.freed) return work;
   if (r.status === 'closed') return [...new Set([...recordDirs(r), ...work])];
   return [...new Set([...work, worktreeDir(r.repoKey, r.base), worktreeDir(r.repoKey, r.head), ...r.analyses.map(([b, h]) => reviewDir(r.repoKey, b, h))])];
@@ -175,14 +175,17 @@ function guard(list: Listed[]): string[] {
  */
 export async function free(ids: Set<string>, list: Listed[] = listRecords()): Promise<{ freed: string[]; removed: string[] }> {
   const unrecorded = guard(list);
-  const going = list.filter((r) => r.status === 'closed' && (!r.freed || r.local?.work) && ids.has(recordId(r)));
+  const going = list.filter((r) => r.status === 'closed' && (!r.freed || recordWorks(r).length) && ids.has(recordId(r)));
   const staying = new Set([...list.filter((r) => !going.includes(r)).flatMap(keptDirs), ...unrecorded]);
   const candidates = [...new Set(going.flatMap(keptDirs))].filter((d) => !staying.has(d));
   const removed: string[] = [];
   for (const dir of candidates) {
-    const r = going.find((r) => r.local?.work === dir);
+    const r = going.find((r) => recordWorks(r).includes(dir));
     if (r) {
-      const state = await recordedLocal(r);
+      const state = r.local?.work === dir ? await recordedLocal(r) : await (async () => {
+        const ref = (await gitAsync(dir, ['rev-parse', '--symbolic-full-name', '@{upstream}'])).trim();
+        return (await readLocal(dir, { work: dir, branch: null, ref })).local;
+      })().catch(() => null);
       // Unknown is kept too: a failed read is no evidence that work has reached GitHub.
       if (!state || state.dirty || state.unpushed === null || state.unpushed.length) continue;
       // No force: git gets the last word if files changed while we were looking.

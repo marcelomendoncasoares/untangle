@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import '../viewer/core.js';
 import { agentCommand, agentDirs, agentOptions, flagsOf, rememberStart, resumeCommand, startedHere, type AgentChoice } from './agents.js';
-import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
+import { cacheRoot, reviewDir, worktreeDir, workDir } from './cache.js';
 import { rehomeCheckouts } from './checkouts.js';
 import { call, failed, Gone } from './client.js';
 import { has, runAsync } from './exec.js';
@@ -165,6 +165,7 @@ export interface Row {
    */
   twin: boolean;
   local: LocalSummary | null;
+  stack: import('./stack.js').StackRecord | null;
 }
 
 const idOf = recordId;
@@ -198,7 +199,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
     memory: old ? memoryOf(run.pid) : s?.memory ?? null,
     build: old || s?.phase === 'ready' ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false, local: s?.local ?? null,
+    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false, local: s?.local ?? null, stack: s?.stack ?? null,
   };
 }
 
@@ -300,6 +301,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     older: false,
     twin: false,
     local: s?.local ?? null,
+    stack: s?.stack ?? r.stack ?? null,
   };
 }
 
@@ -526,9 +528,10 @@ export class Manager {
   private async writable(target: string): Promise<string[]> {
     const dirs = agentDirs(target), w = wantedUrl(target);
     if (!dirs.length || !w?.repoKey || !w.key) return [];
+    const own = workDir(w.repoKey, Number(w.key.slice('pr-'.length)));
     const run = findRun(w), file = recordFile(w.repoKey, w.key), end = Date.now() + 60_000;
     for (;;) {
-      if (fs.existsSync(dirs[0])) return dirs;
+      if (fs.existsSync(own)) return dirs;
       if (!run || !pidAlive(run.pid) || readRecord(file)?.pid === run.pid || Date.now() > end) return [];
       await new Promise((r) => setTimeout(r, 200));
     }

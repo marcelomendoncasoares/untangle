@@ -39,6 +39,15 @@ a review of the change, do it now, as described below. Then tell the user the re
 end the turn.`));
   });
 
+  it('when the skill is read for a stack, then it directs fixes to the named leg and merges and pushes in order.', async () => {
+    const r = await run([]);
+    assert.ok(r.out.includes(`When the review covers a stack of pull requests, each note names the pull request its line is
+in. When a note on a lower pull request asks for a change, make it on that pull request's branch,
+in the working copy the watch names, and commit it there; then merge that branch into each branch
+above it, in order, up to the reviewed pull request's. When the user asks to push, push the lowest
+branch first.`));
+  });
+
   it(
     'when the skill is installed, '
     + 'then it goes where each agent reads skills, with the rule that lets untangle run outside Codex’s sandbox.',

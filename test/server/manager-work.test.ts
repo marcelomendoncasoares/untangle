@@ -49,15 +49,16 @@ describe('Given the manager inside Orca, and pull requests on GitHub, ', { timeo
 
   it(
     'when an open one’s review starts with Codex, '
-    + 'then Codex may write the review’s working copy and the clone its commits go into, as the start form’s command shows.',
+    + 'then Codex may write the repository’s working copies and the clone its commits go into, as the start form’s command shows.',
     async () => {
       const work = path.join(f.cache, 'work/github.com/acme/sample/7'), clone = path.join(f.cache, 'repos/github.com/acme/sample.git');
+      const works = path.dirname(work);
       const shown = (await manager.call('dirs', { query: { target: f.url } })).data;
       const r = await manager.call('start', { method: 'POST', body: { target: f.url, agent: { kind: 'codex', resume: null, flags: '', message: '' } } });
       assert.equal(r.status, 200, r.text);
       assert.deepEqual([shown, commands(), fs.existsSync(path.join(work, '.git'))], [
-        { dirs: [work, clone] },
-        [`codex --add-dir ${work} --add-dir ${clone} --no-daemon '$untangle ${f.url}'`],
+        { dirs: [works, clone] },
+        [`codex --add-dir ${works} --add-dir ${clone} --no-daemon '$untangle ${f.url}'`],
         true,
       ]);
     },

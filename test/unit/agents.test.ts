@@ -43,9 +43,9 @@ describe('Given an agent to start for a review, ', () => {
 
   it(
     'when the review is of a pull request’s link, '
-    + 'then the agent may write its working copy and the clone its commits go into, each named before the other options, new or resumed; a folder’s review gives none.',
+    + 'then the agent may write the repository’s working copies and the clone its commits go into, each named before the other options, new or resumed; a folder’s review gives none.',
     () => {
-      const work = `${cacheRoot()}/work/github.com/acme/app/12`, clone = `${cacheRoot()}/repos/github.com/acme/app.git`;
+      const work = `${cacheRoot()}/work/github.com/acme/app`, clone = `${cacheRoot()}/repos/github.com/acme/app.git`;
       const dirs = agentDirs(link);
       const add = `--add-dir ${sh(work)} --add-dir ${sh(clone)}`;
       assert.deepEqual([dirs, agentDirs('/work/app')], [[work, clone], []]);

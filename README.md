@@ -141,6 +141,18 @@ which the review leaves out until they're committed.
 
 ![The lens of commit 9c69d53: its lines bright, the rest faded, and 9 changes to review](docs/images/lens.png)
 
+### A stack, in one review
+
+A pull request whose base is another open pull request's branch is one of a stack. untangle reviews
+it with the pull requests under it, down to the branch the stack starts from: the top bar says
+*Stack of 8* and lists them, each with what's left in it, and the pull requests built on this one.
+Each is a lens on its own commits, in that list and in the Commits tab, and each run of changed lines
+says which one wrote it. A comment on a line goes to the pull request whose commit wrote it, on that
+line there, and Submit sends each its own review. A note on a lower one's line says so: the agent
+makes the change on that branch, in its working copy, and merges it into each branch above. A branch
+without a pull request ends the stack, and the review of a pull request built on this one starts from
+your marks here.
+
 ### The pull request's conversation
 
 Comments go to the pull request through `gh`, and its threads show under their lines, with
@@ -285,6 +297,9 @@ upstream's or your own), or to `-base <branch>`.
 - **A pull request URL** (`https://github.com/<owner>/<repo>/pull/<number>`) is cloned into the
 cache first; the next pull request of the same repository only fetches. An open one also gets a
 working copy of its branch, where its agent changes it, and the review follows that copy's commits.
+- **A stacked pull request**, one whose base is another open pull request's branch, is reviewed with
+the pull requests under it, down to the first branch that isn't another one's head
+([A stack, in one review](#a-stack-in-one-review)).
 
 ### Where it opens
 
@@ -474,7 +489,7 @@ versions kept marks on move to it when their review starts.
 `%LOCALAPPDATA%` on Windows; `UNTANGLE_CACHE` overrides it):
   - `repos/`: clones made for pull request URLs (bare, blobs on demand).
   - `work/`: the working copies of pull requests' branches (`work/github.com/<owner>/<repo>/<number>`),
-  where agents change them. One with commits or changes GitHub doesn't have is never deleted, even
+  where agents change them; in a stack, a lower pull request's too, made when a note on it needs one. One with commits or changes GitHub doesn't have is never deleted, even
   when its review's space is freed.
   - `worktrees/`: checkouts of base and head commits. Each is a repository of its own that borrows
   your repository's objects, so your repository doesn't list it, or a worktree of a clone:

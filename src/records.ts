@@ -3,10 +3,11 @@
 // from them, running, paused or closed, with what each one holds on disk.
 import fs from 'node:fs';
 import path from 'node:path';
-import { cacheRoot, reviewDir, worktreeDir } from './cache.js';
+import { cacheRoot, reviewDir, worktreeDir, workDir } from './cache.js';
 import { call, Gone } from './client.js';
 import type { LocalSource } from './local.js';
 import { pidAlive, removeRun, type RunInfo } from './runs.js';
+import type { StackRecord } from './stack.js';
 
 /** A chat that held a review: what resumes it, and where it ran. */
 export interface ChatRecord {
@@ -71,6 +72,7 @@ export interface ReviewRecord {
   analyses: Array<[string, string]>;
   /** The working copy or folder, and the ref last fetched from GitHub. */
   local?: LocalSource | null;
+  stack?: StackRecord | null;
   /** When its space was freed: its checkouts and analyses went, and opening it again builds them. */
   freed?: string | null;
 }
@@ -88,7 +90,7 @@ export const recordFile = (repoKey: string, key: string) => path.join(recordsDir
 export function readRecord(file: string): ReviewRecord | null {
   try {
     const r = JSON.parse(fs.readFileSync(file, 'utf8')) as ReviewRecord;
-    return r && r.version === 1 && typeof r.target === 'string' ? r : null;
+    return r && r.version === 1 && typeof r.target === 'string' ? { ...r, stack: r.stack ?? null } : null;
   } catch {
     return null;
   }
@@ -162,6 +164,12 @@ export const recordDirs = (r: ReviewRecord) => [
   ...r.checkouts.map((sha) => worktreeDir(r.repoKey, sha)),
   ...r.analyses.map(([base, head]) => reviewDir(r.repoKey, base, head)),
 ];
+
+/** Working copies of the legs are shared by every review that contains them. */
+export const recordWorks = (r: ReviewRecord): string[] => [...new Set([
+  ...(r.local?.work ? [r.local.work] : []),
+  ...(!r.dir && r.stack ? r.stack.legs.map((n) => workDir(r.repoKey, n)).filter((d) => fs.existsSync(d)) : []),
+])];
 
 /** What a folder takes on disk, in bytes, its links not followed; 0 when it isn't there. */
 export function dirSize(dir: string): number {

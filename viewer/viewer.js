@@ -81,6 +81,7 @@
     close: path1('M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.707.708L7.293 8l-3.646 3.646.707.708L8 8.707z'),
     listTree: path1('M1 2h12v1H1zM2.5 3h1v6.5h-1zM3.5 5.5H15v1H3.5zM3.5 9H15v1H3.5zM1 12.5h12v1H1z'),
     listFlat: path1('M1 2h14v1H1zM1 5.5h14v1H1zM1 9h14v1H1zM1 12.5h14v1H1z'),
+    stack: svg('<path d="M2.5 4h11M4 8h8M5.5 12h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'),
     history: path1('M13.507 12.324a7 7 0 0 0 .065-8.56A7 7 0 0 0 2 4.393V2H1v3.5l.5.5H5V5H2.811a6.008 6.008 0 1 1-.135 5.77l-.887.462a7 7 0 0 0 11.718 1.092zm-3.361-.97l.708-.707L8 7.792V4H7v4l.146.354 3 3z'),
   };
   // An icon button: its tooltip says what a click does; a toggle keeps one name and says whether it's on.
@@ -290,6 +291,20 @@
   const unpushedHere = () => (HISTORY ? HISTORY.commits.filter((c) => LOCAL.np.has(c.sha)).map((c) => c.sha) : []);
   // GitHub is on other commits because it doesn't have this review's yet.
   const ghBehind = () => LOCAL.np.has(CONFIG.head);
+  // ---------- a stack: a pull request on another one's branch, reviewed with the ones under it,
+  // top first. Each is a commit lens of its commits: the history says each commit's pull request,
+  // and gives a merge that brings a lower one up only the lines it resolved itself. The refresh
+  // says how each is now.
+  const STACK = HISTORY && HISTORY.stack && HISTORY.stack.legs && HISTORY.stack.legs.length > 1 ? HISTORY.stack : null;
+  const STK = { live: null, key: '' };
+  const legOf = (n) => (STACK ? STACK.legs.find((l) => l.number === n) || null : null);
+  const topLeg = () => (STACK ? STACK.legs[0].number : null);
+  const legShas = (n) => { const l = legOf(n); return l ? l.commits.map((i) => HISTORY.commits[i].sha) : []; };
+  const legLens = (n) => ({ kind: 'commits', shas: legShas(n), why: 'leg', leg: n });
+  const onLeg = (n) => !!state.lens && state.lens.why === 'leg' && state.lens.leg === n;
+  const legNow = (n) => (STK.live && STK.live.legs ? STK.live.legs.find((l) => l.number === n) || null : null);
+  // The pull request whose commit wrote a row of a file's hunk, or null.
+  const rowLeg = (f, hi, ri) => { const ci = STACK ? rowCommit(f, hi, ri) : -1; return ci >= 0 && HISTORY.commits[ci] ? HISTORY.commits[ci].leg : null; };
   let lensMemo = null;
   const lensOn = () => !!state.lens;
   function lensData() {
@@ -436,6 +451,15 @@
     state.lens = null;
     try { return fn(); } finally { state.lens = ln; lensMemo = memo; }
   }
+  // The same, through another lens.
+  function withLens(lens, fn) {
+    const ln = state.lens, memo = lensMemo;
+    state.lens = lens;
+    lensMemo = null;
+    try { return fn(); } finally { state.lens = ln; lensMemo = memo; }
+  }
+  // What's left in a stack's pull request, as its lens counts it.
+  const legStats = (n) => withLens(legLens(n), () => stats(M().files.flatMap((f) => f.blocks)));
   const blocksOf = (ids) => ids.map((id) => M().blockById.get(id));
   // Marks or unmarks changes: under a lens, the ones in it (a change outside it, when that's all
   // there is: its mark was clicked).
@@ -668,13 +692,23 @@
   }
   // One unified row, with one line number: the new line's, or the old one's for a removed line.
   // o.c: the row takes comments (a line of the pull request's diff). o.w: the commit that wrote it.
+  // In a stack, the first changed row of a run one pull request wrote says which, at its end: a
+  // row the same one wrote after it, past context lines, doesn't again.
+  function legTag(f, hi, ri) {
+    if (!STACK || !hxOn() || ri == null) return '';
+    const rows = f.hunks[hi].rows, n = rowLeg(f, hi, ri);
+    if (n == null || rows[ri][0] === ' ') return '';
+    for (let k = ri - 1; k >= 0; k--) if (rows[k][0] !== ' ') { if (rowLeg(f, hi, k) === n) return ''; break; }
+    const l = legOf(n);
+    return `<span class="lg-tag${onLeg(n) ? ' on' : ''}" title="${esc(`${rows[ri][0] === '-' ? 'Removed' : 'Written'} by #${n}${l ? `: ${l.title}` : ''}`)}">#${n}</span>`;
+  }
   function uRow(f, meta, text, ranges, o) {
     const sign = o.sign != null ? o.sign : meta.t === '+' ? '+' : meta.t === '-' ? '−' : '';
     const n = meta.t !== '-' ? meta.n : null;
     const oldNo = meta.t === '-' ? meta.o : null;
     const c = o.c ? (meta.t === '-' ? (o.mv ? '' : 'L:' + meta.o) : n != null ? 'R:' + n : '') : '';
     const notes = (o.badges || '') + (o.toggle || '');
-    return `<div class="ln ${o.cls}${f.lang === 'md' ? ' md' : ''}${o.sel ? ' cm-sel' : ''}${o.mark || ''}"${indentAttr(text)}${n != null ? ` data-n="${n}"` : ''}${c ? ` data-c="${c}"` : ''}${o.w >= 0 ? ` data-w="${o.w}"` : ''}><span class="g">${o.tick || ''}</span><span class="no">${n != null ? n : meta.o != null ? meta.o : ''}</span><span class="sg">${sign}</span><span class="tx">${codeHtml(f, text, ranges, { emphasis: o.emphasis, n, o: oldNo, refs: o.refs, colors: o.colors })}</span>${notes ? `<span class="bdgs">${notes}</span>` : ''}</div>` + (n != null ? peekAfter(f, n) : oldNo != null ? peekAfterOld(f, oldNo) : '') + (o.c ? threadsRow(f, meta, o.mv) : '');
+    return `<div class="ln ${o.cls}${f.lang === 'md' ? ' md' : ''}${o.sel ? ' cm-sel' : ''}${o.mark || ''}"${indentAttr(text)}${n != null ? ` data-n="${n}"` : ''}${c ? ` data-c="${c}"` : ''}${o.w >= 0 ? ` data-w="${o.w}"` : ''}><span class="g">${o.tick || ''}</span><span class="no">${n != null ? n : meta.o != null ? meta.o : ''}</span><span class="sg">${sign}</span><span class="tx">${codeHtml(f, text, ranges, { emphasis: o.emphasis, n, o: oldNo, refs: o.refs, colors: o.colors })}</span>${o.lg || ''}${notes ? `<span class="bdgs">${notes}</span>` : ''}</div>` + (n != null ? peekAfter(f, n) : oldNo != null ? peekAfterOld(f, oldNo) : '') + (o.c ? threadsRow(f, meta, o.mv) : '');
   }
   // Each move annotation stays at the moved block's position. The removed body stays
   // collapsed; the added body's annotation immediately precedes its rows.
@@ -800,7 +834,7 @@
       const want = tickRow(b), first = want >= start && want < end ? ri === want : !placed.has(b.id);
       placed.add(b.id);
       out += uRow(f, meta, text, ranges, {
-        cls: (t === '+' ? 'add' : 'del') + (d ? ' rvd' : '') + other + (lensOut(f, hi, ri) ? ' lens-out' : ''), emphasis, refs: !ctx.noRefs, colors, c: true, sel, mark, w: wroteRow(f, hi, ri),
+        cls: (t === '+' ? 'add' : 'del') + (d ? ' rvd' : '') + other + (lensOut(f, hi, ri) ? ' lens-out' : ''), emphasis, refs: !ctx.noRefs, colors, c: true, sel, mark, w: wroteRow(f, hi, ri), lg: legTag(f, hi, ri),
         tick: first ? tickHtml(b) : '', toggle: first && d ? diffToggle(b) : '',
         badges: ctx.noBadges ? '' : badgesHtml(f, b, ri, t !== '-' ? meta.n : null),
       });
@@ -816,7 +850,7 @@
     const oldNo = side === 'l' && meta.t === '-' ? meta.o : null;
     const c = o.c && num != null ? ` data-c="${side === 'l' ? 'L' : 'R'}:${num}"` : '';
     const notes = side === 'r' ? (o.badges || '') + (o.toggle || '') : '';
-    return `<span class="half ${side} ${o.cls || ''}${f.lang === 'md' ? ' md' : ''}"${c}${o.w >= 0 ? ` data-w="${o.w}"` : ''}><span class="no">${num != null ? num : ''}</span><span class="sg">${sign}</span><span class="tx">${codeHtml(f, text, ranges, { emphasis: o.emphasis, n, o: oldNo, refs: (side === 'r' && o.refs) || (oldNo != null && o.refs !== false), colors: o.colors })}</span>${notes ? `<span class="bdgs">${notes}</span>` : ''}</span>`;
+    return `<span class="half ${side} ${o.cls || ''}${f.lang === 'md' ? ' md' : ''}"${c}${o.w >= 0 ? ` data-w="${o.w}"` : ''}><span class="no">${num != null ? num : ''}</span><span class="sg">${sign}</span><span class="tx">${codeHtml(f, text, ranges, { emphasis: o.emphasis, n, o: oldNo, refs: (side === 'r' && o.refs) || (oldNo != null && o.refs !== false), colors: o.colors })}</span>${o.lg || ''}${notes ? `<span class="bdgs">${notes}</span>` : ''}</span>`;
   }
   function splitRowsHtml(f, hi, start, end, ctx) {
     ctx = ctx || {};
@@ -869,8 +903,8 @@
           const sel = (li != null && inCompose(f, hi, li)) || (ai != null && inCompose(f, hi, ai));
           const fade = lensOn() && (li == null || outL(li)) && (ai == null || outL(ai));
           out += `<div class="sl${d ? ' rvd' : ''}${other}${fade ? ' lens-out' : ''}${sel ? ' cm-sel' : ''}${markAt(f, hi, li, ai)}" data-n="${am ? am.n : ''}"><span class="g">${k === kTick ? tickHtml(b) : ''}</span>`
-            + sCell(f, lm, lm ? h.rows[li][1] : '', lm ? h.rows[li][2] : null, 'l', { cls: 'del' + (outL(li) ? ' lens-out' : ''), emphasis, colors: li != null ? rowColors(h.rows, f.p, li) : null, c: true, w: li != null ? wroteRow(f, hi, li) : -1 })
-            + sCell(f, am, am ? h.rows[ai][1] : '', am ? h.rows[ai][2] : null, 'r', { cls: 'add' + (outL(ai) ? ' lens-out' : ''), emphasis, refs: !ctx.noRefs, badges: am && !ctx.noBadges ? badgesHtml(f, b, ai, am.n) : '', toggle: k === kTick && d ? diffToggle(b) : '', colors: ai != null ? rowColors(h.rows, f.p, ai) : null, c: true, w: ai != null ? wroteRow(f, hi, ai) : -1 })
+            + sCell(f, lm, lm ? h.rows[li][1] : '', lm ? h.rows[li][2] : null, 'l', { cls: 'del' + (outL(li) ? ' lens-out' : ''), emphasis, colors: li != null ? rowColors(h.rows, f.p, li) : null, c: true, w: li != null ? wroteRow(f, hi, li) : -1, lg: legTag(f, hi, li) })
+            + sCell(f, am, am ? h.rows[ai][1] : '', am ? h.rows[ai][2] : null, 'r', { cls: 'add' + (outL(ai) ? ' lens-out' : ''), emphasis, refs: !ctx.noRefs, badges: am && !ctx.noBadges ? badgesHtml(f, b, ai, am.n) : '', toggle: k === kTick && d ? diffToggle(b) : '', colors: ai != null ? rowColors(h.rows, f.p, ai) : null, c: true, w: ai != null ? wroteRow(f, hi, ai) : -1, lg: legTag(f, hi, ai) })
             + '</div>' + (am ? peekAfter(f, am.n) : '') + (lm ? peekAfterOld(f, lm.o) : '') + (lm ? threadsAt(f, 'LEFT', lm.o) : '') + (am ? threadsAt(f, 'RIGHT', am.n) : '');
         }
       }
@@ -1758,7 +1792,7 @@
   function moreMenuItems() {
     const items = [];
     if (GH.on || NT.on) {
-      const d = GH.data, n = d && d.pending ? d.pending.comments : 0;
+      const n = pendingCount();
       const open = NT.data ? NT.data.notes.filter((x) => !x.resolved).length : 0;
       items.push(localMode()
         ? { label: open ? `Your notes · ${open} open` : 'Your notes', icon: ICON.comment, data: { act: 'review-toggle' }, title: 'Copy them for your agent, or post them to GitHub' }
@@ -1819,14 +1853,14 @@
   // scrolled, stay.
   function renderMenu() {
     if (!MENU.el) { MENU.el = document.createElement('div'); MENU.el.className = 'menu'; MENU.el.hidden = true; viewer.appendChild(MENU.el); sheetTouch(MENU.el); }
-    const el = MENU.el, lens = MENU.open === 'lens';
+    const el = MENU.el, lens = MENU.open === 'lens', stack = MENU.open === 'stack';
     const crumb = !!MENU.open && MENU.open.startsWith('crumb:');
     const anchors = MENU.open ? [...viewer.querySelectorAll(`[data-menu="${MENU.open}"]`)] : [];
     const anchor = anchors.find((a) => a.getClientRects().length) || anchors[0];
     const revs = MENU.open === 'reviews';
-    const items = !anchor || lens || revs ? [] : MENU.open === 'view' ? viewMenuItems() : MENU.open === 'more' ? moreMenuItems() : MENU.open === 'side' ? sideMenuItems() : MENU.open === 'also' ? alsoMenuItems() : crumb ? crumbMenuItems() : MENU.open.startsWith('cm:') ? cmMenuItems(anchor) : chainsMenuItems();
+    const items = !anchor || lens || revs || stack ? [] : MENU.open === 'view' ? viewMenuItems() : MENU.open === 'more' ? moreMenuItems() : MENU.open === 'side' ? sideMenuItems() : MENU.open === 'also' ? alsoMenuItems() : crumb ? crumbMenuItems() : MENU.open.startsWith('cm:') ? cmMenuItems(anchor) : chainsMenuItems();
     const sheet = compact();
-    const html = !anchor ? '' : (sheet ? SHEET_HANDLE : '') + (revs ? revsPopHtml() : lens ? (hxOn() ? lensPopHtml() : '') : items.length ? menuHtml(items) : '');
+    const html = !anchor ? '' : (sheet ? SHEET_HANDLE : '') + (revs ? revsPopHtml() : stack ? (STACK ? stackPopHtml() : '') : lens ? (hxOn() ? lensPopHtml() : '') : items.length ? menuHtml(items) : '');
     if (!html || html === SHEET_HANDLE) {
       MENU.open = null;
       MENU.html = '';
@@ -1837,11 +1871,12 @@
       return;
     }
     // The marks' panel says something and has one button, and "Changes from" holds a list: dialogs.
-    el.setAttribute('role', MENU.open === 'side' || lens || revs ? 'dialog' : 'menu');
-    el.setAttribute('aria-label', MENU.open === 'side' ? 'Marks' : MENU.open === 'more' ? 'More' : lens ? 'Changes from' : revs ? 'Your reviews' : MENU.open === 'chains' || MENU.open === 'also' ? 'Chains' : crumb ? 'The files in a folder' : 'More');
+    el.setAttribute('role', MENU.open === 'side' || lens || revs || stack ? 'dialog' : 'menu');
+    el.setAttribute('aria-label', MENU.open === 'side' ? 'Marks' : MENU.open === 'more' ? 'More' : lens ? 'Changes from' : revs ? 'Your reviews' : stack ? 'The stack' : MENU.open === 'chains' || MENU.open === 'also' ? 'Chains' : crumb ? 'The files in a folder' : 'More');
     el.classList.toggle('panel', MENU.open === 'side');
     el.classList.toggle('revs-pop', revs);
     el.classList.toggle('lens-pop', lens);
+    el.classList.toggle('stack-pop', stack);
     el.classList.toggle('sheet', sheet);
     if (html !== MENU.html) {
       const list = el.querySelector('.lp-list'), top = list ? list.scrollTop : 0;
@@ -1861,7 +1896,7 @@
       return;
     }
     const r = anchor.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
-    const left = Math.max(8, Math.min(MENU.open === 'side' || MENU.open === 'chains' || lens || crumb || revs ? r.left : r.right - w, window.innerWidth - w - 8));
+    const left = Math.max(8, Math.min(MENU.open === 'side' || MENU.open === 'chains' || lens || crumb || revs || stack ? r.left : r.right - w, window.innerWidth - w - 8));
     const top = r.bottom + 6 + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6;
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
@@ -1890,7 +1925,7 @@
     renderMenu();
     // A menu's current item takes the focus, else its first; "Changes from" the scope it has; the
     // marks' panel takes none (its one button resets).
-    menuFocus(MENU.open && (MENU.open === 'lens' ? MENU.el.querySelector('[aria-pressed="true"]') || MENU.el.querySelector('button') : MENU.el.querySelector('.mi[aria-current="true"]') || MENU.el.querySelector('.mi')));
+    menuFocus(MENU.open && (MENU.open === 'lens' || MENU.open === 'stack' ? MENU.el.querySelector('[aria-pressed="true"]') || MENU.el.querySelector('button') : MENU.el.querySelector('.mi[aria-current="true"]') || MENU.el.querySelector('.mi')));
   }
   // An item of the open menu takes the focus: in "Changes from"'s list, a third of the way down;
   // in a menu longer than it can show, there too when it's off it.
@@ -2185,6 +2220,9 @@
     busy: null, errors: new Map(), focus: null, reveal: null,
     opened: new Set(), replying: new Set(), editing: null, picker: null, previews: new Map(), preview: new Set(),
     showResolved: false, away: new Set(), fileCompose: null, reviewOpen: false, event: 'COMMENT',
+    // A stack's other pull requests' conversations; where a new comment's lines go (by its lines),
+    // asked as its box opens; and the pull request the review form finishes.
+    legs: [], where: new Map(), toLeg: null,
     // Comment ids GitHub has given so far, and the ones new in its last answer (they fade in).
     known: null, fresh: new Set(),
     // A box's own voice, a note or a comment, when Comment this or Ask opened it: others follow the Review menu.
@@ -2428,11 +2466,14 @@
   const ntScoped = (scope) => { const d = NT.data; return !d ? [] : scope === 'all' ? d.notes : d.notes.filter((n) => !n.resolved && (scope !== 'new' || !n.copied)); };
 
   function ghSet(d) {
+    GH.sig = JSON.stringify(d);
+    // A stack's other pull requests: their threads join the opened one's, each saying its own.
+    GH.legs = d.legs || [];
+    if (GH.legs.length) d = { ...d, threads: d.threads.concat(...GH.legs.map((c) => c.threads)) };
     const ids = d.threads.flatMap((t) => t.comments.map((c) => c.id)).concat(d.comments.map((c) => c.id));
     if (GH.known) ids.forEach((id) => { if (!GH.known.has(id)) GH.fresh.add(id); });
     GH.known = new Set(ids);
     GH.data = d;
-    GH.sig = JSON.stringify(d);
     GH.stale = d.pr.head !== CONFIG.head;
     GH.anchors = new Map();
     GH.files = new Map();
@@ -2443,16 +2484,50 @@
       t.at = null;
       if (t.file) { e.file.push(t); return; }
       // GitHub gives a thread's lines on the pull request's head; when that's newer than this
-      // review, a thread written on this review's commit keeps its original lines.
-      const line = t.outdated ? null : !GH.stale ? t.line : t.commit === CONFIG.head ? t.originalLine : null;
+      // review, a thread written on this review's commit keeps its original lines. A lower pull
+      // request's of a stack come placed in the review already.
+      const own = !STACK || t.pr == null || t.pr === topLeg();
+      const line = t.outdated ? null : !own || !GH.stale ? t.line : t.commit === CONFIG.head ? t.originalLine : null;
       if (line == null) { e.away.push(t); return; }
       t.at = line;
-      t.from = !GH.stale ? t.startLine : t.originalStartLine;
+      t.from = !own || !GH.stale ? t.startLine : t.originalStartLine;
       const k = t.path + '\n' + t.side + '\n' + line;
       if (!GH.anchors.has(k)) GH.anchors.set(k, []);
       GH.anchors.get(k).push(t);
       e.line.push(t);
     });
+  }
+  // Your pending reviews: the opened pull request's, then, in a stack, each other one's.
+  function ghPendings() {
+    const d = GH.data;
+    if (!d) return [];
+    return [d, ...GH.legs].map((c) => ({ pr: c.pr.number, title: c.pr.title, mine: c.pr.mine, pending: c.pending }));
+  }
+  const pendingCount = () => ghPendings().reduce((n, x) => n + (x.pending ? x.pending.comments : 0), 0);
+  // The pull request the review form finishes: the one picked, else the first with comments waiting.
+  function reviewLeg() {
+    const list = ghPendings();
+    return list.find((x) => x.pr === GH.toLeg) || list.find((x) => x.pending && x.pending.comments) || list[0] || null;
+  }
+  // Where a new comment on a stack's lines goes: the pull request whose commit wrote them, at its
+  // own lines there. untangle says, as the box opens.
+  function goesToHtml(c) {
+    if (!STACK || !CONFIG.served || !GH.on || c.line == null) return '';
+    const k = [c.path, c.side, c.line, c.startSide, c.startLine].join(':');
+    let w = GH.where.get(k);
+    if (!w) {
+      w = { state: 'asking' };
+      GH.where.set(k, w);
+      const draft = { path: c.path, body: '', line: c.line, side: c.side, startLine: c.startLine != null ? c.startLine : undefined, startSide: c.startSide || undefined };
+      api('github', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'where', draft }) })
+        .then((r) => r.json().catch(() => ({ error: r.statusText })).then((j) => { if (!r.ok || j.error) throw new Error(j.error || r.status); return j; }))
+        .then((j) => { Object.assign(w, { state: 'ok', pr: j.pr, line: j.line }); }, (e) => { Object.assign(w, { state: 'error', error: e.message }); })
+        .then(() => render());
+    }
+    if (w.state === 'asking') return '<span class="th-to muted">Finding its pull request…</span>';
+    if (w.state === 'error') return `<span class="th-to warn" title="${esc(w.error)}">No pull request of the stack takes these lines</span>`;
+    const same = w.line === c.line;
+    return `<span class="th-to" title="${esc(`It goes to #${w.pr}${same ? '' : `, on its line ${w.line}`}: the pull request whose commit wrote these lines`)}">${ICON.stack}to <b>#${w.pr}</b>${same ? '' : `, its line ${w.line}`}</span>`;
   }
   function ghLoad(quiet) {
     if (!GH.on || GH.loading) return;
@@ -2476,7 +2551,7 @@
     render();
     api('github', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
       .then((r) => r.json().catch(() => ({ error: r.statusText })).then((j) => { if (!r.ok) throw new Error(j.error || r.status); return j; }))
-      .then((j) => { GH.at = Date.now(); ghSet(j); if (done) done(); })
+      .then((j) => { GH.at = Date.now(); ghSet(j); if (done) done(j); })
       .catch((e) => { GH.errors.set(key, e.message); ghLoad(true); })
       .then(() => { GH.busy = null; render(); });
   }
@@ -2679,6 +2754,7 @@
       h += `<button type="button" class="th-fold" data-act="thread-toggle" data-thread="${esc(t.id)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${t.resolved ? `${ICON.check}<span>Resolved${t.resolvedBy ? ` by ${esc(t.resolvedBy)}` : ''}</span>` : ''}${o.head ? `<span>${o.head}</span>` : ''}<span class="muted">· ${lines ? `${esc(lines)} · ` : ''}${n} comment${n === 1 ? '' : 's'}</span></button>`;
     }
     if (!open) return h + '</div>';
+    if (STACK && t.pr != null && t.pr !== topLeg()) h += `<div class="th-leg">${ICON.stack}<span>On <b>#${t.pr}</b>${t.legLine != null && t.legLine !== t.at ? `, its line ${t.legLine}` : ''}${legOf(t.pr) ? ` · ${esc(trunc(legOf(t.pr).title, 60))}` : ''}</span></div>`;
     if (t.outdated && !o.head) h += '<div class="th-note">Outdated: the code changed since.</div>';
     const notes = NT.on ? notesIn(t) : [];
     h += talkHtml(t.id, t.comments, notes, 'review', t.id);
@@ -2701,7 +2777,7 @@
     const sign = (side) => (side === 'LEFT' ? '−' : '+');
     const what = c.startLine != null && (c.startLine !== c.line || c.startSide !== c.side) ? `lines ${sign(c.startSide)}${c.startLine} to ${sign(c.side)}${c.line}` : `line ${sign(c.side)}${c.line}`;
     const local = localMode();
-    return `<div class="th new${local ? ' note' : ''}" data-thread="new"><div class="th-new-h">${ICON.comment}<b>${local ? 'Note' : 'Comment'} on ${what}</b><span class="muted">${COARSE.matches ? 'Tap another line’s gutter in this hunk for a range.' : 'Drag the + over more lines, or shift-click it on another line of this hunk, for a range.'}</span></div>`
+    return `<div class="th new${local ? ' note' : ''}" data-thread="new"><div class="th-new-h">${ICON.comment}<b>${local ? 'Note' : 'Comment'} on ${what}</b>${local ? '' : goesToHtml(c)}<span class="muted">${COARSE.matches ? 'Tap another line’s gutter in this hunk for a range.' : 'Drag the + over more lines, or shift-click it on another line of this hunk, for a range.'}</span></div>`
       + composerHtml(c.key, { local, dest: true, mode: true, buttons: sendButtons('gh-thread'), cancel: 'compose-cancel', suggest: c.hi != null && c.side === 'RIGHT' && (c.startSide == null || c.startSide === 'RIGHT') }) + '</div>';
   }
   // Threads and notes on a side's line of a file, and the comment being written there.
@@ -2840,7 +2916,8 @@
     const ask = c.draft ? '<span class="cm-tag ask" title="Its answer is a comment on GitHub, pending in your review, to edit and send">Draft comment</span>' : '';
     const tags = (lead ? '<span class="cm-tag local" title="Kept on this machine, not on GitHub">Local</span>' + agentTag + (n.gone ? since('Gone') : n.changed ? since('Changed') : '') + noteStatus(n) : agentTag) + ask;
     const av = lead ? `<span class="nt-n" title="Note ${n.n}: “N${n.n}” names it to your agent">N${n.n}</span>` : mine ? '<span class="av"></span>' : AGENT_AV;
-    const head = first ? `<div class="cm-h"><b class="cm-who">${mine ? 'You' : esc(c.by)}</b>${lead ? `<span>${esc(noteLines(n))}</span>` : ''}${tags}${when}</div>` : '';
+    const leg = lead && STACK && n.pr ? `<span class="cm-tag leg" title="${esc(`Its lines are #${n.pr}’s${legOf(n.pr) ? `: ${legOf(n.pr).title}` : ''}`)}">#${n.pr}</span>` : '';
+    const head = first ? `<div class="cm-h"><b class="cm-who">${mine ? 'You' : esc(c.by)}</b>${lead ? `<span>${esc(noteLines(n))}</span>` : ''}${leg}${tags}${when}</div>` : '';
     const err = NT.errors.get('del:' + id);
     return `<div class="cm${first ? ' first' : ''}${mine ? '' : ' agent'}" data-comment="${esc(c.id)}">${first ? av : '<span></span>'}<div class="cm-main">${head}${body}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>${first ? '' : `<span class="cm-t">${when}</span>`}${tools ? `<span class="cm-tools">${tools}</span>${cmMoreHtml('nt:' + id)}` : ''}</div>`;
   }
@@ -3102,7 +3179,8 @@
     let h = `<div class="sb-gh">${GH.error ? `<span class="d">${esc(GH.error)}</span>` : !d ? 'Loading the conversation from GitHub…' : GH.loading ? 'Refreshing…' : `From GitHub, ${ago(new Date(GH.at).toISOString())}`}<span class="sp"></span>${iconBtn(ICON.refresh, 'Refresh from GitHub', 'data-act="gh-refresh"')}</div>`;
     if (!d) return h;
     if (GH.stale) h += ghBehind() ? `<div class="sb-warn">GitHub doesn’t have this review’s commits yet (<code>${esc(CONFIG.head.slice(0, 7))}</code>). Comments on lines wait for them to be pushed.</div>` : `<div class="sb-warn">GitHub has newer commits (<code>${esc(d.pr.head.slice(0, 7))}</code>). Comments on lines wait for this review to be on them. <button type="button" class="linkish" data-act="refresh">Refresh</button></div>`;
-    if (d.pending) h += `<button type="button" class="sb-pend" data-act="review-toggle">${d.pending.comments} pending comment${d.pending.comments === 1 ? '' : 's'} · Finish your review</button>`;
+    const pn = pendingCount();
+    if (pn) h += `<button type="button" class="sb-pend" data-act="review-toggle">${pn} pending comment${pn === 1 ? '' : 's'} · Finish your review</button>`;
     const order = new Map(M().files.map((f, i) => [f.p, i]));
     const sorted = d.threads.slice().sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.at || x.originalLine || 0) - (y.at || y.originalLine || 0));
     const row = (t) => {
@@ -3114,7 +3192,8 @@
       // Its notes, counted by its comments: the talk with the agent in it, only here.
       const talk = NT.on ? notesIn(t).reduce((k, n) => k + n.comments.length, 0) : 0;
       const counts = `${t.comments.length > 1 || talk ? `<span class="n gh">${t.comments.length}</span>` : ''}${talk ? `<span class="n nt" title="${talk} note${talk === 1 ? '' : 's'} with your agent in it, only here">${talk}</span>` : ''}`;
-      return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}${drafted ? ' · a draft of your agent’s, pending' : ''}">${mk}<span class="nm">${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${counts}</span></button>`;
+      const leg = STACK && t.pr != null && t.pr !== topLeg() ? `<b class="lgp">#${t.pr}</b>` : '';
+      return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${leg ? `On #${t.pr}: ` : ''}${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}${drafted ? ' · a draft of your agent’s, pending' : ''}">${mk}<span class="nm">${leg}${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${counts}</span></button>`;
     };
     const open = sorted.filter((t) => !t.resolved), done = sorted.filter((t) => t.resolved);
     h += open.length ? open.map(row).join('') : '<div class="sb-gh">None open.</div>';
@@ -3133,7 +3212,7 @@
     el.hidden = !GH.on && !NT.on;
     if (el.hidden) return;
     const local = localMode();
-    const d = GH.data, n = d && d.pending ? d.pending.comments : 0;
+    const d = GH.data, n = pendingCount();
     const open = NT.data ? NT.data.notes.filter((x) => !x.resolved).length : 0;
     const label = local ? `Notes${open ? ` <span class="rv-n nt">${open}</span>` : ''}` : n ? `Finish review <span class="rv-n">${n}</span>` : 'Review';
     const more = $('#vw-more');
@@ -3145,15 +3224,19 @@
       if (local) h += notesPopHtml();
       else if (!d) h += `<p class="rv-sub">${GH.error ? esc(GH.error) : 'Loading the conversation from GitHub…'}</p>`;
       else {
-        const mine = d.pr.mine;
+        // In a stack, each pull request takes its own review: the one picked, its comments waiting.
+        const legs = STACK ? ghPendings() : [], to = STACK ? reviewLeg() : null;
+        const mine = to ? to.mine : d.pr.mine, k = to ? (to.pending ? to.pending.comments : 0) : n;
         const opt = (ev, label, note, off) => `<label class="rv-opt${off ? ' off' : ''}"><input type="radio" name="rv-event" value="${ev}"${GH.event === ev ? ' checked' : ''}${off ? ' disabled' : ''}><span><b>${label}</b><span class="muted">${note}</span></span></label>`;
         const kept = NT.data ? NT.data.notes.length : 0;
-        h += `<div class="rv-h"><b>Finish your review</b><span class="muted">${n ? `${n} pending comment${n === 1 ? '' : 's'}` : 'no pending comments'}</span></div>`
+        const pick = legs.filter((x) => x.pr === topLeg() || (x.pending && x.pending.comments) || x.pr === to.pr);
+        h += `<div class="rv-h"><b>Finish your review${to ? ` of #${to.pr}` : ''}</b><span class="muted">${k ? `${k} pending comment${k === 1 ? '' : 's'}` : 'no pending comments'}</span></div>`
+          + (pick.length > 1 ? `<div class="rv-legs" role="radiogroup" aria-label="Which pull request’s review">${pick.map((x) => { const c = x.pending ? x.pending.comments : 0; return `<button type="button" role="radio" data-act="rv-leg" data-pr="${x.pr}" aria-checked="${x.pr === to.pr}" title="${esc(`#${x.pr} ${x.title}: ${c ? `${c} pending comment${c === 1 ? '' : 's'}` : 'nothing pending'}`)}">#${x.pr}${c ? `<i>${c}</i>` : ''}</button>`; }).join('')}</div>` : '')
           + (GH.stale ? (ghBehind() ? `<div class="sb-warn">GitHub doesn’t have this review’s commits yet (<code>${esc(CONFIG.head.slice(0, 7))}</code>): they’re not pushed.</div>` : `<div class="sb-warn">GitHub has newer commits than this review (<code>${esc(d.pr.head.slice(0, 7))}</code>). <button type="button" class="linkish" data-act="refresh">Refresh</button></div>`) : '')
           + composerHtml('review', {
             placeholder: 'Leave a comment', rows: 4,
             extra: `<div class="rv-opts">${opt('COMMENT', 'Comment', 'General feedback, without approving.', false)}${opt('APPROVE', 'Approve', mine ? 'Not for your own pull request.' : 'Feedback, and approval to merge.', mine)}${opt('REQUEST_CHANGES', 'Request changes', mine ? 'Not for your own pull request.' : 'Feedback that must be addressed before merging.', mine)}</div>`,
-            buttons: (n ? [['Discard pending review', 'data-act="gh-discard"', false]] : []).concat([['Submit review', 'data-act="gh-submit"', true]]),
+            buttons: (k ? [['Discard pending review', 'data-act="gh-discard"', false]] : []).concat([[to && legs.length > 1 ? `Submit to #${to.pr}` : 'Submit review', 'data-act="gh-submit"', true]]),
           })
           + (kept ? `<p class="rv-sub">Your ${kept} local note${kept === 1 ? '' : 's'} stay${kept === 1 ? 's' : ''} here. Switch to Local notes to copy them.</p>` : '');
       }
@@ -3219,7 +3302,7 @@
     if (d.held) h += `<button type="button" class="sb-pend nt" data-act="nt-send"${ntBusyAttr('send')}>Send ${d.held} held comment${d.held === 1 ? '' : 's'}${a ? ` to ${esc(a.name)}` : ''}</button>`;
     h += `<label class="rv-lbl" for="nt-opening">For the agent</label><textarea id="nt-opening" class="rv-ta" data-nt-opening rows="2" placeholder="The line the copy opens with">${esc(NT.opening != null ? NT.opening : d.opening)}</textarea>`;
     h += `<div class="rv-opts" role="radiogroup" aria-label="Which notes to copy">${opt('open', 'Open notes', open.length)}${opt('new', 'Not copied yet', fresh.length)}${opt('all', 'All including resolved', d.notes.length)}</div>`;
-    const pend = GH.data && GH.data.pending ? GH.data.pending.comments : 0;
+    const pend = pendingCount();
     if (pend) h += `<button type="button" class="sb-pend" data-act="nt-mode" data-mode="github">${pend} pending on GitHub · Finish your review</button>`;
     const err = NT.errors.get('post') || NT.errors.get('send');
     if (err) h += `<div class="cmp-err" role="alert">${esc(err)}</div>`;
@@ -5140,6 +5223,8 @@
   // when the branch no longer has it) at their time, above where they left the branch.
   function graphItems() {
     const items = HISTORY.commits.map((c, i) => ({ id: c.sha, parents: c.parents, c, i }));
+    // A stack's commits read by pull request, top first: children still come before parents.
+    if (STACK) { const rank = new Map(STACK.legs.map((l, k) => [l.number, k])); items.sort((x, y) => (rank.has(x.c.leg) ? rank.get(x.c.leg) : 1e9) - (rank.has(y.c.leg) ? rank.get(y.c.leg) : 1e9) || x.i - y.i); }
     ((HX.live && HX.live.ghosts) || []).forEach((gh) => {
       const item = { id: 'g:' + gh.sha, parents: gh.fork ? [gh.fork] : [], ghost: gh };
       let at = items.findIndex((x) => (x.c ? x.c.at : x.ghost.at) < gh.at);
@@ -5165,7 +5250,7 @@
     const stub = c.brought ? stubSvg(g) : null;
     const svg = laneSvg(vm, g, dotSvg(st.state), own ? (x, y) => (stub ? stub(x, y) : '') + `<circle class="ring" cx="${x}" cy="${y}" r="8"/>` : stub);
     const cnt = st.state === 'left' ? `<span class="cm-n left">${st.open}</span>` : st.state === 'done' ? `<span class="cm-n ok">${ICON.check}</span>` : '<span class="cm-n">—</span>';
-    const meta = (c.brought ? `<code>${shortSha(c.sha)}</code> · brings ${plural(c.brought, 'commit')} from ${esc(baseName())}` : LOCAL.np.has(c.sha) ? `<code>${shortSha(c.sha)}</code> <span class="np-tag">Not pushed</span>` : `<code>${shortSha(c.sha)}</code> · ${dayOf(c.at)}`) + (w ? ` · <b>${w.changes} here</b>` : '');
+    const meta = (c.brings != null ? `<code>${shortSha(c.sha)}</code> · brings #${c.brings} up${LOCAL.np.has(c.sha) ? ' <span class="np-tag">Not pushed</span>' : ''}` : c.brought ? `<code>${shortSha(c.sha)}</code> · brings ${plural(c.brought, 'commit')} from ${esc(baseName())}` : LOCAL.np.has(c.sha) ? `<code>${shortSha(c.sha)}</code> <span class="np-tag">Not pushed</span>` : `<code>${shortSha(c.sha)}</code> · ${dayOf(c.at)}`) + (w ? ` · <b>${w.changes} here</b>` : '');
     const left = st.total ? `${plural(st.total, 'change')}${st.open ? `, ${st.open} to review` : ', all reviewed'}` : 'Nothing of it is left at the head';
     const here = !chain ? '' : w ? `\n${own ? 'The open chain’s commit. ' : ''}Its lines are in ${w.changes} of the open chain’s changes.` : '\nNone of its lines are in the open chain.';
     return `<button type="button" class="cm-row${on ? ' in' : ''}${st.state === 'gone' ? ' gone' : ''}${w ? ' mine' : ''}" data-commit="${c.sha}" data-ci="${it.i}" aria-pressed="${on}" title="${esc(`${c.subject}\n${shortSha(c.sha)} · ${c.author} · ${whenOf(c.at)}\n${left}.${here}\n\nClick for its changes; Shift-click for a range.`)}">${svg}<span class="cm-s">${kindTag(sub.kind)}${esc(sub.text)}</span><span class="cm-m">${meta}</span>${commitDiff(c)}${cnt}</button>`;
@@ -5182,6 +5267,35 @@
   function flagRowHtml(vm, g, cls) {
     const rv = reviewInBranch();
     return `<button type="button" class="${cls}${isReviewLens() ? ' in' : ''}" data-act="lens-review" title="Show only what changed since your last review, at ${shortSha(rv.head)}">${laneThrough(vm.input, g, vm.input.findIndex((n) => n.id === rv.head))}<span>Your review</span><b>${whenOf(rv.at)}</b></button>`;
+  }
+  // A stack's pull request, over its commits: the lanes pass through it, and a click is its lens.
+  function legRowHtml(vm, g, n, cls) {
+    const l = legOf(n);
+    if (!l) return '';
+    const st = legStats(n), now = legNow(n), behind = now && now.notMergedUp > 0, on = onLeg(n);
+    const cnt = !st.total ? '<span class="cm-n">—</span>' : st.open ? `<span class="cm-n left">${st.open}</span>` : `<span class="cm-n ok">${ICON.check}</span>`;
+    const title = `#${n} ${l.title}\n${l.branch}${behind ? `: ${plural(now.notMergedUp, 'commit')} the pull request above doesn’t have yet` : ''}\n${st.total ? `${plural(st.total, 'change')}${st.open ? `, ${st.open} to review` : ', all reviewed'}` : 'Nothing of it is left at the head'}. Click for its changes only.`;
+    return `<button type="button" class="${cls}${on ? ' in' : ''}" data-act="lens-leg" data-leg="${n}" aria-pressed="${on}" title="${esc(title)}">${laneThrough(vm.input, g, -1)}<span class="lg-n">#${n}</span><span class="lg-t">${esc(subjectOf({ subject: l.title, body: '' }).text)}</span>${behind ? '<span class="lg-w">Not merged up</span>' : ''}${cnt}</button>`;
+  }
+  // ---------- the stack's list, from its chip: each pull request, top first, with what's left in
+  // it; where the stack starts; and the pull requests built on this one. A click is a lens.
+  function stackPopHtml() {
+    const top = topLeg(), above = ((STK.live && STK.live.above) || STACK.above || []).slice().sort((x, y) => x.number - y.number);
+    let h = `<div class="sp-h"><b>A stack of ${STACK.legs.length} pull requests</b><span>from ${esc(STACK.base.ref)}, newest on top</span></div>`;
+    if (above.length) h += `<div class="sp-above"><b>Built on #${top}</b>${above.map((p) => `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" title="${esc(`#${p.number} ${p.title}, on ${p.branch}. Built on this one: its own review starts from your marks here. Click to open it on GitHub`)}">#${p.number}</a>`).join('')}</div>`;
+    h += '<div class="sp-legs" role="group" aria-label="The stack’s pull requests, newest first">';
+    STACK.legs.forEach((l) => {
+      const st = legStats(l.number), now = legNow(l.number) || {}, on = onLeg(l.number);
+      const gh = now.draft != null ? (now.draft ? 'Draft' : now.state && now.state !== 'OPEN' ? now.state.charAt(0) + now.state.slice(1).toLowerCase() : '') : l.draft ? 'Draft' : '';
+      const tags = (l.number === top ? '<span class="sp-tag">This one</span>' : '') + (gh ? `<span class="sp-tag">${esc(gh)}</span>` : '')
+        + (now.notMergedUp > 0 ? `<span class="sp-tag warn" title="${esc(`${l.branch} has ${plural(now.notMergedUp, 'commit')} the pull request above doesn’t have yet`)}">Not merged up · ${now.notMergedUp}</span>` : '');
+      const cnt = !st.total ? '<span class="sp-n">—</span>' : st.open ? `<span class="sp-n"><b>${st.open} left</b> of ${st.total}</span>` : `<span class="sp-n ok">${ICON.check}${st.total}</span>`;
+      h += `<button type="button" class="sp-leg${st.total && !st.open ? ' done' : ''}" data-act="lens-leg" data-leg="${l.number}" aria-pressed="${on}" title="${esc(`#${l.number} ${l.title}\n${l.branch} · ${plural(legShas(l.number).length, 'commit')}\nClick for its changes only.`)}"><i class="sp-dot"></i><span class="sp-num">#${l.number}</span><span class="sp-t">${esc(l.title)}</span>${tags}${cnt}</button>`;
+    });
+    const b = STACK.base;
+    h += `<div class="sp-leg root"><i class="sp-dot"></i><span class="sp-num">${esc(b.ref)}</span><span class="sp-t"><code>${shortSha(b.sha)}</code>${b.squashed ? `, the last head of #${b.squashed}, which was squash-merged` : ', where the stack starts'}</span></div></div>`;
+    const all = withoutLens(() => stats(M().files.flatMap((f) => f.blocks)));
+    return h + `<div class="sp-f"><span>All ${STACK.legs.length}: ${all.open ? `${all.open} left of ${all.total}` : `all ${all.total} reviewed`}</span><button type="button" class="btn xs" data-act="lens-all" aria-pressed="${!state.lens}">All changes</button></div>`;
   }
   const preset = (act, label, n, on, title, diff) => `<button type="button" class="sb-row cm-pre" data-act="${act}" aria-pressed="${on}" title="${esc(title)}"><i class="rd"></i><span class="nm ui">${label}</span>${diff || ''}<span class="cnt">${n || ''}</span></button>`;
   // The open changes since an older head (its rows loaded), as a lens there would count them.
@@ -5213,7 +5327,10 @@
     if (rv && rv.here) pin += preset('lens-review', 'Since your review', sinceOpen(rv.head), isReviewLens(), `What changed since the head of your last review, ${shortSha(rv.head)} (${whenOf(rv.at)})`);
     let h = `<div class="sb-group"><span>Commits</span><span${chain ? ' title="The commits that wrote lines of the chain open"' : ''}>${chain ? `${chain.writers.size} of ${HISTORY.commits.length} in this chain` : HISTORY.commits.length}</span></div><div class="cm-list${chain ? ' follow' : ''}" role="group" aria-label="The commits, newest first">`;
     const rvb = reviewInBranch();
+    let legAt = null;
     models.forEach((vm) => {
+      const lg = STACK && vm.item.c ? vm.item.c.leg : null;
+      if (lg != null && lg !== legAt) { legAt = lg; h += legRowHtml(vm, g, lg, 'cm-leg'); }
       if (rvb && vm.item.id === rvb.head) h += flagRowHtml(vm, g, 'cm-flag');
       h += commitRowHtml(vm, g, chain);
     });
@@ -5241,7 +5358,10 @@
     }
     h += '</div><div class="lp-list" role="group" aria-label="The commits, newest first">';
     const rvb = reviewInBranch();
+    let legAt = null;
     models.forEach((vm) => {
+      const lg = STACK && vm.item.c ? vm.item.c.leg : null;
+      if (lg != null && lg !== legAt) { legAt = lg; h += legRowHtml(vm, g, lg, 'lp-leg'); }
       if (rvb && vm.item.id === rvb.head) h += flagRowHtml(vm, g, 'lp-flag');
       h += popRowHtml(vm, g);
     });
@@ -5416,6 +5536,7 @@
       return `Since ${shortSha(ln.from)}, before the force push`;
     }
     if (ln.why === 'unpushed') return `Not pushed · ${plural(ln.shas.length, 'commit')}`;
+    if (ln.why === 'leg') return `#${ln.leg} · ${plural(ln.shas.length, 'commit')}`;
     if (ln.shas.length === 1) { const c = HISTORY.commits[HX.index.get(ln.shas[0])]; return `${shortSha(ln.shas[0])} · ${trunc(subjectOf(c).text, 30)}`; }
     return `${ln.shas.length} commits`;
   }
@@ -6382,7 +6503,14 @@
       + `<span class="t-commit" title="${esc(CONFIG.where || M().raw.label || '')}">${hxOn() ? `<button type="button" class="t-head${state.lens ? ' on' : ''}" data-act="menu" data-menu="lens" aria-haspopup="dialog" aria-expanded="${MENU.open === 'lens'}" title="${state.lens ? `Only these changes count: ${esc(lensLabel())}. Pick others, or all of them` : 'Changes from every commit: pick some to review only theirs'}"><span>${state.lens ? esc(lensLabel()) : esc(sha)}</span>${ICON.chevronDown}</button>` : esc(sha)}${CONFIG.served ? iconBtn(ICON.refresh, 'Look for new commits, and review them here', 'data-act="refresh"') : ''}</span>`
       + localHtml()
       + `<span class="t-unsaved" title="${esc(unsavedWhy)}">Marks not saved</span>`;
-    return head ? `<div class="sb-pr-row">${facts}</div>${title}` : title + facts;
+    return head ? `<div class="sb-pr-row">${stackChipHtml()}${facts}</div>${title}` : stackChipHtml() + title + facts;
+  }
+  // A stack's chip: how many pull requests the review covers, listed when it's clicked. It's
+  // amber while one of them has commits the one above doesn't have yet.
+  function stackChipHtml() {
+    if (!STACK) return '';
+    const n = STACK.legs.length, behind = STACK.legs.some((l) => { const x = legNow(l.number); return !!x && x.notMergedUp > 0; });
+    return `<button type="button" class="t-stack${behind ? ' warn' : ''}" data-act="menu" data-menu="stack" aria-haspopup="dialog" aria-expanded="${MENU.open === 'stack'}" title="${esc(`This review covers a stack of ${n} pull requests, from ${STACK.base.ref} up to #${topLeg()}${behind ? '. One has commits the pull request above it doesn’t have yet' : ''}`)}">${ICON.stack}<span>Stack of ${n}</span>${ICON.chevronDown}</button>`;
   }
   // The app bar, in a narrow window, names where you are: the view, and under it what the
   // header says about your place in it (the member being read), else its facts.
@@ -6874,11 +7002,21 @@
   // ---------- what isn't on GitHub yet, as untangle says with each look for new commits: the
   // commits GitHub's branch doesn't have (their lines marked, the top bar counting them), whether
   // there are changes not committed, and the commits GitHub has that the branch doesn't.
+  function setStack(x) {
+    const key = JSON.stringify(x || null);
+    if (key === STK.key) return;
+    STK.key = key;
+    STK.live = x || null;
+    renderTop();
+    if (MENU.open === 'stack') renderMenu();
+  }
   function setLocal(l) {
-    const key = JSON.stringify(l || null);
+    // In a stack, the lower pull requests' working copies' commits GitHub doesn't have count too.
+    const legs = STK.live && STK.live.legs ? STK.live.legs.flatMap((x) => (x.number !== topLeg() && x.local && x.local.unpushed) || []) : [];
+    const key = JSON.stringify([l || null, legs]);
     if (key === LOCAL.key) return;
     const was = [...LOCAL.np].join();
-    Object.assign(LOCAL, { now: l || null, key, np: new Set((l && l.unpushed) || []) });
+    Object.assign(LOCAL, { now: l || null, key, np: new Set([...((l && l.unpushed) || []), ...legs]) });
     markUnpushed();
     if ([...LOCAL.np].join() !== was) {
       // Their lens follows them: once they're pushed, it's off.
@@ -6904,8 +7042,8 @@
   function localHtml() {
     const l = LOCAL.now;
     if (!l) return '';
-    const n = l.unpushed ? l.unpushed.length : 0;
-    const branch = l.branch ? `GitHub’s ${l.branch}` : 'GitHub';
+    const n = STACK ? unpushedHere().length : l.unpushed ? l.unpushed.length : 0;
+    const branch = STACK ? 'GitHub' : l.branch ? `GitHub’s ${l.branch}` : 'GitHub';
     const h = (n && !(state.lens && state.lens.why === 'unpushed') ? `<button type="button" class="t-np" data-act="lens-unpushed" title="${esc(`${plural(n, 'commit')} not pushed: ${branch} doesn’t have ${n === 1 ? 'it' : 'them'} yet. Click to review only ${n === 1 ? 'its' : 'their'} changes.`)}">${n} not pushed</button>` : '')
       + (l.dirty ? `<span class="t-unc" title="${esc(`${l.work ? 'The working copy' : 'Your folder'} has changes not committed: the review shows them once they’re committed.`)}">Not committed</span>` : '');
     return h ? `<span class="t-local">${h}</span>` : '';
@@ -6929,6 +7067,7 @@
   }
   function onFresh(j) {
     clearTimeout(FRESH.timer);
+    if ('stack' in j) setStack(j.stack);
     if ('local' in j) setLocal(j.local);
     if (j.state === 'current') { Object.assign(FRESH, { state: null, latest: null }); renderFresh(); return toast(`Up to date: ${String(j.head).slice(0, 7)} is the latest`); }
     // Why it failed is said once, in full: the pill only says it didn't.
@@ -6942,6 +7081,7 @@
   function freshCheck() {
     if (!CONFIG.served || FRESH.state) return;
     api('refresh?check=1').then((r) => r.json()).then((j) => {
+      if ('stack' in j) setStack(j.stack);
       if ('local' in j) setLocal(j.local);
       const newer = j.latest && j.latest !== CONFIG.head ? j.latest : null;
       if (newer !== FRESH.latest) { FRESH.latest = newer; renderFresh(); }
@@ -6989,6 +7129,7 @@
       h = `<span class="spin" aria-hidden="true"></span><span class="fr-t">Updating to <code>${short(FRESH.head)}</code></span>${p == null ? '' : `<b class="fr-pct" aria-hidden="true">${Math.round(p * 100)}%</b><span class="fr-bar" aria-hidden="true"><i style="width:${(p * 100).toFixed(1)}%"></i></span>`}`;
     } else if (FRESH.state === 'failed') { h = '<span class="fr-t d">Couldn’t update</span><button type="button" class="btn xs" data-act="refresh">Try again</button>'; title = FRESH.error || ''; }
     else if (FRESH.latest) h = `<span class="fr-t">New commits: <code>${short(FRESH.latest)}</code></span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>`;
+    else if (STK.live && STK.live.changed) { h = '<span class="fr-t">The stack changed</span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>'; title = 'A pull request of the stack was merged, added or moved: refreshing reviews the stack as it is now'; }
     else if (LOCAL.now && LOCAL.now.behind) { h = `<span class="fr-t">${plural(LOCAL.now.behind, 'new commit')} on GitHub</span>`; title = behindTitle(LOCAL.now); }
     const was = el.hidden;
     el.hidden = !h;
@@ -7285,10 +7426,12 @@
       const c = state.compose;
       if (!d.file && !c) return;
       const draft = d.file ? { path: GH.fileCompose, body } : { path: c.path, body, line: c.line, side: c.side, startLine: c.startLine != null ? c.startLine : undefined, startSide: c.startSide || undefined };
-      return ghAct(d.key, { action: 'thread', mode: d.mode, draft }, () => {
+      return ghAct(d.key, { action: 'thread', mode: d.mode, draft }, (j) => {
         setDraft(d.key, ''); GH.preview.delete(d.key);
         if (d.file) GH.fileCompose = null; else state.compose = null;
-        toast(d.mode === 'single' ? 'Comment posted' : 'Added to your pending review');
+        // In a stack, it says which pull request took it, when that's another.
+        const to = STACK && j && j.placed && j.placed.pr !== topLeg() ? ` on #${j.placed.pr}${j.placed.line != null && j.placed.line !== draft.line ? `, its line ${j.placed.line}` : ''}` : '';
+        toast(d.mode === 'single' ? `Comment posted${to}` : `Added to your pending review${to}`);
       });
     }
     if (act === 'gh-reply') {
@@ -7325,12 +7468,18 @@
     }
     if (act === 'gh-submit') {
       const body = (drafts.get('review') || '').trim();
-      return ghAct('review', { action: 'submit', event: GH.event, body }, () => { setDraft('review', ''); GH.preview.delete('review'); GH.reviewOpen = false; toast({ APPROVE: 'Approved', REQUEST_CHANGES: 'Changes requested', COMMENT: 'Review submitted' }[GH.event]); });
+      const to = STACK ? reviewLeg() : null;
+      return ghAct('review', { action: 'submit', event: GH.event, body, ...(to ? { pr: to.pr } : {}) }, () => { setDraft('review', ''); GH.preview.delete('review'); GH.reviewOpen = false; toast({ APPROVE: 'Approved', REQUEST_CHANGES: 'Changes requested', COMMENT: 'Review submitted' }[GH.event]); });
     }
     if (act === 'gh-discard') {
-      const n = GH.data && GH.data.pending ? GH.data.pending.comments : 0;
-      if (!confirm(`Discard your pending review${n ? ` and its ${n} comment${n === 1 ? '' : 's'}` : ''}? This can’t be undone.`)) return;
-      return ghAct('review', { action: 'discard' }, () => { GH.reviewOpen = false; toast('Pending review discarded'); });
+      const to = STACK ? reviewLeg() : null;
+      const n = to ? (to.pending ? to.pending.comments : 0) : GH.data && GH.data.pending ? GH.data.pending.comments : 0;
+      if (!confirm(`Discard your pending review${to ? ` of #${to.pr}` : ''}${n ? ` and its ${n} comment${n === 1 ? '' : 's'}` : ''}? This can’t be undone.`)) return;
+      return ghAct('review', { action: 'discard', ...(to ? { pr: to.pr } : {}) }, () => { GH.reviewOpen = false; toast('Pending review discarded'); });
+    }
+    if (act === 'rv-leg') {
+      GH.toLeg = Number(d.pr);
+      return render();
     }
   }
   // A note's lines, from the comment being written: on one side. A range across both sides (a
@@ -7687,7 +7836,12 @@
     if (act === 'tests-filter') { state.testsFilter = d.v; return render({ top: true }); }
     if (act === 'tests-mode') { UI.testsMode = d.v; saveUI(); return render(); }
     if (act === 'history-open') { state.view = { kind: 'history' }; state.peek = null; state.focus = null; loadCommits(); return render({ top: true }); }
-    if (act === 'lens-all') return setLens(null);
+    if (act === 'lens-all') { if (MENU.open === 'stack') MENU.open = null; return setLens(null); }
+    if (act === 'lens-leg') {
+      const n = Number(d.leg);
+      if (MENU.open === 'stack' || MENU.open === 'lens') MENU.open = null;
+      return setLens(onLeg(n) ? null : legLens(n));
+    }
     if (act === 'lens-review') { const rv = HX && HX.live && HX.live.review; if (rv) lensSince(rv.head, 'review', d.go === '1'); return; }
     if (act === 'lens-ghost') return lensSince(d.sha, d.why === 'review' ? 'review' : 'push');
     if (act === 'lens-go') return lensGo();

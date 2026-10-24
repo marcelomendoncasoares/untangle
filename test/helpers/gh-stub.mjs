@@ -34,5 +34,10 @@ if (args[0] === 'pr' && args[1] === 'view') {
   process.exit(1);
 }
 
+if (args[0] === 'pr' && args[1] === 'list') {
+  process.stdout.write('[]\n');
+  process.exit(0);
+}
+
 process.stderr.write(`gh stub: no reply for: ${args.join(' ')}\n`);
 process.exit(1);

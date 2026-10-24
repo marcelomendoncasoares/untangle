@@ -37,7 +37,7 @@ export function firstLine(kind: AgentKind, target: string, message: string): str
  */
 export function agentDirs(target: string): string[] {
   const w = wantedUrl(target);
-  return w?.repoKey && w.key ? [workDir(w.repoKey, Number(w.key.slice('pr-'.length))), cloneDir(w.repoKey)] : [];
+  return w?.repoKey && w.key ? [path.dirname(workDir(w.repoKey, Number(w.key.slice('pr-'.length)))), cloneDir(w.repoKey)] : [];
 }
 
 // Each folder an agent may write, as both agents take it. Claude's --add-dir takes every word up

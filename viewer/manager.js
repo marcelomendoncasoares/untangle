@@ -259,6 +259,8 @@
   }
   const workState = (l) => [l.unpushed ? `${plural(l.unpushed, 'commit', 'commits')} not pushed` : '', l.dirty ? 'changes not committed' : ''].filter(Boolean).join(' · ') || 'all on GitHub';
 
+  // A review of a stack says so: the pull requests under the one opened are in it too.
+  const stackTag = (r) => (r.stack && r.stack.legs && r.stack.legs.length > 1 ? `<span class="kind stk" title="${esc(`A stack of ${r.stack.legs.length} pull requests, from ${r.stack.base}: ${r.stack.legs.map((n) => '#' + n).join(', ')}`)}">Stack of ${r.stack.legs.length}</span>` : '');
   function row(r) {
     const sel = S.sel === r.id, on = S.opened.has(r.id);
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
@@ -275,7 +277,7 @@
       <div class="row ${r.status}${r.pending ? ' pending' : ''}"${r.pending ? '' : ` data-act="sel" data-id="${esc(r.id)}"`}>
         <span class="st ${st}"></span>
         <span class="main">
-          <span class="l1">${numTag(r.name.replace(/^[^#]*#/, '#'))}${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}<span class="ttl">${md(r.title)}</span></span>
+          <span class="l1">${numTag(r.name.replace(/^[^#]*#/, '#'))}${r.kind ? `<span class="kind">${esc(r.kind)}</span>` : ''}${stackTag(r)}<span class="ttl">${md(r.title)}</span></span>
           <span class="l2">${l2}</span>
           ${ev ? `<span class="l3">${ev}</span>` : ''}
         </span>

@@ -117,12 +117,17 @@ export interface Person { login: string; avatar: string; url: string }
 export interface Reaction { content: string; count: number; mine: boolean }
 export interface Comment { id: string; author: Person; association: string; html: string; body: string; created: string; edited: string | null; url: string; pending: boolean; canEdit: boolean; canDelete: boolean; canReact: boolean; reactions: Reaction[] }
 export interface Thread {
+  pr?: number;
+  legLine?: number | null;
+  legStartLine?: number | null;
   id: string; path: string; file: boolean; side: 'LEFT' | 'RIGHT'; line: number | null; startSide: 'LEFT' | 'RIGHT' | null; startLine: number | null;
   originalLine: number | null; originalStartLine: number | null; commit: string | null; hunk: string;
   resolved: boolean; outdated: boolean; collapsed: boolean; canResolve: boolean; canUnresolve: boolean; canReply: boolean; resolvedBy: string | null; comments: Comment[];
 }
 export interface Review { id: string; state: string; author: Person; association: string; html: string; body: string; created: string; url: string; comments: number }
 export interface Conversation {
+  legs?: Conversation[];
+  placed?: { pr: number; line: number | null; startLine: number | null; side: 'LEFT' | 'RIGHT' };
   viewer: Person;
   pr: { id: string; number: number; title: string; url: string; state: string; draft: boolean; locked: boolean; head: string; created: string; author: Person; html: string; body: string; decision: string | null; mine: boolean; canReact: boolean; reactions: Reaction[] };
   /** Your pending review: its comments, and its summary so far. */
@@ -167,11 +172,11 @@ export type Action =
   | { action: 'delete'; kind: 'issue' | 'review'; id: string }
   | { action: 'resolve'; thread: string; resolved: boolean }
   | { action: 'react'; subject: string; content: string; on: boolean }
-  | { action: 'comment'; body: string }
-  | { action: 'submit'; event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES'; body: string }
-  | { action: 'discard' }
+  | { action: 'comment'; body: string; pr?: number }
+  | { action: 'submit'; event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES'; body: string; pr?: number }
+  | { action: 'discard'; pr?: number }
   /** Your pending review's summary, set: a pending review starts with it when there's none. */
-  | { action: 'summary'; body: string }
+  | { action: 'summary'; body: string; pr?: number }
   | { action: 'preview'; text: string }
   | { action: 'suggest'; kind: '@' | '#'; query: string };
 
@@ -484,6 +489,10 @@ export class PullRequestConversation {
     for (const t of d.threads) { const c = t.comments.find((x) => x.id === id); if (c) return { body: c.body, pending: c.pending }; }
     const c = d.comments.find((x) => x.id === id);
     return c ? { body: c.body, pending: false } : null;
+  }
+
+  knownConversation(): Conversation | null {
+    return this.last;
   }
 
   /** The pending review, as last read. */

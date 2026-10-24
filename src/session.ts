@@ -15,6 +15,9 @@ import { fileHunks, generatedPatterns, parseHunks } from './pipeline/diff.js';
 import { writeAtomic } from './server.js';
 import { marksRef, moveMarks, Snapshot } from './snapshot.js';
 import type { Target } from './target.js';
+import { StackLines } from './stack-lines.js';
+import { StackConversation } from './stack-github.js';
+import { legWorkingCopies } from './stack.js';
 import '../viewer/core.js';
 
 const C = globalThis.ReviewCore;
@@ -53,7 +56,9 @@ export class ReviewSession {
   private reviewed: Set<string>;
   private readonly metrics = new Metrics();
   private lines: Record<string, number> | null = null;
-  private readonly github: PullRequestConversation | null;
+  private readonly github: PullRequestConversation | StackConversation | null;
+  private readonly stackLines: StackLines | null;
+  private readonly legWork: ReturnType<typeof legWorkingCopies>;
 
   constructor(
     private readonly target: Target,
@@ -71,6 +76,15 @@ export class ReviewSession {
     this.generatedRx = generatedPatterns(target.repo, target.headSha).map((g) => C.globToRegExp(g));
     const marks = marksRef(target.repo, page.snapshotKey);
     moveMarks(target.repo, marks);
+    if (target.stack && !gitMaybe(target.repo, 'rev-parse', '--verify', marks)) {
+      for (const leg of target.stack.legs.slice(1)) {
+        const from = gitMaybe(target.repo, 'rev-parse', '--verify', marksRef(target.repo, `pr-${leg.pr.number}`))?.trim();
+        if (!from) continue;
+        git(target.repo, 'update-ref', marks, from, '0'.repeat(40));
+        progress.note(`starting from your review of #${leg.pr.number}`);
+        break;
+      }
+    }
     this.snapshot = new Snapshot(target.repo, marks, target.baseSha, target.headSha, c);
     // Marks on parts of a change, the layout, and the blocks of the last commit this review wrote
     // live next to the review, for these commits only.
@@ -93,7 +107,13 @@ export class ReviewSession {
     this.cmarks = this.commitMarks(saved.cmarks);
     this.view = { layout: saved.layout, showReviewedDiff: saved.showReviewedDiff };
     const pr = target.pr;
-    this.github = pr && ghReady() ? new PullRequestConversation({ owner: pr.owner, repo: pr.repo, number: pr.number }, target.headSha) : null;
+    this.stackLines = target.stack ? new StackLines(target, history, c.files) : null;
+    this.legWork = legWorkingCopies(target, Object.hasOwn(target, 'work'));
+    this.github = pr && ghReady() ? this.stackLines ? new StackConversation(target, this.stackLines) : new PullRequestConversation({ owner: pr.owner, repo: pr.repo, number: pr.number }, target.headSha) : null;
+  }
+
+  async prepareStack(): Promise<void> {
+    await this.stackLines?.prepare();
   }
 
   // Rows changed since an older head, by that head: the diffs behind them don't change.
@@ -194,6 +214,9 @@ export class ReviewSession {
     const gh = this.github;
     return {
       repo: this.target.repo, base: this.target.baseSha, head: this.target.headSha, name, branch, checkout,
+      stack: this.target.stack ?? null,
+      leg: (at, thread) => (thread && gh instanceof StackConversation ? gh.legOf(thread) : null) ?? this.stackLines?.owner(at.path, at.side ?? 'RIGHT', at.line ?? null) ?? null,
+      legWork: this.legWork,
       change: (p, side, line) => this.changeAt(p, side, line),
       gh: gh ? {
         thread: (at, body, mode) => gh.postThread({ ...at, body }, mode),
@@ -203,7 +226,7 @@ export class ReviewSession {
         edit: (comment, body) => gh.editComment(comment, body),
         current: (comment) => gh.known(comment),
         pending: () => gh.knownPending(),
-        stale: () => gh.knownStale(),
+        stale: (pr) => gh instanceof StackConversation ? gh.knownStale(pr) : gh.knownStale(),
       } : null,
     };
   }
@@ -375,6 +398,16 @@ export class ReviewSession {
       return { data: { opened: file } };
     }
     if (route === 'github' && (method === 'GET' || method === 'POST')) {
+      const where = body as { action?: string; draft?: import('./github.js').Draft } | null;
+      if (method === 'POST' && where?.action === 'where') {
+        try {
+          if (!where.draft || !this.target.pr) throw new GitHubError('which pull request and line?');
+          const placed = this.stackLines?.place(where.draft);
+          return { data: placed ? { pr: placed.pr, line: placed.line, startLine: placed.startLine, side: placed.side } : { pr: this.target.pr.number, line: where.draft.line ?? null, startLine: where.draft.startLine ?? null, side: where.draft.side ?? 'RIGHT' } };
+        } catch (e) {
+          return { status: 400, data: { error: (e as Error).message } };
+        }
+      }
       if (!this.github) return { status: 404, data: { error: this.target.pr ? 'Comments from GitHub need the gh command line, logged in (gh auth login).' : 'This review has no pull request.' } };
       try {
         return { data: method === 'GET' ? await this.github.load() : await this.github.act(body as Action) };
