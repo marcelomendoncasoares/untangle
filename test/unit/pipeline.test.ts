@@ -100,7 +100,7 @@ describe('Given a generated part and a file listed in .review.yaml, ', () => {
 
   it(
     'when the generated patterns are read, '
-    + 'then the part adapter and the listed file are generated.',
+    + 'then the part adapter, pub get’s lock and the listed file are generated.',
     () => {
       assert.equal(generatedPatterns(repo!.dir, head).join('\n'), [
         '**/*.g.dart',
@@ -108,6 +108,7 @@ describe('Given a generated part and a file listed in .review.yaml, ', () => {
         '**/*.gr.dart',
         '**/*.config.dart',
         '**/*.mocks.dart',
+        '**/pubspec.lock',
         'lib/extra.dart',
       ].join('\n'));
     },

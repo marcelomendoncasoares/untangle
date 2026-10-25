@@ -141,6 +141,18 @@ links the changed code that uses it, and opens its generated files and its migra
 for its table in a peek. A reviewed model folds to its line; models in test packages fold at the
 end, outside the count, with no warnings.
 
+### Dependencies, on one page
+
+When a pull request changes a `pubspec.yaml`, the Dependencies view lists every one it changes.
+Above them, each change comes once, by dependency: the packages' own versions first, then
+dependencies, dev dependencies, overrides and the environment, each with how many pubspecs make
+it. Opened, a row lists those pubspecs, each a click from its line. Each pubspec is its YAML diff,
+marked as anywhere else, and once reviewed it folds to its line, with its changes in short;
+pubspecs in test packages fold at the end, outside the count. A committed `pubspec.lock` is set
+aside as generated: a change says what it resolved to, and the lock's other changes have a row.
+The view adds no warnings: `pub get` refuses what can't resolve, and `dart pub publish` says the
+rest.
+
 ### The commits, as a lens
 
 The Commits tab draws the pull request's commits as a graph. Pick one, or a range, and every view
@@ -345,11 +357,12 @@ adapters switch on by what the repository contains:
 | `protobuf`     | a `.proto`                       | `*.pb.dart`, `*.pbenum.dart`, `*.pbjson.dart`, `*.pbserver.dart`, `*.pbgrpc.dart` | the message in its `.proto`          |
 
 
-Files that `.gitattributes` marks `linguist-generated` are generated too. A `.review.yaml` at the
-repository's root, read at the pull request's head, adds patterns, turns an adapter on or off, or
-maps generated classes to YAML models of your own under `models`, as the Serverpod adapter does.
-Models under a folder named `test`, `tests`, `test_*` or `integration_test`, or in a package with
-test as a word in its name, are test models; `tests` names more folders:
+Files that `.gitattributes` marks `linguist-generated` are generated too, and so is a
+`pubspec.lock`, which pub get writes. A `.review.yaml` at the repository's root, read at the pull
+request's head, adds patterns, turns an adapter on or off, or maps generated classes to YAML models
+of your own under `models`, as the Serverpod adapter does. Models and pubspecs under a folder named
+`test`, `tests`, `test_*` or `integration_test`, or in a package with test as a word in its name,
+are in test packages; `tests` names more folders:
 
 ```yaml
 generated:

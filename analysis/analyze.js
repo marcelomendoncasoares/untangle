@@ -18,13 +18,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import YAML from 'yaml';
-import { ADAPTERS } from './adapters.js';
+import { ADAPTERS, SET_ASIDE } from './adapters.js';
 import { dartOpenings, dartParser } from './dart.js';
 import { readingUnits, testCall } from './units.js';
 import { testOutline } from './outline.js';
 import { assembleIntroducedChains } from './chains.js';
 import { commitFamilies, subjectParts } from './commits.js';
 import { MODEL_FILE, modelOpenings, readModels } from './models.js';
+import { readPubspecs } from './pubspecs.js';
 import { CALLABLE_KINDS, TYPE_KINDS, declarationAt, indexOf, memberAt as resolvedMemberAt, memberName } from './structure.js';
 
 const C = globalThis.ReviewCore;
@@ -260,7 +261,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
     const mappings = Object.entries(ADAPTERS).filter(([k]) => adapterOn[k]).map(([k, a]) => compileMapping(k, a.model))
       .concat((review.models || []).map((m, i) => compileMapping('.review.yaml models[' + i + ']', m)));
     const genRules = Object.entries(ADAPTERS).filter(([k]) => adapterOn[k]).flatMap(([k, a]) => a.generated.map((g) => [C.globToRegExp(g), k + ' adapter']))
-      .concat((review.generated || []).map((g) => [C.globToRegExp(g), '.review.yaml']));
+      .concat(SET_ASIDE.map(([g, why]) => [C.globToRegExp(g), why]), (review.generated || []).map((g) => [C.globToRegExp(g), '.review.yaml']));
     const mappingFor = (rel) => mappings.find((mp) => mp.generated.some((rx) => rx.test(rel)));
     // The repository's own packages, by name, for package: imports. Several pubspecs can share
     // a name (a template's copy, say): an import resolves to the one that has the imported file.
@@ -1591,6 +1592,13 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       grep: (side, pattern, specs) => gitGrep(side === 'left' ? meta.left : meta.right, pattern, specs),
       index: (f) => fileIndex.get(f),
     }) : [];
+    // The pubspecs it changes, for the Dependencies view: each read on both sides, the changes by
+    // dependency, and what a committed lock resolved.
+    const pubspecs = readPubspecs({
+      files, generated, review,
+      show: (side, p) => gitShow(side === 'left' ? meta.left : meta.right, p),
+      index: (f) => fileIndex.get(f),
+    });
     // By commit: each commit's chain, what started it and what changed it later. The last
     // family holds the same changes.
     const familiesOut = (h) => {
@@ -1668,11 +1676,12 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       chains: chains.map((c) => ({ id: c.id, name: c.name, kind: c.kind, rootKind: c.root ? c.root.kind : null, also: c.also.map(label).filter((x, i, a) => x !== c.name && a.indexOf(x) === i), blocks: [...c.blocks].map((b) => b.id).sort(), files: c.files, graph: c.graph, ext: history ? extOut(c) : undefined, links: c.links, uses: [...c.uses].sort((a, b) => a - b), shares: [...c.shares].sort((a, b) => a - b), depth: c.depth, family: c.family, adds: [...c.blocks].reduce((x, b) => x + b.adds, 0), dels: [...c.blocks].reduce((x, b) => x + b.dels, 0), focus: Object.fromEntries(Object.entries(c.focus).map(([k, v]) => [k, [...v].sort((x, y) => x - y)])) })),
       generated: generated.map((f) => { const at = startsIn(f); return { p: f.p, s: f.s, a: f.a, d: f.d, gen: f.gen, hunks: f.hunks ? f.hunks.map((h) => ({ o: h.o, n: h.n, h: h.h, ...at(h), rows: h.l.map((l) => [l[0], l.slice(1)]) })) : null }; }),
       models: models.length ? models : undefined,
+      deps: pubspecs || undefined,
     };
     out.compares[name] = ser;
     const inChain = new Set(chains.flatMap((c) => [...c.blocks]));
     if (history) log(`${name}: by commit, ${history.families.length} commit chains from ${PROVENANCE.commits.filter((c) => !c.merge).length} commits`);
-    log(`${name}: ${files.length} files, ${allBlocks.length} change blocks, ${edits.length} edits, ${groups.length} same-change groups (${groups.reduce((s, g) => s + g.edits.length, 0)} edits), ${chains.length} chains covering ${inChain.size} blocks, ${allBlocks.length - inChain.size} not in a chain, generated ${generated.length} (${generated.filter((g) => g.hunks).length} peekable)${models.length ? `, ${models.length} models (${models.filter((x) => x.test).length} in test packages, ${models.reduce((n, x) => n + x.warns.length, 0)} warnings)` : ''}`);
+    log(`${name}: ${files.length} files, ${allBlocks.length} change blocks, ${edits.length} edits, ${groups.length} same-change groups (${groups.reduce((s, g) => s + g.edits.length, 0)} edits), ${chains.length} chains covering ${inChain.size} blocks, ${allBlocks.length - inChain.size} not in a chain, generated ${generated.length} (${generated.filter((g) => g.hunks).length} peekable)${models.length ? `, ${models.length} models (${models.filter((x) => x.test).length} in test packages, ${models.reduce((n, x) => n + x.warns.length, 0)} warnings)` : ''}${pubspecs ? `, ${pubspecs.cards.length} pubspecs (${pubspecs.groups.length} changes by dependency)` : ''}`);
     chains.slice(0, 14).forEach((c) => log(`   chain ${String(c.blocks.size).padStart(3)} blocks · ${String(c.files).padStart(2)} files · ${c.graph.nodes.length} nodes · ${c.name}${c.also.length ? '  also: ' + c.also.map(label).join(', ') : ''}  links: ${c.links.length}`));
     const names = chains.map((c) => c.name); log('   duplicate chain names:', names.filter((n, i) => names.indexOf(n) !== i).length);
     groups.slice(0, 8).forEach((g) => { const e = edits[g.parts[0].edits[0].id]; log(`   group ×${g.count} ${e.op} in ${e.where}: ${e.from.slice(0, 40)} → ${e.to.slice(0, 40)}`); });

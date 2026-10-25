@@ -68,6 +68,7 @@
     graph: svg('<path d="M13.5 11h-1.729L8.438 6H9.5l.5-.5v-4L9.5 1h-4l-.5.5v4l.5.5h1.062l-3.333 5H1.5l-.5.5v3l.5.5h3l.5-.5v-3l-.5-.5h-.068L7.5 6.4l3.068 4.6H10.5l-.5.5v3l.5.5h3l.5-.5v-3l-.5-.5zM6 5V2h3v3H6zm-2 7v2H2v-2h2zm9 2h-2v-2h2v2z"/>'),
     chain: path1('M4.4 3h3.085a3.4 3.4 0 0 1 3.4 3.4v.205A3.4 3.4 0 0 1 7.485 10H7V9h.485A2.4 2.4 0 0 0 9.88 6.61V6.4A2.4 2.4 0 0 0 7.49 4H4.4A2.4 2.4 0 0 0 2 6.4v.205A2.394 2.394 0 0 0 4 8.96v1a3.4 3.4 0 0 1-3-3.35V6.4A3.405 3.405 0 0 1 4.4 3zM12 7.04v-1a3.4 3.4 0 0 1 3 3.36v.205A3.405 3.405 0 0 1 11.605 13h-3.09A3.4 3.4 0 0 1 5.12 9.61V9.4A3.4 3.4 0 0 1 8.515 6H9v1h-.485A2.4 2.4 0 0 0 6.12 9.4v.205A2.4 2.4 0 0 0 8.515 12h3.09A2.4 2.4 0 0 0 14 9.61V9.4a2.394 2.394 0 0 0-2-2.36z'),
     file: path1('M13.71 4.29l-3-3L10 1H4L3 2v12l1 1h9l1-1V5l-.29-.71zM13 14H4V2h5v4h4v8zm-3-9V2l3 3h-3z'),
+    deps: path1('M5.5 1.5h5l.5.5v5l-.5.5h-5L5 7V2l.5-.5zM6 2.5v4h4v-4H6zM1.5 8.5h5l.5.5v5l-.5.5h-5L1 14V9l.5-.5zM2 9.5v4h4v-4H2zM9.5 8.5h5l.5.5v5l-.5.5h-5L9 14V9l.5-.5zM10 9.5v4h4v-4h-4z'),
     symbol: svg('<path d="M13.51 4l-5-3h-1l-5 3-.49.86v6l.49.85 5 3h1l5-3 .49-.85v-6L13.51 4zm-6 9.56l-4.5-2.7V5.7l4.5 2.45v5.41zM3.27 4.7l4.74-2.84 4.74 2.84-4.74 2.59L3.27 4.7zm9.74 6.16l-4.5 2.7V8.15l4.5-2.45v5.16z"/>'),
     symbolClass: svg('<path d="M11.34 9.71h.71l2.67-2.67v-.71L13.38 5h-.7l-1.82 1.81h-5V5.56l1.86-1.85V3l-2-2H5L1 5v.71l2 2h.71l1.14-1.15v5.79l.5.5H10v.52l1.33 1.34h.71l2.67-2.67v-.71L13.37 10h-.7l-1.86 1.85h-5v-4H10v.48l1.34 1.38zm1.69-3.65l.63.63-2 2-.63-.63 2-2zm0 5l.63.63-2 2-.63-.63 2-2zM3.35 6.65l-1.29-1.3 3.29-3.29 1.3 1.29-3.3 3.3z"/>'),
     symbolField: svg('<path d="M14.45 4.5l-5-2.5h-.9l-7 3.5-.55.89v4.5l.55.9 5 2.5h.9l7-3.5.55-.9v-4.5l-.55-.89zm-8 8.64l-4.5-2.25V7.17l4.5 2v3.97zm.5-4.8L2.29 6.23l6.66-3.34 4.67 2.34-6.67 3.11zm7 1.55l-6.5 3.25V9.21l6.5-3v3.68z"/>'),
@@ -133,6 +134,9 @@
     // The Models view: which models it lists, the reviewed or test models opened, and the test
     // packages unfolded.
     modelsFilter: 'all', modelsOpen: new Set(), modelsTests: new Set(),
+    // The Dependencies view: the rows of its block opened (its cards fold and open as the Models
+    // view's do).
+    depsOpen: new Set(),
     search: { q: '', scope: 'unreviewed' },
     // Files shown whole, lines shown around each section of a diff ({ above, below } by its key),
     // and folders closed in the Files tab.
@@ -1710,7 +1714,7 @@
       const g = !f && m.generated.find((x) => x.p === v.path);
       if (f) fileItems(f, false);
       else if (g) fileItems(g, true);
-    } else if (v.kind === 'standalone' || v.kind === 'group' || v.kind === 'tests' || v.kind === 'models') showing();
+    } else if (v.kind === 'standalone' || v.kind === 'group' || v.kind === 'tests' || v.kind === 'models' || v.kind === 'deps') showing();
     else if (v.kind === 'source') {
       const s = sources.get(srcKey(v)) || {};
       const ed = editorItem({ side: v.side, p: v.path, ext: v.ext, abs: s.abs, line: v.line || 1 });
@@ -4002,7 +4006,7 @@
     if (v.kind === 'chain') return m.chains[v.id] ? m.chains[v.id].name : 'the chain';
     if (v.kind === 'file') return fileName(v.path);
     if (v.kind === 'source') return v.ext != null ? v.label || 'the file' : fileName(v.path || '');
-    return { map: 'the chain map', standalone: 'Not in a chain', group: 'the same change', search: 'the search', conversation: 'the conversation', history: 'History', tests: 'Tests', models: 'Models' }[v.kind] || 'the view before';
+    return { map: 'the chain map', standalone: 'Not in a chain', group: 'the same change', search: 'the search', conversation: 'the conversation', history: 'History', tests: 'Tests', models: 'Models', deps: 'Dependencies' }[v.kind] || 'the view before';
   }
   // As a render starts: a view that isn't the step's is a new step, and the step it leaves keeps
   // where it was scrolled.
@@ -5182,7 +5186,7 @@
   function modelCardHtml(md) {
     const f = modelFile(md), st = stats(f.blocks), done = st.total > 0 && !st.open;
     const foldable = done || md.test, open = !foldable || state.modelsOpen.has(f.p);
-    const legs = modelLegs(f).map((n) => { const l = legOf(n); return `<span class="md-chip leg${onLeg(n) ? ' on' : ''}" title="${esc(`Changed in #${n}${l ? `: ${l.title}` : ''}`)}">#${n}</span>`; }).join('');
+    const legs = legChipsHtml(f);
     const warned = md.warns.length ? `<span class="md-chip warn" title="${esc(plural(md.warns.length, 'warning'))}: what can break">${ICON.warn}${md.warns.length}</span>` : '';
     const tick = st.total ? `<button type="button" class="tick md-tick${done ? ' on' : st.open < st.total ? ' part' : ''}" data-act="mark-file" data-file="${f.idx}" title="${done ? 'Reviewed: mark the model unreviewed' : 'Mark the whole model reviewed'}" aria-label="${done ? 'Mark the model unreviewed' : 'Mark the model reviewed'}" aria-pressed="${done}"></button>` : '';
     const label = `<span class="md-nm">${esc(md.name)}</span><span class="md-fp">${esc(md.rel)}</span>`;
@@ -5247,6 +5251,139 @@
         + (open ? list.map(modelCardHtml).join('') : '') + '</div>';
     });
     return h;
+  }
+  // ---------- the Dependencies view: every pubspec.yaml the review changes, on one page. Above the
+  // cards, each change once, by dependency (the packages' versions first, then a section each for
+  // dependencies, dev dependencies, overrides and the environment), with how many pubspecs make it;
+  // opened, a row lists them, each a click from its line. Where the repository commits a
+  // pubspec.lock, a change says what it resolved to, and the lock's other changes have a row. Each
+  // pubspec is its YAML diff, marked as anywhere else: a reviewed one folds to its line, and test
+  // packages' fold at the end, outside the count. No warnings: pub get and pub publish say them.
+  const depsData = () => M().raw.deps || null;
+  const depFile = (c) => M().files[c.f];
+  // The pubspecs in the lens: the test packages' apart, and how many of the others are left.
+  function depsNow() {
+    const d = depsData();
+    const seen = d ? d.cards.filter((c) => !lensOn() || stats(depFile(c).blocks).total) : [];
+    const main = seen.filter((c) => !c.test);
+    return { all: seen, main, tests: seen.filter((c) => c.test), left: main.filter((c) => stats(depFile(c).blocks).open).length };
+  }
+  const DEP_SECTIONS = [['dependencies', 'Dependencies'], ['dev_dependencies', 'Dev dependencies'], ['dependency_overrides', 'Overrides'], ['environment', 'Environment']];
+  const depsTestsKey = 'deps:tests';
+  // A change as the block shows it: what it was, and what it is.
+  const depChange = (old, nu) => (old != null && nu != null ? `<code class="from">${esc(old)}</code><span class="ar">→</span><code class="to">${esc(nu)}</code>`
+    : nu != null ? `added <code class="to">${esc(nu)}</code>` : `removed <code class="from">${esc(old)}</code>`);
+  // What a lock resolved a change to, before and after.
+  const resWords = (res) => (!res ? '' : `<span class="dp-res" title="What pubspec.lock resolved it to">${res[0] == null ? `resolves to ${esc(res[1])}` : res[1] == null ? `resolved ${esc(res[0])} before` : res[0] === res[1] ? `resolved ${esc(res[1])}` : `resolved ${esc(res[0])} → ${esc(res[1])}`}</span>`);
+  // Whether the lens shows a pubspec's change: the row that wrote its line, on its side.
+  function changeInLens(f, x) {
+    if (!lensOn()) return true;
+    if (!x || x.line == null) return false;
+    for (let hi = 0; hi < f.hunks.length; hi++) {
+      const h = f.hunks[hi];
+      let o = h.o, n = h.n;
+      for (let ri = 0; ri < h.rows.length; ri++) {
+        const t = h.rows[ri][0];
+        if (x.side === 'LEFT' ? t === '-' && o === x.line : t === '+' && n === x.line) return rowInLens(f, hi, ri);
+        if (t !== '+') o++;
+        if (t !== '-') n++;
+      }
+    }
+    return false;
+  }
+  // The block above the cards, for the changes in the lens.
+  function depsBlockHtml(now) {
+    const d = depsData(), byF = new Map(now.all.map((c) => [c.f, c]));
+    const changeOf = (c, g) => c.changes.find((x) => x.sec === g.sec && x.dep === g.dep && x.old === g.old && x.new === g.new);
+    const item = (c, ln, side, res) => `<button type="button" class="dp-pub" data-act="deps-goto" data-file="${c.f}"${ln ? ` data-line="${ln}" data-side="${side}"` : ''} title="${esc(depFile(c).p + (ln ? ':' + ln : ''))}"><span class="pn">${esc(c.name)}</span><span class="pd">${esc(c.dir || 'the root')}</span><span class="pl">${res ? resWords(res) + ' · ' : ''}${ln ? `line ${ln}` : ''}</span></button>`;
+    const row = (key, name, change, count, list) => {
+      const open = state.depsOpen.has(key);
+      return `<button type="button" class="dp-dep" data-act="deps-row" data-k="${esc(key)}" aria-expanded="${open}"><span class="car">${open ? ICON.chevronDown : ICON.chevronRight}</span>${name}<span class="ch">${change}</span><span class="n">${count}</span></button>`
+        + (open ? `<div class="dp-pubs">${list()}</div>` : '');
+    };
+    let h = '', changes = 0, versions = '';
+    // The packages' own versions: a group of their own, a row per change, named by their key.
+    d.versions.forEach((v, i) => {
+      const cards = v.f.map((f) => byF.get(f)).filter((c) => c && changeInLens(depFile(c), { side: 'RIGHT', line: c.vline }));
+      if (cards.length) versions += row('v' + i, '<code class="nm">version</code>', depChange(v.old, v.new), plural(cards.length, 'package'), () => cards.map((c) => item(c, c.vline, 'RIGHT')).join(''));
+    });
+    if (versions) h += '<div class="dp-by-s"><span>Package versions</span></div>' + versions;
+    DEP_SECTIONS.forEach(([sec, title]) => {
+      let rows = '', n = 0;
+      d.groups.forEach((g, i) => {
+        if (g.sec !== sec) return;
+        const cards = g.f.map((f) => byF.get(f)).filter((c) => c && changeInLens(depFile(c), changeOf(c, g)));
+        if (!cards.length) return;
+        n++;
+        // What it resolved to, on the row when every pubspec says the same, else on each.
+        const rs = cards.map((c) => (changeOf(c, g) || {}).res);
+        const same = rs.every((r) => r && rs[0] && r[0] === rs[0][0] && r[1] === rs[0][1]);
+        rows += row('g' + i, `<code class="nm">${esc(g.dep)}</code>`, depChange(g.old, g.new) + (same ? resWords(rs[0]) : ''), plural(cards.length, 'pubspec'), () => cards.map((c) => { const x = changeOf(c, g) || {}; return item(c, x.line, x.side, same ? null : x.res); }).join(''));
+      });
+      if (n) h += `<div class="dp-by-s"><span>${title}</span><span>${n}</span></div>` + rows;
+      changes += n;
+    });
+    // A lock's other changes: what resolved differently that no row above says.
+    const locks = (d.locks || []).filter((l) => now.all.some((c) => c.lock === l.p));
+    if (locks.length) {
+      h += `<div class="dp-by-s"><span>Resolved in pubspec.lock</span><span>${locks.length}</span></div>`;
+      locks.forEach((l, i) => { h += row('l' + i, `<code class="nm">${esc(l.p)}</code>`, 'other packages, resolved differently', plural(l.others.length, 'package'), () => l.others.map((o) => `<div class="dp-pub"><span class="pn">${esc(o.dep)}</span><span class="pd"></span><span class="pl">${depChange(o.old, o.new)}</span></div>`).join('')); });
+    }
+    return `<div class="dp-wrap"><div class="dp-by"><div class="dp-by-h">By dependency<span>${plural(changes, 'change')} in ${plural(now.all.length, 'pubspec')}</span></div>${h}</div></div>`;
+  }
+  // In a stack, the pull requests whose commits wrote a model's or a pubspec's lines, as chips.
+  const legChipsHtml = (f) => modelLegs(f).map((n) => { const l = legOf(n); return `<span class="md-chip leg${onLeg(n) ? ' on' : ''}" title="${esc(`Changed in #${n}${l ? `: ${l.title}` : ''}`)}">#${n}</span>`; }).join('');
+  // A pubspec's card: its line, which stays on top while its diff scrolls by, then its diff.
+  function depCardHtml(c) {
+    const f = depFile(c), st = stats(f.blocks), done = st.total > 0 && !st.open;
+    const foldable = done || c.test, open = !foldable || state.modelsOpen.has(f.p);
+    const tick = st.total ? `<button type="button" class="tick md-tick${done ? ' on' : st.open < st.total ? ' part' : ''}" data-act="mark-file" data-file="${f.idx}" title="${done ? 'Reviewed: mark the pubspec unreviewed' : 'Mark the whole pubspec reviewed'}" aria-label="${done ? 'Mark the pubspec unreviewed' : 'Mark the pubspec reviewed'}" aria-pressed="${done}"></button>` : '';
+    const label = `<span class="md-nm">${esc(c.name)}</span><span class="md-fp">${esc(f.p)}</span>`;
+    const name = foldable ? `<button type="button" class="md-open" data-act="model-open" data-model="${esc(f.p)}" aria-expanded="${open}" title="${open ? 'Fold it' : 'Open it'}">${label}${open ? '' : `<span class="md-sum">${esc(c.sum)}</span>`}</button>` : label;
+    const legs = legChipsHtml(f);
+    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}<span class="sp"></span>${legs}${tick}</div></section>`;
+    const chips = (c.st === 'A' ? '<span class="md-chip new">new</span>' : c.st === 'D' ? '<span class="md-chip gone">removed</span>' : '')
+      + (c.version ? `<span class="md-chip">${esc(c.version[0] ?? 'no version')} → ${esc(c.version[1] ?? 'no version')}</span>` : '')
+      + (c.root ? '<span class="md-chip">the workspace</span>' : c.outside ? '<span class="md-chip">outside the workspace</span>' : '');
+    const ctx = { key: 'deps' };
+    return `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}${chips}<span class="sp"></span>${legs}${tick}</div>`
+      + `<div class="md-diff"><div class="code" data-p="${esc(f.p)}">${sectionsHtml(f, f.hunks.map((hk, hi) => sectionOf(f, hi, 0, hk.rows.length, ctx)), ctx)}</div></div></section>`;
+  }
+  // What the test packages' pubspecs all change, when it's one constraint, as their folded line says.
+  function depsSharedHtml(list) {
+    if (list.length === 1) return `${codeIn(list[0].name)}, ${esc(list[0].sum)}`;
+    const news = new Set(list.flatMap((c) => c.changes.filter((x) => x.sec !== 'environment').map((x) => x.new)));
+    return news.size === 1 && !news.has(null) ? `each takes ${codeIn([...news][0])} for the dependencies it changes` : 'each changes its dependencies';
+  }
+  function renderDeps() {
+    const now = depsNow();
+    const counts = now.main.length ? (now.left === now.main.length ? `${plural(now.main.length, 'pubspec')} changed` : now.left ? `${now.left} of ${plural(now.main.length, 'pubspec')} left` : `All ${plural(now.main.length, 'pubspec')} reviewed`) : '';
+    const facts = [counts, now.tests.length ? `${plural(now.tests.length, 'pubspec')} in test packages, folded` : ''].filter(Boolean).join(' · ');
+    let h = headerHtml({ crumbs: '<b class="ui">Dependencies</b>', facts: facts || (lensOn() ? 'Nothing in the lens' : 'No pubspec changes'), nav: true });
+    if (!now.all.length) return h + `<div class="empty">${depsData() ? 'No pubspec changes in the lens.' : 'No pubspec.yaml changed in this comparison.'}</div>`;
+    h += depsBlockHtml(now);
+    if (now.main.length) h += `<div class="md-cards">${now.main.map(depCardHtml).join('')}</div>`;
+    if (now.tests.length) {
+      const open = state.modelsTests.has(depsTestsKey);
+      h += `<div class="md-pkg">Test packages<span>${plural(now.tests.length, 'pubspec')}, outside the count</span></div><div class="md-cards">`
+        + `<button type="button" class="md-tg" data-act="models-tests" data-pkg="${depsTestsKey}" aria-expanded="${open}"><span class="car">${open ? ICON.chevronDown : ICON.chevronRight}</span><span><b>${plural(now.tests.length, 'pubspec')}</b>, folded: ${depsSharedHtml(now.tests)}</span><span class="md-tg-x">${open ? 'Fold' : 'Open'}</span></button>`
+        + (open ? now.tests.map(depCardHtml).join('') : '') + '</div>';
+    }
+    return h;
+  }
+  // A pubspec in a row's list: its card opened, if it was folded, and its line brought into view.
+  function depsGoto(fi, line, side) {
+    const c = ((depsData() || {}).cards || []).find((x) => x.f === fi), f = M().files[fi];
+    if (!c || !f) return;
+    const st = stats(f.blocks);
+    if ((st.total > 0 && !st.open) || c.test) state.modelsOpen.add(f.p);
+    if (c.test) state.modelsTests.add(depsTestsKey);
+    render();
+    const card = [...main.querySelectorAll('.md-card[data-model]')].find((x) => x.dataset.model === f.p);
+    if (!card) return;
+    const row = !line ? null : side === 'LEFT' ? [...card.querySelectorAll('.ln.del, .sl')].find((r) => (r.querySelector('.no') || {}).textContent === String(line))
+      : card.querySelector(`.ln[data-n="${line}"], .sl[data-n="${line}"]`);
+    glideTo(row || card, headH() + 64);
   }
   function renderMap(famId) {
     const m = M();
@@ -6051,6 +6188,11 @@
         const said = mn.main.length ? `${plural(mn.main.length, 'model')} changed, ${mn.left ? `${mn.left} to review` : 'all reviewed'}` : 'Only models in test packages changed';
         pin += `<button type="button" class="sb-row map" data-act="models-open"${v.kind === 'models' ? ' aria-current="true"' : ''} title="The Serverpod models the review adds, changes or removes, on one page: ${said}"><span class="tw">${ICON.symbol}</span><span class="nm ui">Models</span><span class="cnt">${mn.main.length ? (mn.left || `<span class="md-all" aria-label="all reviewed">${ICON.check}</span>`) : ''}</span></button>`;
       }
+      if (depsData()) {
+        const dn = depsNow();
+        const said = dn.main.length ? `${plural(dn.main.length, 'pubspec')} changed, ${dn.left ? `${dn.left} to review` : 'all reviewed'}` : 'Only pubspecs in test packages changed';
+        pin += `<button type="button" class="sb-row map" data-act="deps-open"${v.kind === 'deps' ? ' aria-current="true"' : ''} title="Every pubspec.yaml the review changes, on one page, by dependency: ${said}"><span class="tw">${ICON.deps}</span><span class="nm ui">Dependencies</span><span class="cnt">${dn.main.length ? (dn.left || `<span class="md-all" aria-label="all reviewed">${ICON.check}</span>`) : ''}</span></button>`;
+      }
       if (m.byCommit) {
         // A commit's chain is one row, in the order the commits were made; renames come last.
         h += m.families.filter((f) => !f.same).map((f) => row(f.chains[0], 0, 0)).join('');
@@ -6373,7 +6515,7 @@
     if (away) snap.away = { key: h.away, items: awayOf(away), h: away.parentElement.getBoundingClientRect().height };
     if (h && h.ol != null) snap.ol = olSnap(h);
     else if (h && h.olf != null) snap.ol = olSnapFile(h.olf, !!h.mark);
-    if (h && (h.mark || h.model) && state.view.kind === 'models') snap.cards = mdSnap();
+    if (h && (h.mark || h.model) && (state.view.kind === 'models' || state.view.kind === 'deps')) snap.cards = mdSnap();
     if (h && h.modelsTests != null) snap.tg = mdTgSnap(h.modelsTests);
     return snap;
   }
@@ -6857,7 +6999,7 @@
     lit = '';
     const page = document.createElement('template');
     try {
-      page.innerHTML = v.kind === 'chain' ? renderChain(v.id) : v.kind === 'map' ? renderMap(v.family) : v.kind === 'standalone' ? renderStandalone() : v.kind === 'group' ? renderGroup(v.id) : v.kind === 'search' ? renderSearch() : v.kind === 'source' ? renderSource(v) : v.kind === 'conversation' ? renderConversation() : v.kind === 'history' ? renderHistory() : v.kind === 'tests' ? renderTests() : v.kind === 'models' ? renderModels() : renderFile(v.path);
+      page.innerHTML = v.kind === 'chain' ? renderChain(v.id) : v.kind === 'map' ? renderMap(v.family) : v.kind === 'standalone' ? renderStandalone() : v.kind === 'group' ? renderGroup(v.id) : v.kind === 'search' ? renderSearch() : v.kind === 'source' ? renderSource(v) : v.kind === 'conversation' ? renderConversation() : v.kind === 'history' ? renderHistory() : v.kind === 'tests' ? renderTests() : v.kind === 'models' ? renderModels() : v.kind === 'deps' ? renderDeps() : renderFile(v.path);
     } catch (e) {
       page.innerHTML = `<div class="empty">This view failed to render: ${esc(e && e.message ? e.message : String(e))}. Reloading the page may help; if not, it’s a bug in untangle.</div>`;
       console.error(e);
@@ -7246,7 +7388,7 @@
   }
   // The review pill: where you are among the view's changes to review, and the action that does
   // the most, marking the change and going to the next.
-  const PILL_VIEWS = new Set(['chain', 'file', 'standalone', 'group', 'tests', 'models']);
+  const PILL_VIEWS = new Set(['chain', 'file', 'standalone', 'group', 'tests', 'models', 'deps']);
   let pillHtml = '';
   const openIn = (el) => stopAdds.get(el) || 1;
   function renderPill() {
@@ -7656,7 +7798,7 @@
         const st = stats(blocksOf(c.blocks)), n = splitName(c.name);
         out.chains.push({ score: r.score + (st.open ? 40 : 0) - c.depth, icon: ICON.chain, html: (n.own ? `<span class="own">${matched(n.own, r.at)}</span>` : '') + matched(n.name, r.at, n.own.length), hint: st.open ? `${st.open} to review` : 'reviewed', go: goView({ kind: 'chain', id: c.id }, 'chains') });
       });
-      [['Chain map', { kind: 'map', family: null }, ICON.map], ['Not in a chain', { kind: 'standalone' }, ICON.chain], ...(modelsAll().length ? [['Models', { kind: 'models' }, ICON.symbol]] : [])].forEach(([label, v, icon]) => {
+      [['Chain map', { kind: 'map', family: null }, ICON.map], ['Not in a chain', { kind: 'standalone' }, ICON.chain], ...(modelsAll().length ? [['Models', { kind: 'models' }, ICON.symbol]] : []), ...(depsData() ? [['Dependencies', { kind: 'deps' }, ICON.deps]] : [])].forEach(([label, v, icon]) => {
         const r = q && fuzzy(label, q);
         if (r) out.chains.push({ score: r.score - 100, icon, ui: true, html: matched(label, r.at), hint: '', go: goView(v, 'chains') });
       });
@@ -8319,6 +8461,9 @@
     if (act === 'tests-open') { state.view = { kind: 'tests' }; state.peek = null; state.focus = null; return render({ top: true }); }
     if (act === 'tests-filter') { state.testsFilter = d.v; return render({ top: true }); }
     if (act === 'models-open') { state.view = { kind: 'models' }; state.peek = null; state.focus = null; return render({ top: true }); }
+    if (act === 'deps-open') { state.view = { kind: 'deps' }; state.peek = null; state.focus = null; return render({ top: true }); }
+    if (act === 'deps-row') { toggleIn(state.depsOpen, d.k); return render(); }
+    if (act === 'deps-goto') return depsGoto(Number(d.file), d.line ? Number(d.line) : null, d.side);
     if (act === 'models-filter') { state.modelsFilter = d.v; return render({ top: true }); }
     if (act === 'models-tests') { hint({ modelsTests: d.pkg }); toggleIn(state.modelsTests, d.pkg); return render(); }
     if (act === 'model-open') { hint({ model: d.model }); toggleIn(state.modelsOpen, d.model); return render(); }
@@ -8936,7 +9081,7 @@
     const m = M(), t = stats(m.files.flatMap((f) => f.blocks)), v = state.view;
     const pr = CONFIG.url && /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(CONFIG.url);
     const size = `${plural(m.files.length, 'file')} · ${plural(m.chains.length, 'chain')}${m.byCommit ? ', by commit' : ''} · ${plural(t.total, 'change')}, ${t.open} to review`;
-    const kind = { map: 'the chain map', chain: 'a chain', file: 'a file', standalone: 'Not in a chain', group: 'a same change', tests: 'the Tests view', models: 'the Models view', history: 'History', search: 'a search', conversation: 'the conversation', source: 'a file’s source' }[v.kind] || v.kind;
+    const kind = { map: 'the chain map', chain: 'a chain', file: 'a file', standalone: 'Not in a chain', group: 'a same change', tests: 'the Tests view', models: 'the Models view', deps: 'the Dependencies view', history: 'History', search: 'a search', conversation: 'the conversation', source: 'a file’s source' }[v.kind] || v.kind;
     // A fold by its label, without the names and counts after it.
     const folded = [...main.querySelectorAll('.ol-fold[aria-expanded="false"]')].map((el) => `${el.textContent.split(/[:·]/)[0].trim()} folded`);
     const pill = $('#vw-pill');
@@ -9059,6 +9204,7 @@
       else if (r.kind === 'history' && HX) state.view = { kind: 'history' };
       else if (r.kind === 'tests') state.view = { kind: 'tests' };
       else if (r.kind === 'models' && (MODEL.compares.base.models || []).length) state.view = { kind: 'models' };
+      else if (r.kind === 'deps' && MODEL.compares.base.deps) state.view = { kind: 'deps' };
       if (r.from && CONFIG.head && r.from !== CONFIG.head) glowFrom = r.from;
       if (r.lens && HX && r.lens.kind === 'commits') { const shas = (r.lens.shas || []).filter((x) => HX.index.has(x)); if (shas.length) state.lens = { kind: 'commits', shas }; }
       else if (r.lens && HX && r.lens.kind === 'since' && r.lens.from) resumeSince = r.lens;

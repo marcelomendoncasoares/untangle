@@ -23,10 +23,14 @@ export const ADAPTERS = {
   },
 };
 
-// Generated-file patterns of the adapters on for a repository's files, plus .review.yaml's,
-// each with where it comes from.
+// Files set aside as generated whatever adapters are on, each with what writes it: pub get writes
+// a pubspec.lock, and the Dependencies view says what it resolved.
+export const SET_ASIDE = [['**/pubspec.lock', 'pub get']];
+
+// Generated-file patterns of the adapters on for a repository's files, the files set aside, and
+// .review.yaml's, each with where it comes from.
 export function generatedGlobs(paths, review) {
   const on = (k) => (review && review.adapters && k in review.adapters ? !!review.adapters[k] : paths.some((p) => ADAPTERS[k].detect.test(p)));
   return Object.keys(ADAPTERS).filter(on).flatMap((k) => ADAPTERS[k].generated.map((g) => [g, k + ' adapter']))
-    .concat(((review && review.generated) || []).map((g) => [g, '.review.yaml']));
+    .concat(SET_ASIDE, ((review && review.generated) || []).map((g) => [g, '.review.yaml']));
 }

@@ -43,7 +43,7 @@ function fingerprint(files: string[]): string {
   return h.digest('hex').slice(0, 16);
 }
 const EXTRACTION_STAGE = ['dist/analyzer/client.js', 'dist/analyzer/extract.js', 'analyzer/bin/extract.dart', 'analyzer/pubspec.lock', 'dist/pipeline/diff.js', 'dist/pipeline/definitions.js', 'dist/pipeline/links.js', 'dist/model-definitions.js', 'analysis/adapters.js'];
-const MODEL_STAGE = ['analysis/analyze.js', 'analysis/dart.js', 'analysis/models.js', 'analysis/units.js', 'analysis/structure.js', 'analysis/chains.js', 'analysis/commits.js', 'analysis/outline.js', 'dist/provenance.js'];
+const MODEL_STAGE = ['analysis/analyze.js', 'analysis/dart.js', 'analysis/models.js', 'analysis/pubspecs.js', 'analysis/units.js', 'analysis/structure.js', 'analysis/chains.js', 'analysis/commits.js', 'analysis/outline.js', 'dist/provenance.js'];
 
 /** What chains follow: the commits that started each change, or the code's structure alone. */
 export type ChainsBy = 'history' | 'structure';
