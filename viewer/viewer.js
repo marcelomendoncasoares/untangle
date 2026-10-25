@@ -6155,6 +6155,8 @@
     if (away) snap.away = { key: h.away, items: awayOf(away), h: away.parentElement.getBoundingClientRect().height };
     if (h && h.ol != null) snap.ol = olSnap(h);
     else if (h && h.olf != null) snap.ol = olSnapFile(h.olf, !!h.mark);
+    if (h && (h.mark || h.model) && state.view.kind === 'models') snap.cards = mdSnap();
+    if (h && h.modelsTests != null) snap.tg = mdTgSnap(h.modelsTests);
     return snap;
   }
   // An outline's pieces, keyed so two drawings of it line up: its rows by call, a row's code by its
@@ -6225,6 +6227,65 @@
     let grow = [];
     for (const x of now) { if (had.has(x.k)) { growRows(grow, 0, wait); grow = []; } else grow.push(x.el); }
     growRows(grow, 0, wait);
+  }
+  // The Models page's cards on screen, before a mark or a fold: whether each is open, how tall it
+  // is, and what's under its line.
+  function mdSnap() {
+    const box = main.getBoundingClientRect(), out = new Map();
+    main.querySelectorAll('.md-card[data-model]').forEach((c) => {
+      const r = c.getBoundingClientRect();
+      if (r.bottom > box.top && r.top < box.bottom) out.set(c.dataset.model, { open: !c.classList.contains('fold'), h: r.height, body: [...c.children].filter((x) => !x.matches('.md-h')) });
+    });
+    return out;
+  }
+  // A card drawn again, folded or opened. Folding, what was under its line closes into it (settling
+  // as reviewed first, when a mark folded it) as the card's box eases into the line's; opening, it
+  // grows down from its line as the box comes back.
+  function mdMotion(cards, settle) {
+    // The box drawn as it was, at once, then easing to what it is: from closing (open) or opening
+    // (folded).
+    const ease = (c, from) => {
+      c.classList.add(from);
+      c.getBoundingClientRect();
+      c.classList.add('easing');
+      return () => { c.classList.remove(from); setTimeout(() => c.classList.remove('easing'), 240); };
+    };
+    cards.forEach((was, p) => {
+      const c = [...main.querySelectorAll('.md-card[data-model]')].find((x) => x.dataset.model === p);
+      const head = c && c.querySelector(':scope > .md-h');
+      if (!head || was.open === !c.classList.contains('fold')) return;
+      if (!was.open) {
+        ease(c, 'opening')();
+        growRows([...c.children].filter((x) => x !== head), 0);
+        return;
+      }
+      const eased = ease(c, 'closing'), wait = settle ? 160 : 0;
+      const ghost = closeGap(head, Math.max(0, was.h - c.getBoundingClientRect().height), was.body, wait);
+      if (settle) {
+        ghost.querySelectorAll('.tick:not(.on)').forEach((t) => { t.classList.remove('part'); t.classList.add('on'); popTick(t); });
+        requestAnimationFrame(() => ghost.classList.add('settle'));
+        const t = head.querySelector('.md-tick.on');
+        if (t) popTick(t);
+      } else fadeOut(ghost);
+      setTimeout(eased, wait);
+      const sum = head.querySelector('.md-sum');
+      if (sum) fadeIn(sum);
+    });
+  }
+  // A test package's models, before its line is clicked: what follows the line, and how tall.
+  const mdTg = (pkg) => [...main.querySelectorAll('.md-tg[data-pkg]')].find((x) => x.dataset.pkg === pkg) || null;
+  const mdTgItems = (tg) => { const out = []; for (let el = tg.nextElementSibling; el; el = el.nextElementSibling) out.push(el); return out; };
+  function mdTgSnap(pkg) {
+    const tg = mdTg(pkg);
+    return tg ? { pkg, items: mdTgItems(tg), h: tg.parentElement.getBoundingClientRect().height } : null;
+  }
+  // Folded, they close up under the line, fading; opened, they open downward from it.
+  function mdTgMotion(o) {
+    const tg = mdTg(o.pkg);
+    if (!tg) return;
+    const items = mdTgItems(tg), h = tg.parentElement.getBoundingClientRect().height;
+    if (o.h - h > 3 && o.items.length && !items.length) fadeOut(closeGap(tg, o.h - h, o.items));
+    else if (h - o.h > 3 && items.length && !o.items.length) growRows(items, 0);
   }
   // While the page's own motion opens or closes something, the browser doesn't move the page to
   // keep what's below it in place. It anchors on what isn't sticky, and an outline's rows and a
@@ -6356,6 +6417,8 @@
     }
     if (snap.hint && snap.hint.more) moreMotion(snap.hint.more);
     if (snap.ol) olMotion(snap.ol);
+    if (snap.cards) mdMotion(snap.cards, !!(snap.hint && snap.hint.mark));
+    if (snap.tg) mdTgMotion(snap.tg);
     peekMotion(snap);
     detailMotion(snap);
     snap.threads.forEach((was, id) => { const el = thEl(id); if (el) threadMotion(was, el); });
@@ -8026,8 +8089,8 @@
     if (act === 'tests-filter') { state.testsFilter = d.v; return render({ top: true }); }
     if (act === 'models-open') { state.view = { kind: 'models' }; state.peek = null; state.focus = null; return render({ top: true }); }
     if (act === 'models-filter') { state.modelsFilter = d.v; return render({ top: true }); }
-    if (act === 'models-tests') { toggleIn(state.modelsTests, d.pkg); return render(); }
-    if (act === 'model-open') { toggleIn(state.modelsOpen, d.model); return render(); }
+    if (act === 'models-tests') { hint({ modelsTests: d.pkg }); toggleIn(state.modelsTests, d.pkg); return render(); }
+    if (act === 'model-open') { hint({ model: d.model }); toggleIn(state.modelsOpen, d.model); return render(); }
     if (act === 'model-peek') {
       const same = state.peek && state.peek.model === d.model && state.peek.path === d.path;
       state.peek = same ? null : { model: d.model, kind: d.kind, path: d.path };

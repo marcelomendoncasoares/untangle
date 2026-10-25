@@ -120,25 +120,64 @@ describe('Given a review that changes a model and its migration, adds a long one
     });
   });
 
-  describe('when the model’s mark is clicked, ', () => {
+  describe('when the model’s mark is clicked, with motion on, ', () => {
+    let moving = '';
+
     before(async () => {
       await page.eval(`document.querySelector('#vw-main').scrollTop = 0`);
+      await page.reducedMotion(false);
       await page.click(`${card(invoice)} .md-tick`);
-      await page.until(`document.querySelector('${card(invoice)}').classList.contains('fold')`);
+      moving = await read(page, `(() => {
+        const ghost = document.querySelector('${card(invoice)} > .ghost'), marks = ghost ? ghost.querySelectorAll('.tick.on').length : 0;
+        return [ghost && ghost.previousElementSibling.matches('.md-h') && ghost.querySelector('.md-diff') ? 'its diff closing under its line' : 'no stand-in', marks + ' mark' + (marks === 1 ? '' : 's') + ' on in it'].join(', ');
+      })()`);
+      await page.until(`!document.querySelector('#vw-main .ghost') && !document.querySelector('${card(invoice)}').classList.contains('easing')`);
+      await page.reducedMotion(true);
+    });
+
+    it('then its diff settles as reviewed and closes into its line.', () => {
+      assert.equal(moving, 'its diff closing under its line, 1 mark on in it');
     });
 
     it('then it folds to its line, with what changed in short, and the row counts one left.', async () => {
+      assert.equal(await read(page, `document.querySelector('${card(invoice)}').className`), 'md-card fold done');
       assert.equal(await read(page, `document.querySelector('${card(invoice)} .md-sum').textContent`), '+ currency');
       assert.equal(await read(page, `document.querySelector('[data-act="models-open"] .cnt').textContent`), '1');
     });
   });
 
-  describe('when the test package is opened, then its model, ', () => {
+  describe('when its line is clicked, with motion on, ', () => {
+    let moving = '';
+
     before(async () => {
+      await page.reducedMotion(false);
+      await page.click(`${card(invoice)} .md-open`);
+      moving = await read(page, `(() => { const grow = document.querySelector('${card(invoice)} > .grow'); return grow && grow.previousElementSibling.matches('.md-h') && grow.querySelector('.md-diff') ? 'its diff opening under its line' : 'no motion'; })()`);
+      await page.until(`!document.querySelector('#vw-main .grow') && !document.querySelector('${card(invoice)}').classList.contains('easing')`);
+      await page.reducedMotion(true);
+    });
+
+    it('then its diff opens down from its line.', async () => {
+      assert.equal(moving, 'its diff opening under its line');
+      assert.equal(await read(page, `document.querySelector('${card(invoice)}').className`), 'md-card done');
+    });
+  });
+
+  describe('when the test package is opened, with motion on, then its model, ', () => {
+    let moving = '';
+
+    before(async () => {
+      await page.reducedMotion(false);
       await page.click('.md-tg');
-      await page.until(`!!document.querySelector('${card(thing)}')`);
+      moving = await read(page, `(() => { const grow = document.querySelector('.md-tg + .grow'); return grow && grow.querySelector('${card(thing)}') ? 'its models opening under its line' : 'no motion'; })()`);
+      await page.until(`!!document.querySelector('${card(thing)}') && !document.querySelector('#vw-main .grow')`);
+      await page.reducedMotion(true);
       await page.click(`${card(thing)} .md-open`);
       await page.until(`!document.querySelector('${card(thing)}').classList.contains('fold')`);
+    });
+
+    it('then its models open down from its line.', () => {
+      assert.equal(moving, 'its models opening under its line');
     });
 
     it('then it shows its diff with no warning.', async () => {
