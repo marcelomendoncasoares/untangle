@@ -79,6 +79,22 @@ export function parseModel(text) {
   return m;
 }
 
+/**
+ * What each line of a model file starts inside, as the line that opens it: the last line above it
+ * at the margin (fields:, indexes:...), as Serverpod's grammar keeps a block open until the next
+ * line there. A highlighter given that line first starts the line as the file does. '' is a line
+ * at the margin, or one with none above. Line n is at [n - 1].
+ */
+export function modelOpenings(text) {
+  let open = '';
+  return text.split('\n').map((raw) => {
+    const line = raw.replace(/\r$/, '');
+    if (!/^\S/.test(line)) return open;
+    open = line;
+    return '';
+  });
+}
+
 const docOf = (x) => (x ? x.doc.join('\n') : '');
 const indexText = (name, ix) => `${name} (${(ix.props.fields || '').split(',').map((s) => s.trim()).filter(Boolean).join(', ')})`;
 const indexWord = (ix) => (ix.props.unique === 'true' ? 'unique index' : 'index');

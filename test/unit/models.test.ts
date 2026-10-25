@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { compareModels, isTestModel, migrationAction, parseModel, splitTop, summary, type ModelItem, type ModelWarning } from '../../analysis/models.js';
+import { compareModels, isTestModel, migrationAction, modelOpenings, parseModel, splitTop, summary, type ModelItem, type ModelWarning } from '../../analysis/models.js';
 import { has } from '../../dist/exec.js';
 import { buildDartReview, type BuiltReview } from '../helpers/review.ts';
 
@@ -51,6 +51,16 @@ describe('Given a model with docs, a table, fields, an index and an enum, ', () 
     assert.equal(color.kind, 'enum');
     assert.deepEqual(color.values.map((v) => `${v.name} L${v.line}`), ['red L5', 'green L6']);
     assert.equal(color.keys.get('serialized')?.v, 'byName');
+  });
+});
+
+describe('Given a model file with blocks, a comment at the margin and lines ending in CRLF, ', () => {
+  const lines = ['class: Invoice', 'fields:', '  amount: int', '', '  ### Its currency.', '  currency: String', '# Kept apart.', '  note: String?', 'indexes:\r', '  invoice_idx:\r', '    fields: amount\r'];
+
+  it('then each line starts inside the last line at the margin above it, and a line at the margin on its own.', () => {
+    assert.deepEqual(modelOpenings(lines.join('\n')).map((open, i) => `${i + 1} ${open || 'margin'}`), [
+      '1 margin', '2 margin', '3 fields:', '4 fields:', '5 fields:', '6 fields:', '7 margin', '8 # Kept apart.', '9 margin', '10 indexes:', '11 indexes:',
+    ]);
   });
 });
 

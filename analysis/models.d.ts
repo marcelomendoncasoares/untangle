@@ -57,6 +57,8 @@ export interface ModelItem {
 
 export declare function splitTop(def: string): string[];
 export declare function parseModel(text: string | null | undefined): ParsedModel | null;
+/** What each line of a model file starts inside, as the line at the margin above it that opens it (fields:, say); '' is a line at the margin. Line n is at [n - 1]. */
+export declare function modelOpenings(text: string): string[];
 export declare function compareModels(o: ParsedModel | null, n: ParsedModel | null, opts?: { test?: boolean }): { rows: ModelRow[]; warns: ModelWarning[] };
 export declare function summary(rows: ModelRow[], status: string): string;
 export declare function migrationAction(sql: string, table: string, added?: string[]): { start: number; end: number; hits: number[] } | null;

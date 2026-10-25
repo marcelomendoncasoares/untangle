@@ -19,6 +19,7 @@ const darkPlus = {
   function: '#DCDCAA',
   control: '#C586C0',
   variable: '#9CDCFE',
+  type: '#4EC9B0',
 };
 
 function rgb(hex: string): string {
@@ -157,6 +158,66 @@ describe('Given a served review of a change inside a string over several lines, 
 
     it('then the hunk that starts inside the string reads it as one up to its end, and the code after it as code, on both sides.', () => {
       assert.equal(colors, ['2 hunks', rgb(darkPlus.string), rgb(darkPlus.function), rgb(darkPlus.function), rgb(darkPlus.function)].join('\n'));
+    });
+  });
+});
+
+// A Serverpod model changed far enough below its fields: line that the hunk starts inside the block
+// and runs past it into indexes:.
+const order = (total: string) => ['class: Order', 'table: orders', 'fields:', '  number: String', '  placedAt: DateTime', '  shippedAt: DateTime?', '  customer: String', '  note: String?', `  total: ${total}`, 'indexes:', '  order_number_idx:', '    fields: number', '    unique: true', ''].join('\n');
+
+describe('Given a served review of a model retyped far below its fields: line, ', { skip, timeout: 180_000 }, () => {
+  const file = 'lib/src/models/order.spy.yaml';
+  let repo: TempRepo | undefined;
+  let run: UntangleRun | undefined;
+  let page: Browser | undefined;
+  let cache = '';
+
+  before(async () => {
+    const author = ada('2020-09-01T15:00:00Z');
+    repo = TempRepo.create();
+    repo.write('pubspec.yaml', pubspec);
+    repo.write(file, order('double'));
+    repo.commit({ subject: 'Start', author, committer: author });
+    repo.branch('feature');
+    repo.write(file, order('int'));
+    repo.commit({ subject: 'Count in cents', author, committer: author });
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    run = await startUntangle(repo.dir, { base: 'main', cacheDir: cache });
+    await waitForReview(reviewClient(run.url));
+    page = await launchBrowser();
+    await page.goto(run.url);
+    await page.until(`!!document.querySelector('.t-head')`, 30_000);
+    await page.click('[data-act="models-open"]');
+    await page.until(`[...document.querySelectorAll('.md-card .tx span')].some((s) => [...s.classList].some((c) => /^k\\d+$/.test(c)))`);
+  });
+
+  after(async () => {
+    await page?.close();
+    await run?.stop();
+    repo?.remove();
+    if (cache) fs.rmSync(cache, { recursive: true, force: true });
+  });
+
+  describe('when highlighting has loaded in the Models view, ', () => {
+    let colors: string;
+
+    before(async () => {
+      colors = await read(page!, `(() => {
+        const rows = [...document.querySelectorAll('.md-card[data-model="${file}"] .code .ln')];
+        const word = (line, w) => { const row = rows.find((r) => r.querySelector('.tx')?.textContent === line); const el = row && [...row.querySelectorAll('.tx span')].find((s) => !s.children.length && s.textContent === w); return el ? getComputedStyle(el).color : 'missing'; };
+        return [
+          rows.find((r) => r.querySelector('.tx'))?.querySelector('.tx').textContent,
+          word('  customer: String', 'String'),
+          word('  total: double', 'double'),
+          word('  total: int', 'int'),
+          word('    fields: number', 'number'),
+        ].join('\\n');
+      })()`);
+    });
+
+    it('then the hunk reads its lines as fields, with type colors on both sides, and the index after it as an index.', () => {
+      assert.equal(colors, ['  shippedAt: DateTime?', rgb(darkPlus.type), rgb(darkPlus.type), rgb(darkPlus.type), rgb(darkPlus.string)].join('\n'));
     });
   });
 });

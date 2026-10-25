@@ -24,7 +24,7 @@ import { readingUnits, testCall } from './units.js';
 import { testOutline } from './outline.js';
 import { assembleIntroducedChains } from './chains.js';
 import { commitFamilies, subjectParts } from './commits.js';
-import { readModels } from './models.js';
+import { MODEL_FILE, modelOpenings, readModels } from './models.js';
 import { CALLABLE_KINDS, TYPE_KINDS, declarationAt, indexOf, memberAt as resolvedMemberAt, memberName } from './structure.js';
 
 const C = globalThis.ReviewCore;
@@ -1632,12 +1632,13 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       (r.toks || []).forEach((tk) => { if (tk.atom) ranges.push([tk.c, tk.c + tk.t.length, editOfAtom.get(tk.atom).id]); });
       return ranges.length ? [r.type, r.text, r.o, r.n, ranges] : [r.type, r.text, r.o, r.n];
     };
-    // Where a hunk starts inside a string or a comment over several lines, on either side: what
+    // Where a hunk starts inside something an earlier line opened, on either side (in Dart, a
+    // string or a comment over several lines; in a Serverpod model, a block such as fields:): what
     // opens it (so, sn). The page highlights a hunk's lines alone, as if after it.
-    const openings = (dir, p) => { try { return dartOpenings(fs.readFileSync(dir + p, 'utf8')); } catch { return null; } };
+    const openings = (dir, p, of) => { try { return of(fs.readFileSync(dir + p, 'utf8')); } catch { return null; } };
     const startsIn = (f) => {
-      const dart = /\.dart$/.test(f.p);
-      const was = dart && OLD[name] ? openings(OLD[name].dir, f.p) : null, is = dart ? openings(HEAD, f.p) : null;
+      const of = /\.dart$/.test(f.p) ? dartOpenings : MODEL_FILE.test(f.p) ? modelOpenings : null;
+      const was = of && OLD[name] ? openings(OLD[name].dir, f.p, of) : null, is = of ? openings(HEAD, f.p, of) : null;
       return (h) => { const so = was && h.o > 0 && was[h.o - 1], sn = is && h.n > 0 && is[h.n - 1]; return { ...(so ? { so } : {}), ...(sn ? { sn } : {}) }; };
     };
     const ser = {

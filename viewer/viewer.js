@@ -209,7 +209,7 @@
   // ---------- model
   const models = {};
   // A hunk's rows, to the hunk: what its first line starts inside on each side (so, sn), when that's
-  // a string or a comment that an earlier line opened (see rowsColors).
+  // a string or a comment that an earlier line opened, or a model's block (see rowsColors).
   const hunkOfRows = new WeakMap();
   function M(name) {
     name = name || state.compare;
@@ -513,7 +513,8 @@
   // tokenizer's classes until then. A run of rows is highlighted as two pieces of code, its new
   // side (context and added lines) and its old side (context and removed lines), so strings and
   // comments over several lines keep their colors; one that starts inside a string or a comment an
-  // earlier line opened starts from what opened it (the analysis tells which: so, sn).
+  // earlier line opened, or inside a model's fields:, starts from what opened it (the analysis
+  // tells which: so, sn).
   const SHIKI = window.UntangleShiki || null;
   let shikiOn = false;
   // The theme's color for text no grammar rule colors (a bundle from before it said so: Dark+'s).
