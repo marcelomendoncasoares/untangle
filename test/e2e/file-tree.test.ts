@@ -78,11 +78,11 @@ describe('Given two sibling folders with a file in each, ', { skip: browserSkip(
       assert.deepEqual(guides, [['14px', true]]);
     });
 
-    it('then it keeps the mark of the change to review inside it, by its count, and says so when hovered; the open folders show their files\' marks instead.', () => {
+    it('then it says what\'s left inside it by its count, with no mark, and so when hovered; the open folders show their files\' marks instead.', () => {
       assert.deepEqual(folders, [
         ['lib', 'no mark', '2', 'lib/'],
         ['lib/first', 'no mark', '1', 'lib/first/'],
-        ['lib/last', 'mark', '1', 'lib/last/: 1 change to review inside'],
+        ['lib/last', 'no mark', '1', 'lib/last/: 1 change to review inside'],
       ]);
     });
   });
@@ -211,8 +211,8 @@ describe('Given a file added, one changed and one deleted, ', { skip: browserSki
     before(async () => {
       for (const file of ['lib/added.txt', 'lib/deleted.txt']) {
         await page.click(`[data-open="${file}"]`);
-        await page.until(`!!document.querySelector('[data-act="mark-file"]') && (document.querySelector('.crumbs b')?.title === ${JSON.stringify(file)})`);
-        await page.click('[data-act="mark-file"]');
+        await page.until(`!!document.querySelector('.fv-head [data-act="mark-file"]') && (document.querySelector('.crumbs b')?.title === ${JSON.stringify(file)})`);
+        await page.click('.fv-head [data-act="mark-file"]');
         await page.until(`document.querySelector('[data-open="${file}"]')?.classList.contains('done')`);
       }
       files = await page.eval(named) as string;
@@ -224,7 +224,7 @@ describe('Given a file added, one changed and one deleted, ', { skip: browserSki
   });
 
   describe('when the folder is collapsed with the changed file left to review, then again once it\'s reviewed too, ', () => {
-    const folder = `(() => { const row = document.querySelector('[data-dir="lib"]'); const count = row.querySelector('.cnt').textContent; return (row.querySelector('.cnt > .mk') ? 'mark' : 'no mark') + (count ? ' ' + count : '') + ' · ' + row.title; })()`;
+    const folder = `(() => { const row = document.querySelector('[data-dir="lib"]'); const count = row.querySelector('.cnt').textContent; return (row.querySelector('.cnt > .mk.ok') ? 'check' : row.querySelector('.cnt > .mk') ? 'mark' : 'no mark') + (count ? ' ' + count : '') + ' · ' + row.title; })()`;
     const closed = `document.querySelector('[data-dir="lib"]')?.getAttribute('aria-expanded') === 'false'`;
     let left: string;
     let none: string;
@@ -237,19 +237,19 @@ describe('Given a file added, one changed and one deleted, ', { skip: browserSki
       await page.until(`!!document.querySelector('[data-open="lib/changed.txt"]')`);
       await page.click('[data-open="lib/changed.txt"]');
       await page.until(`document.querySelector('.crumbs b')?.title === 'lib/changed.txt'`);
-      await page.click('[data-act="mark-file"]');
+      await page.click('.fv-head [data-act="mark-file"]');
       await page.until(`document.querySelector('[data-open="lib/changed.txt"]')?.classList.contains('done')`);
       await page.click('[data-dir="lib"]');
       await page.until(closed);
       none = await page.eval(folder) as string;
     });
 
-    it('then, with the change left, the folder has its mark, by its count.', () => {
-      assert.equal(left, 'mark 1 · lib/: 1 change to review inside');
+    it('then, with the change left, the folder shows its count, with no mark.', () => {
+      assert.equal(left, 'no mark 1 · lib/: 1 change to review inside');
     });
 
-    it('then, all reviewed, it has none.', () => {
-      assert.equal(none, 'no mark · lib/');
+    it('then, all reviewed, a check takes its count\'s place.', () => {
+      assert.equal(none, 'check · lib/');
     });
   });
 });

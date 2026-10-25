@@ -279,6 +279,22 @@
   const rev = () => state.rev[state.compare] || (state.rev[state.compare] = new Set());
   const done = (b) => b.edits.every((id) => rev().has(id));
   function setEdits(ids, on) { ids.forEach((id) => (on ? rev().add(id) : rev().delete(id))); save(); }
+  // The marks of some changes as they are (their edits, and their commits' marks under a commit's
+  // lens), to put back as they were.
+  function marksOf(blocks) {
+    const r = rev(), edits = [], cm = [];
+    blocks.forEach((b) => {
+      b.edits.forEach((id) => edits.push([id, r.has(id)]));
+      if (HISTORY) blockCommits(b).forEach((ci) => { const k = cmKey(b, ci); cm.push([k, state.cmarks.has(k)]); });
+    });
+    return { compare: state.compare, edits, cm };
+  }
+  function restoreMarks(was) {
+    const r = state.rev[was.compare] || (state.rev[was.compare] = new Set());
+    was.edits.forEach(([id, on]) => (on ? r.add(id) : r.delete(id)));
+    was.cm.forEach(([k, on]) => (on ? state.cmarks.add(k) : state.cmarks.delete(k)));
+    save();
+  }
 
   // ---------- the lens: the review through some commits. The changes of a commit or a range
   // (blame says which commit wrote each line), or everything since an older head (your last
@@ -3440,13 +3456,43 @@
     }).catch(() => {}).finally(() => { RV.timer = setTimeout(rvLoad, MENU.open === 'reviews' ? 3000 : 15000); });
   }
 
-  function toast(msg) {
+  // A mark from the Files tab: a file's changes, or those of every file under a folder, marked as
+  // the file's own mark does (all reviewed: unmarked). A folder marked folds. The toast says what
+  // was marked, with Undo, which puts every mark back as it was, and the folder's fold.
+  function markFromTree(files, dir, name, from) {
+    const blocks = files.flatMap((f) => f.blocks).filter((b) => b.edits.length);
+    if (!blocks.length) return;
+    const st = stats(blocks), on = st.open > 0, was = marksOf(blocks), closed = dir != null && state.closedDirs.has(dir);
+    const touched = files.filter((f) => { const x = stats(f.blocks); return on ? x.open > 0 : x.total > 0; }).length;
+    const row = from && from.closest('.sb-row'), focused = row && (row === document.activeElement || row.contains(document.activeElement)) ? sideKey(row) : null;
+    toggleBlocks(blocks);
+    if (on && dir != null) state.closedDirs.add(dir);
+    hint({ mark: blocks.map((b) => b.id) });
+    render();
+    // Marked from the keyboard, the row keeps the focus.
+    const again = focused && [...side.querySelectorAll('.sb-row')].find((r) => sideKey(r) === focused);
+    if (again) again.focus({ preventScroll: true });
+    toast(`Marked ${plural(on ? st.open : st.total, 'change')} ${on ? 'reviewed' : 'unreviewed'}, in ${dir != null ? `${plural(touched, 'file')} of ${name}` : name}`, () => {
+      restoreMarks(was);
+      if (dir != null) { if (closed) state.closedDirs.add(dir); else state.closedDirs.delete(dir); }
+      render();
+    });
+  }
+  // A toast; given an undo, it holds an Undo button, and stays a while longer.
+  let toastUndo = null;
+  function toast(msg, undo) {
     let el = $('#vw-toast');
-    if (!el) { el = document.createElement('div'); el.id = 'vw-toast'; el.className = 'toast'; el.setAttribute('role', 'status'); viewer.appendChild(el); }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'vw-toast'; el.className = 'toast'; el.setAttribute('role', 'status'); viewer.appendChild(el);
+      el.addEventListener('click', (e) => { if (!e.target.closest('[data-undo]') || !toastUndo) return; const u = toastUndo; toastUndo = null; el.classList.remove('on'); clearTimeout(toastTimer); u(); });
+    }
+    toastUndo = undo || null;
     el.textContent = msg;
+    if (undo) el.insertAdjacentHTML('beforeend', '<button type="button" data-undo>Undo</button>');
+    el.classList.toggle('act', !!undo);
     el.classList.add('on');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('on'), 3500);
+    toastTimer = setTimeout(() => { el.classList.remove('on'); toastUndo = null; }, undo ? 6000 : 3500);
   }
   // The + that starts a comment, over the line under the pointer (one button, moved around).
   const addBtn = document.createElement('button');
@@ -5798,6 +5844,14 @@
   const commitDiff = (c) => c.df != null ? c.df : (c.df = sideDiff(...(c.files || []).reduce((x, [, , a, d]) => (a < 0 ? x : [x[0] + a, x[1] + d]), [0, 0])));
   // A row's mark: amber while it has changes to review, a check once they're all reviewed.
   const markHtml = (st) => (st.open ? '<i class="mk"></i>' : outOfLens(st) ? '<i class="mk out"></i>' : `<i class="mk ok">${ICON.check}</i>`);
+  // In the Files tab, the mark is what marks: a file's in place of its dot, a folder's at the end
+  // of its row. Under the pointer the dot opens into a ring with the check to come. Nothing to
+  // mark (or nothing in the lens): no button.
+  function treeMarkHtml(st, attrs, whose, where, cls) {
+    if (!st.total) return '';
+    const title = st.open ? `Mark ${whose} ${st.open < st.total ? `${plural(st.open, 'change')} left` : plural(st.open, 'change')}${where} reviewed (Shift+Space)` : `Reviewed: mark ${whose} ${plural(st.total, 'change')}${where} unreviewed`;
+    return `<button type="button" class="mk-b${cls || ''}${st.open ? '' : ' ok'}" ${attrs} title="${esc(title)}" aria-label="${esc(title)}" aria-pressed="${!st.open}" tabindex="-1">${st.open ? `<i class="mk"></i><span class="mk-to">${ICON.check}</span>` : `<i class="mk ok">${ICON.check}</i>`}</button>`;
+  }
   function renderSide() {
     const m = M();
     const all = m.files.flatMap((f) => f.blocks);
@@ -5869,9 +5923,11 @@
         prefix: '',
         count: (files) => { const st = stats(files.flatMap((f) => f.blocks)); return { text: st.open || '', done: !st.open, diff: filesDiff(files), cls: outCls(files) }; },
         file: (f, depth, g) => {
-          const st = stats(f.blocks);
-          return `<button type="button" class="sb-row tr${status(f)}${st.open ? '' : ' done'}${outCls([f])}" data-open="${esc(f.p)}"${on(f)} style="--d:${depth}" title="${esc(f.p)}: ${statusWords(f)}${leftWords(st)}${outWords(f)}">${g}${markHtml(st)}<span class="nm">${esc(fileName(f.p))}</span>${filesDiff([f])}<span class="cnt">${openThreadsHtml(f.p)}${st.open || ''}</span></button>`;
+          const st = stats(f.blocks), mark = treeMarkHtml(st, `data-act="mark-file" data-file="${f.idx}" data-tree="1"`, 'the file’s', '');
+          const tag = mark ? 'div role="button" tabindex="0"' : 'button type="button"';
+          return `<${tag} class="sb-row tr${status(f)}${st.open ? '' : ' done'}${outCls([f])}" data-open="${esc(f.p)}"${on(f)} style="--d:${depth}" title="${esc(f.p)}: ${statusWords(f)}${leftWords(st)}${outWords(f)}">${g}${mark || markHtml(st)}<span class="nm">${esc(fileName(f.p))}</span>${filesDiff([f])}<span class="cnt">${openThreadsHtml(f.p)}${st.open || ''}</span></${mark ? 'div' : 'button'}>`;
         },
+        mark: (key, name, files) => treeMarkHtml(stats(files.flatMap((f) => f.blocks)), `data-act="mark-dir" data-dir="${esc(key)}" data-name="${esc(name)}"`, 'the', ` in ${name}`, ' dir'),
       });
       const migration = (f) => /(^|\/)migrations?\//i.test(f.p);
       for (const [key, label, files] of [
@@ -6023,10 +6079,12 @@
       [...nd.dirs.values()].sort((x, y) => byName(x.name, y.name)).forEach((d) => {
         let name = d.name;
         while (d.dirs.size === 1 && !d.files.length) { d = [...d.dirs.values()][0]; name += '/' + d.name; }
-        const key = o.prefix + d.path, open = !state.closedDirs.has(key), c = o.count(filesIn(d));
-        // Closed, a folder keeps the mark of the changes to review inside it, by their count.
-        const held = !open && !c.done && c.text;
-        rows.push({ depth: dp, html: (g) => `<button type="button" class="sb-row tr dir${c.done ? ' done' : ''}${c.cls || ''}" data-dir="${esc(key)}" aria-expanded="${open}" style="--d:${dp}" title="${esc(d.path)}/${held ? `: ${plural(c.text, 'change')} to review inside` : ''}">${g}<span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><span class="nm">${esc(name)}</span>${c.diff || ''}<span class="cnt">${held ? '<i class="mk"></i>' : ''}${c.text}</span></button>` });
+        const key = o.prefix + d.path, open = !state.closedDirs.has(key), fs = filesIn(d), c = o.count(fs);
+        // A folder says what's left inside it by its count; closed and all reviewed, with a check
+        // (open, its files say it). Its mark, when it has one, ends its row under the pointer.
+        const held = !open && !c.done && c.text, mark = o.mark ? o.mark(key, name, fs) : '';
+        const tag = mark ? 'div role="button" tabindex="0"' : 'button type="button"';
+        rows.push({ depth: dp, html: (g) => `<${tag} class="sb-row tr dir${c.done ? ' done' : ''}${c.cls || ''}${mark ? ' mkd' : ''}" data-dir="${esc(key)}" aria-expanded="${open}" style="--d:${dp}" title="${esc(d.path)}/${held ? `: ${plural(c.text, 'change')} to review inside` : ''}">${g}<span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><span class="nm">${esc(name)}</span>${c.diff || ''}<span class="cnt">${mark && c.done && !open ? `<i class="mk ok">${ICON.check}</i>` : c.text}</span>${mark}</${mark ? 'div' : 'button'}>` });
         if (open) walk(d, dp + 1);
       });
       nd.files.slice().sort((x, y) => byName(fileName(x.p), fileName(y.p))).forEach((f) => rows.push({ depth: dp, html: (g) => o.file(f, dp, g) }));
@@ -8331,6 +8389,8 @@
       backTo(at);
       return;
     }
+    if (act === 'mark-file' && d.tree) return markFromTree([m.files[Number(d.file)]], null, fileName(m.files[Number(d.file)].p), t);
+    if (act === 'mark-dir') return markFromTree(m.files.filter((f) => f.p.startsWith(d.dir + '/')), d.dir, d.name, t);
     if (act === 'mark-file') { const bs = m.files[Number(d.file)].blocks.filter((b) => b.edits.length); toggleBlocks(bs); hint({ mark: bs.map((b) => b.id) }); return render(); }
     if (act === 'mark-blocks') { toggleBlocks(blocksOf(d.blocks.split(' '))); hint(markHint(d.blocks.split(' '), t)); return render(); }
     if (act === 'mark-chain') { toggleBlocks(blocksOf(m.chains[Number(d.chainId)].blocks)); hint({ mark: m.chains[Number(d.chainId)].blocks }); return render(); }
@@ -8437,6 +8497,14 @@
       return;
     }
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.ol-row[data-act], .ol-fold[data-act], .ol-file[data-act]')) { e.preventDefault(); e.target.click(); return; }
+    // A row of the Files tab: Enter and Space open it, Shift+Space marks it.
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.sb-row[role="button"]')) {
+      e.preventDefault();
+      const mark = e.key === ' ' && e.shiftKey ? e.target.querySelector(':scope > .mk-b') : null;
+      if (e.key === ' ' && e.shiftKey && !mark) return;
+      (mark || e.target).click();
+      return;
+    }
     if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('g[data-node],g[data-graph-open],g[data-chain],g[data-act="ext-box"]')) { e.preventDefault(); e.target.closest('g[data-node],g[data-graph-open],g[data-chain],g[data-act="ext-box"]').dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   });
   viewer.addEventListener('change', (e) => {
