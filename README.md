@@ -187,6 +187,11 @@ Claude and Codex, and *Copy for agent* takes the notes to any other chat. The ag
 top bar, says what its chat is doing, and its menu takes a note on the review as a whole, for what
 has no line. While the agent works, the tab's icon is a circle going round.
 
+In the Threads tab, the notes are grouped by whose turn it is: *Waiting for you*, where the agent
+had the last word, and *Waiting for Claude*, where you did. A new answer has a yellow dot until its
+thread has been on screen for a second, and the tab shows a dot while one is new; the note's dot
+marks it unread again. Above a note's Reply, a line says where the agent is with your last word.
+
 An open pull request reviewed from its link gets a working copy of its branch, set up to push to
 it. The agent makes the changes your notes ask for there and commits them, the review follows its
 commits, and it pushes when you ask. An agent started from the reviews page may write the working

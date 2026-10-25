@@ -295,10 +295,14 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .sb-bar i { display: block; height: 100%; border-radius: 2px; background: var(--text-2); transition: width var(--slow) var(--ease); }
 .sb-prog.all .sb-bar i { background: var(--done); }
 .sb-tabs { display: flex; gap: 18px; padding: 0 6px; margin-bottom: 12px; }
-.sb-tabs button { appearance: none; border: 0; background: none; padding: 0 0 8px; color: var(--text-3); font: 600 12.5px/1 var(--ui); cursor: pointer; box-shadow: inset 0 -2px 0 transparent; white-space: nowrap; transition: color var(--fast) var(--ease), box-shadow var(--fast) var(--ease); }
+.sb-tabs button { appearance: none; position: relative; border: 0; background: none; padding: 0 0 8px; color: var(--text-3); font: 600 12.5px/1 var(--ui); cursor: pointer; box-shadow: inset 0 -2px 0 transparent; white-space: nowrap; transition: color var(--fast) var(--ease), box-shadow var(--fast) var(--ease); }
 .sb-tabs button:hover { color: var(--text-2); }
 .sb-tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
 .sb-tabs i { font-style: normal; font-weight: 500; color: var(--text-3); margin-left: 4px; font-variant-numeric: tabular-nums; }
+/* An agent's words new to you: a dot by the Threads tab's count, or a folded section's, in no room
+   of its own. */
+.nw { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); pointer-events: none; }
+.sb-tabs .nw { top: -2px; right: -8px; }
 @container (max-width: 340px) { .sb-tabs.four i { display: none; } }
 .sb-pin { display: grid; padding-bottom: 8px; margin-bottom: 6px; box-shadow: 0 1px 0 var(--hair); }
 .sb-group { display: flex; justify-content: space-between; gap: 8px; padding: 22px 6px 6px; font-size: 11.5px; color: var(--text-3); }
@@ -315,8 +319,11 @@ button.sb-group:hover { color: var(--text-2); }
 .sb-sec .sw { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--local); }
 .sb-sec.github .sw { background: var(--gh); }
 .sb-sec .nm { flex: 1; min-width: 0; }
-.sb-sec .cnt { font: 500 11.5px/1 var(--ui); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sb-sec .cnt { position: relative; font: 500 11.5px/1 var(--ui); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.sb-sec .nw { top: -4px; right: -5px; }
 .sb-sec-body > .sb-group:first-child { padding-top: 10px; }
+/* The notes' groups, by whose turn it is. */
+.sb-group.turn > span:first-child { color: var(--text-2); font-weight: 500; }
 .sb-row { appearance: none; position: relative; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; height: 28px; padding: 0 8px 0 calc(8px + var(--d, 0) * 14px); border: 0; border-radius: 6px; background: transparent; color: var(--text); font: 400 12.5px/1 var(--ui); text-align: left; cursor: pointer; transition: background-color var(--fast) var(--ease); }
 .sb-row:hover { background: var(--hover-soft); }
 .sb-row[aria-current="true"] { background: var(--raised); }
@@ -362,9 +369,22 @@ button.sb-group:hover { color: var(--text-2); }
 .sb-row .cnt .n.gh { color: var(--gh); font-weight: 600; }
 .sb-row .cnt .n.nt { display: inline-flex; align-items: center; gap: 4px; color: var(--local-ink); font-weight: 600; }
 .sb-row .cnt .n.nt::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--local); }
+.sb-row .cnt .n.nt.ans::before { background: var(--local); }
+.sb-row .cnt .n.nt.new::before { background: var(--accent); box-shadow: none; }
+/* A note's: filled while it waits for you, amber while an agent's words in it are new to you,
+   orchid once you've seen them; a ring while it waits for the agent, grey until an agent answered
+   in it and orchid since, turning while the agent works on it, amber while it's held. Resolved, a
+   green check, or the agent's mark. */
+.mk.new { background: var(--accent); }
+.mk.ans { background: var(--local); }
 .mk.note { background: none; box-shadow: inset 0 0 0 1.5px var(--local); }
-.mk.note.ch { background: var(--local); box-shadow: none; }
-.mk.ok.ag { color: var(--local-ink); font: 700 11px/1 var(--ui); }
+.mk.wait { background: none; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.mk.held { background: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.mk.on { width: 9px; height: 9px; background: none; box-shadow: none; border: 1.5px solid var(--text-3); border-right-color: transparent; animation: spin .9s linear infinite; }
+.mk.on.note { border-color: var(--local); border-right-color: transparent; }
+.mk.ok.ag { color: var(--done); font: 700 11px/1 var(--ui); }
+.sb-row.thr.new .nm { font-weight: 700; }
+.sb-row.thr.new .sn { color: var(--text-2); }
 .mk.away { background: none; box-shadow: inset 0 0 0 1.5px var(--text-4); }
 /* In the Files tab the mark is what marks: under the pointer, the dot opens into a ring with the
    check to come, and the check sits on a disc. A row that holds one is a div, as a button can't
@@ -379,6 +399,12 @@ button.sb-group:hover { color: var(--text-2); }
 .mk-b:hover > .mk:not(.ok), .mk-b:focus-visible > .mk:not(.ok) { width: 15px; height: 15px; background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .mk-b:hover > .mk-to, .mk-b:focus-visible > .mk-to { opacity: 1; }
 .mk-b:hover > .mk.ok, .mk-b:focus-visible > .mk.ok { width: 18px; height: 18px; border-radius: 50%; background: var(--done-soft); }
+/* In the Threads tab, a note's dot marks it unread, or seen: it opens into a ring of its color, with
+   the dot it turns into. */
+.mk-b > .mk-to.new, .mk-b > .mk-to.ans { width: 5px; height: 5px; border-radius: 50%; }
+.mk-b > .mk-to.new { background: var(--accent); }
+.mk-b > .mk-to.ans { background: var(--local); }
+.mk-b:hover > .mk.ans, .mk-b:focus-visible > .mk.ans { background: var(--local-soft); box-shadow: inset 0 0 0 1.5px var(--local); }
 /* A folder's ends its row while the pointer is on it (on a touch screen, always), after its lines:
    the row makes room for it, and it stays where it is. */
 .sb-row.mkd > .mk-b.dir { position: absolute; top: 50%; right: 8px; margin-top: -8px; display: none; }
@@ -1387,14 +1413,21 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
 .th.new.note .th-new-h svg { color: var(--local); }
 .th.note .cm { grid-template-columns: 28px minmax(0, 1fr); }
 .th.note .th-f { padding-left: 52px; }
-.th.note.by-agent .th-fold .ag-mark { color: var(--local-ink); font: 700 12px/1 var(--ui); }
+.th.note.by-agent .th-fold .ag-mark { color: var(--done); font: 700 12px/1 var(--ui); }
 .nt-n { display: block; width: 28px; height: 20px; border-radius: 6px; background: var(--local-soft); color: var(--local-ink); font: 700 11px/20px var(--code); text-align: center; }
 .av.ag { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: #2A2030; color: var(--local-ink); font: 700 12px/1 var(--ui); }
 .cm-tag.local { color: var(--local-ink); background: var(--local-soft); }
-.cm-tag.since, .cm-tag.held { color: var(--accent-ink); background: var(--accent-soft); }
+.cm-tag.since { color: var(--accent-ink); background: var(--accent-soft); }
 .cm-tag code { font-size: 10.5px; color: inherit; }
-.cm-st { font-size: 11.5px; color: var(--text-3); }
-.cm-st.warn { color: var(--local-ink); }
+/* An agent's words you haven't seen: amber, after their time; seen, the tag fades. */
+.cm-tag.new { color: #1A1406; background: var(--accent); font-weight: 600; transition: opacity 400ms var(--ease); }
+.cm-tag.new.gone { opacity: 0; }
+.cm-t .cm-tag.new { margin-right: 8px; }
+/* Above a note's Reply, while the agent has it: where the agent is with your last word. */
+.nt-turn { display: flex; align-items: center; gap: 8px; margin: 2px 12px 0 44px; font-size: 12px; color: var(--text-2); }
+.th.note .nt-turn { margin-left: 52px; }
+.nt-turn .mk { justify-self: auto; }
+.nt-turn.warn { color: var(--local-ink); }
 .th-tools { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .th-tools .btn { background: var(--hover); color: var(--text-2); }
 .th-tools .btn:hover { background: #2A2A31; color: var(--text); }
@@ -1663,6 +1696,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
   .vw-side .sb-row.chain .nm { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14px; line-height: 1.3; }
   .vw-side .sb-row.chain .nm.ui, .vw-side .sb-row.map .nm { font-size: 14px; }
   .sb-tabs button { padding: 14px 0 12px; font-size: 13px; }
+  .sb-tabs .nw { top: 12px; }
 }
 /* Code in a narrow window: its size is ⋯'s (rows follow it); notes, comments and peeks take the
    view's width, 12 pixels from each edge; a file's name comes before its folders. On a phone, the

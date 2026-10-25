@@ -2307,6 +2307,140 @@
     return named || 'your agent';
   };
 
+  // ---- Whose turn it is in a note: yours once an agent had the last word, else the agent's. An
+  // agent's words are new to you until their thread has been on screen a second; in the Threads
+  // tab, the dot of a note waiting for you marks it unread again, or seen.
+  // The agents a note's turn names: those holding the review now, else those that held it or wrote
+  // in its notes. None, and the notes are one list, yours alone.
+  function ntNames() {
+    const now = agentsNow().map((a) => a.name);
+    if (now.length || !NT.data) return now;
+    const out = new Set(NT.data.holders || []);
+    NT.data.notes.forEach((n) => n.comments.forEach((c) => { if (c.by) out.add(c.by); }));
+    return [...out];
+  }
+  const ntThem = (names) => (names.length === 1 ? names[0] : 'the agents');
+  // The agent that had the last word in a note: its last comment's, or the one that drafted the
+  // comment your last one asked for.
+  const lastAgent = (n) => n.comments[n.comments.length - 1].by || ((n.said || []).filter((s) => s.by).pop() || {}).by || agentWho();
+  // Where a note stands: its group in the Threads tab, its mark, what its tooltip says, and the
+  // line above its Reply while the agent has it.
+  function ntStand(n, names) {
+    names = names || ntNames();
+    if (n.resolved) return { grp: 'res', mark: n.resolved.by ? '<i class="mk ok ag" aria-hidden="true">✦</i>' : `<i class="mk ok">${ICON.check}</i>`, words: n.resolved.by ? `resolved by ${n.resolved.by}` : 'resolved', line: '' };
+    const copied = n.copied ? ['Copied for your agent', 'copied for your agent'] : ['', ''];
+    if (!names.length) return { grp: 'all', mark: '<i class="mk note"></i>', words: copied[1], line: copied[0] };
+    if (n.turn === 'you') {
+      const who = lastAgent(n);
+      return { grp: 'you', mark: `<i class="mk ${n.new ? 'new' : 'ans'}"></i>`, words: !n.new ? `${who} answered` : n.unread ? 'marked unread' : `a new ${n.comments.length === 1 ? 'note' : 'answer'} from ${who}`, line: '' };
+    }
+    // Your word was the last: where the agent is with it. Its ring is grey until an agent answered
+    // in the note, orchid since.
+    const ring = n.comments.some((c) => c.by) || (n.said || []).some((s) => s.by) ? 'note' : 'wait';
+    const st = n.status, list = agentsNow();
+    const on = st && st.read && list.find((a) => a.state === 'working' && a.on.includes(n.n));
+    const queued = st === 'queued' && list.find((a) => a.state === 'queued' && a.on.includes(n.n));
+    const [cls, line, words] = st === 'held' ? ['held', 'Held: it goes when you send your notes', 'held: it goes when you send your notes']
+      : on ? [`on ${ring}`, `${on.name} is on it`, `${on.name} is on it`]
+        : st && st.read ? [ring, `Read by ${st.read}, not answered yet`, `read by ${st.read}, not answered yet`]
+          : queued ? [ring, `Queued for ${queued.name}`, `queued for ${queued.name}`]
+            : st === 'queued' ? [ring, 'Sent, not read yet', 'sent, not read yet']
+              : st === 'nobody' ? [ring, 'No one is listening', 'no one is listening']
+                : [ring, ...copied];
+    return { grp: 'agent', mark: `<i class="mk ${cls}"></i>`, words, line, warn: st === 'nobody' };
+  }
+  // Above a note's Reply, while the agent has it: where the agent is with your last word.
+  function ntTurnHtml(n) {
+    if (!n || n.resolved || !NT.data) return '';
+    const s = ntStand(n);
+    return s.line ? `<div class="nt-turn${s.warn ? ' warn' : ''}">${s.mark}<span>${esc(s.line)}</span></div>` : '';
+  }
+  // A note's comments with a New tag: an agent's you haven't seen (since you last looked, or, marked
+  // unread, since your last word), the first of each run.
+  function ntTagged(n) {
+    const out = new Set();
+    if (!n.new) return out;
+    const mine = n.comments.map((c) => c.by).lastIndexOf(null);
+    let prev = null;
+    n.comments.forEach((c, i) => {
+      const fresh = !!c.by && (n.unread ? i > mine : c.sent > (n.seen || 0));
+      if (fresh && !(prev && prev.fresh && prev.by === c.by)) out.add(c.id);
+      prev = { fresh, by: c.by };
+    });
+    return out;
+  }
+  const NEW_TAG = (n) => `<span class="cm-tag new" data-n="${n}" title="You haven’t seen it yet">New</span>`;
+  // The dot before a talk's count, in a GitHub thread's row and the review's: amber while an
+  // agent's words in it are new to you, filled while it waits for you, a ring otherwise; and whose
+  // turn it is, for the row's tooltip.
+  const talkCls = (notes) => { const open = notes.filter((n) => !n.resolved); return open.some((n) => n.new) ? ' new' : ntNames().length && open.some((n) => n.turn === 'you') ? ' ans' : ''; };
+  function talkWords(notes) {
+    const names = ntNames();
+    if (!names.length) return '';
+    return notes.filter((n) => !n.resolved).map((n) => `N${n.n} ${!n.new ? `waits for ${n.turn === 'you' ? 'you' : ntThem(names)}` : n.unread ? 'is marked unread' : `has ${ntStand(n, names).words}`}`).join(' · ');
+  }
+  // What you've seen: the New tags in view for a second, while the page is in front, then gone. A
+  // note marked unread waits until it's opened again from the Threads tab. Marks on their way to
+  // untangle show at once.
+  const SEEN = { io: null, timers: new Map(), opened: new Set(), pending: new Map() };
+  const inView = (el) => { const r = el.getBoundingClientRect(), m = main.getBoundingClientRect(); return r.height > 0 && r.top >= m.top && r.bottom <= m.bottom; };
+  const seenKept = (n) => n.unread && !SEEN.opened.has(n.n);
+  function seenWatch() {
+    if (!NT.on || !NT.data || typeof IntersectionObserver !== 'function') return;
+    if (!SEEN.io) SEEN.io = new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) seenSoon(Number(e.target.dataset.n)); }), { threshold: 1 });
+    SEEN.io.disconnect();
+    main.querySelectorAll('.cm-tag.new[data-n]').forEach((t) => SEEN.io.observe(t));
+  }
+  function seenSoon(n) {
+    const note = NT.byN.get(n);
+    if (!note || seenKept(note) || SEEN.timers.has(n) || document.visibilityState !== 'visible') return;
+    SEEN.timers.set(n, setTimeout(() => {
+      SEEN.timers.delete(n);
+      const now = NT.byN.get(n);
+      const tags = [...main.querySelectorAll(`.cm-tag.new[data-n="${n}"]`)].filter(inView);
+      if (!now || !now.new || seenKept(now) || document.visibilityState !== 'visible' || !tags.length) return;
+      // The tag fades, then the note is seen.
+      tags.forEach((t) => t.classList.add('gone'));
+      setTimeout(() => { const x = NT.byN.get(n); if (x && x.new && !seenKept(x)) ntMark(x, false); }, moving() ? 400 : 0);
+    }, 1000));
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') return seenWatch();
+    SEEN.timers.forEach(clearTimeout);
+    SEEN.timers.clear();
+  });
+  // A note's thread on screen now, with the page in front: an answer that comes into it is seen.
+  function onScreen(n) {
+    if (document.visibilityState !== 'visible') return false;
+    const el = main.querySelector(`.th.note[data-note="${n.n}"]`) || main.querySelector(`.cm[data-comment="${CSS.escape(n.comments[0].id)}"]`);
+    if (!el) return false;
+    const r = el.getBoundingClientRect(), m = main.getBoundingClientRect();
+    return r.height > 0 && r.bottom > m.top && r.top < m.bottom;
+  }
+  // The marks on their way, on the notes as untangle last sent them.
+  function ntPatch(d) {
+    if (!SEEN.pending.size) return;
+    d.notes.forEach((n) => {
+      const p = SEEN.pending.get(n.n);
+      if (!p) return;
+      if (p.unread) n.unread = true;
+      else { n.seen = Math.max(n.seen || 0, p.seen); n.unread = false; }
+      n.new = n.turn === 'you' && (n.unread || n.comments.some((c) => c.by && c.sent > n.seen));
+    });
+  }
+  // You've seen a note's talk as the page shows it, or you'd come back to it: shown at once (drawn
+  // by the caller when `quiet`), then kept.
+  function ntMark(n, unread, quiet) {
+    const upTo = Math.max(0, ...n.comments.map((c) => c.sent || 0));
+    const p = unread ? { unread: true } : { seen: upTo };
+    SEEN.pending.set(n.n, p);
+    ntPatch(NT.data);
+    if (!quiet) render();
+    api('notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(unread ? { action: 'unread', n: n.n } : { action: 'seen', n: n.n, upTo }) }).then(okJson)
+      .then((j) => { if (SEEN.pending.get(n.n) === p) SEEN.pending.delete(n.n); ntSet(j); render(); })
+      .catch((e) => { if (SEEN.pending.get(n.n) === p) SEEN.pending.delete(n.n); toast(`Couldn’t save: ${e.message}`); ntLoad(); });
+  }
+
   // ---- One thread per point: a note and the GitHub thread it's about, or that a comment of it
   // went into, show as one thread, with GitHub's comments.
   const noteThread = (n) => (n.about && n.about.kind === 'thread' ? n.about.thread : ((n.said || []).filter((s) => s.thread).pop() || {}).thread || null);
@@ -2326,6 +2460,7 @@
 
   function ntSet(d) {
     const was = NT.data;
+    ntPatch(d);
     NT.data = d;
     NT.anchors = new Map(); NT.files = new Map(); NT.byN = new Map(); NT.review = [];
     const fileOf = (p) => { if (!NT.files.has(p)) NT.files.set(p, { line: [], file: [], away: [], open: 0 }); return NT.files.get(p); };
@@ -2347,8 +2482,9 @@
       e.line.push(n);
     });
     if (NT.opening == null || !NT.openingTimer) NT.opening = d.opening;
-    // What an agent did since the page last looked: its answers fade in, and it's said once.
-    const news = [];
+    // What an agent did since the page last looked: its answers fade in, and it's said once. One
+    // that comes into a thread on screen comes in seen.
+    const news = [], arrived = [];
     if (was) {
       const before = new Map(was.notes.map((n) => [n.n, n]));
       // An agent's own notes, from its review of the change, and its answers in threads.
@@ -2357,6 +2493,7 @@
         const b = before.get(n.n);
         const answers = n.comments.filter((c) => c.by && !(b && b.comments.some((x) => x.id === c.id)));
         answers.forEach((c) => GH.fresh.add(c.id));
+        if (answers.length && b && n.new && !seenKept(n) && onScreen(b)) arrived.push(n);
         if (!b && n.comments[0].by) wrote.push(n);
         else if (answers.length) news.push(`${answers[0].by} answered N${n.n}`);
         if (n.resolved && n.resolved.by && !(b && b.resolved)) news.push(`${n.resolved.by} resolved N${n.n}`);
@@ -2383,6 +2520,7 @@
       else if (a.state === 'queued' && b.state !== 'queued' && a.kind === 'codex' && a.busy) news.push(`Queued for ${a.name}: it’s busy`);
     });
     if (news.length) toast(news.slice(0, 3).join(' · '));
+    arrived.forEach((n) => ntMark(n, false, true));
   }
   function ntLoad() {
     if (!NT.on) return;
@@ -2733,6 +2871,7 @@
   // A GitHub thread's comments and its notes' comments, by time. A run of talk that a comment
   // follows folds to one line, "N5 · 3 notes with Claude", that opens it again.
   function talkHtml(key, comments, notes, kind, thread) {
+    const tags = new Map(), tagged = (n) => { if (!tags.has(n.n)) tags.set(n.n, ntTagged(n)); return tags.get(n.n); };
     // A comment a note made comes after the talk that made it, whatever GitHub's clock says.
     const made = new Map(notes.flatMap((n) => (n.said || []).map((x) => [x.id, Date.parse(x.at)])));
     const items = comments.map((c) => ({ at: Math.max(Date.parse(c.created), made.get(c.id) || 0), c }))
@@ -2759,7 +2898,7 @@
       }
       if (!open) return;
       let p = null;
-      r.items.forEach((x) => { h += noteCommentHtml(x.n, x.nc, !p || p.nc.by !== x.nc.by || p.n !== x.n || x.lead, x.lead); p = x; });
+      r.items.forEach((x) => { h += noteCommentHtml(x.n, x.nc, !p || p.nc.by !== x.nc.by || p.n !== x.n || x.lead, x.lead, tagged(x.n).has(x.nc.id)); p = x; });
     });
     return h;
   }
@@ -2791,6 +2930,7 @@
       buttons: local ? noteButtons('nt-thread', `data-thread="${esc(t.id)}"`, 'Add note') : talk ? sendButtons('nt-comment', `data-n="${talk.n}" data-thread="${esc(t.id)}"`, true) : sendButtons('gh-reply', `data-thread="${esc(t.id)}"`, true),
     })
       : t.canReply ? `<button type="button" class="th-reply" data-act="reply-open" data-thread="${esc(t.id)}">Reply…</button>` : '';
+    h += ntTurnHtml(talk);
     if (reply || resBtn || err) h += `<div class="th-f">${reply}${resBtn}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>`;
     return h + '</div>';
   }
@@ -2904,22 +3044,11 @@
     if (!w.code || !w.code.length) return '';
     return `<div class="th-hunk${n.gone ? ' gone' : ''}">${w.code.map((t, i) => `<div class="${n.gone ? 'd' : ''}"><span class="no">${from + i}</span>${esc(t) || ' '}</div>`).join('')}</div>`;
   }
-  // Whether an agent has read a note: held, read, or waiting for its next untangle watch.
-  function noteStatus(n) {
-    const st = n.status;
-    if (st === 'held') return '<span class="cm-tag held" title="Live review is off: it waits until you send it, from the Notes menu">Held</span>';
-    if (st && st.read) return `<span class="cm-st" title="${esc(st.read)} read it through untangle watch">read by ${esc(st.read)}</span>`;
-    if (st === 'queued') {
-      const q = agentsNow().find((a) => a.state === 'queued' && a.on.includes(n.n));
-      return q ? `<span class="cm-st" title="A line from untangle in ${esc(q.name)}’s chat says it’s here">queued for ${esc(q.name)}</span>` : '<span class="cm-st" title="An agent’s next untangle watch reads it">not read yet</span>';
-    }
-    if (st === 'nobody') return '<span class="cm-st warn" title="No untangle watch is waiting in the chat of an agent holding the review: the label in the bar says more">no one is listening</span>';
-    return '';
-  }
   const AGENT_AV = '<span class="av ag" aria-hidden="true">✦</span>';
   // A comment of a note: yours, or an agent's (its mark, its name). The note's first comment leads
-  // with its number, its lines and its tags.
-  function noteCommentHtml(n, c, first, lead) {
+  // with its number, its lines and its tags. An agent's you haven't seen is tagged New, after its
+  // time, so nothing moves when the tag goes.
+  function noteCommentHtml(n, c, first, lead, fresh) {
     const mine = c.by == null;
     const id = n.n + ':' + c.id, key = 'nedit:' + id;
     // Your comments can be edited and deleted; an agent's note, deleted (its answers stay its own).
@@ -2936,12 +3065,13 @@
     const since = (what) => `<span class="cm-tag since" title="${what === 'Gone' ? 'The commits since you wrote it removed its lines' : 'The commits since you wrote it changed its lines: it’s on the lines that replaced them'}">${what} since <code>${esc(shortSha(n.wrote.head))}</code></span>`;
     const agentTag = mine ? '' : '<span class="cm-tag">Agent</span>';
     const ask = c.draft ? '<span class="cm-tag ask" title="Its answer is a comment on GitHub, pending in your review, to edit and send">Draft comment</span>' : '';
-    const tags = (lead ? '<span class="cm-tag local" title="Kept on this machine, not on GitHub">Local</span>' + agentTag + (n.gone ? since('Gone') : n.changed ? since('Changed') : '') + noteStatus(n) : agentTag) + ask;
+    const tags = (lead ? '<span class="cm-tag local" title="Kept on this machine, not on GitHub">Local</span>' + agentTag + (n.gone ? since('Gone') : n.changed ? since('Changed') : '') : agentTag) + ask;
+    const tag = fresh ? NEW_TAG(n.n) : '';
     const av = lead ? `<span class="nt-n" title="Note ${n.n}: “N${n.n}” names it to your agent">N${n.n}</span>` : mine ? '<span class="av"></span>' : AGENT_AV;
     const leg = lead && STACK && n.pr ? `<span class="cm-tag leg" title="${esc(`Its lines are #${n.pr}’s${legOf(n.pr) ? `: ${legOf(n.pr).title}` : ''}`)}">#${n.pr}</span>` : '';
-    const head = first ? `<div class="cm-h"><b class="cm-who">${mine ? 'You' : esc(c.by)}</b>${lead ? `<span>${esc(noteLines(n))}</span>` : ''}${leg}${tags}${when}</div>` : '';
+    const head = first ? `<div class="cm-h"><b class="cm-who">${mine ? 'You' : esc(c.by)}</b>${lead ? `<span>${esc(noteLines(n))}</span>` : ''}${leg}${tags}${when}${tag}</div>` : '';
     const err = NT.errors.get('del:' + id);
-    return `<div class="cm${first ? ' first' : ''}${mine ? '' : ' agent'}" data-comment="${esc(c.id)}">${first ? av : '<span></span>'}<div class="cm-main">${head}${body}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>${first ? '' : `<span class="cm-t">${when}</span>`}${tools ? `<span class="cm-tools">${tools}</span>${cmMoreHtml('nt:' + id)}` : ''}</div>`;
+    return `<div class="cm${first ? ' first' : ''}${mine ? '' : ' agent'}" data-comment="${esc(c.id)}">${first ? av : '<span></span>'}<div class="cm-main">${head}${body}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>${first ? '' : `<span class="cm-t">${tag}${when}</span>`}${tools ? `<span class="cm-tools">${tools}</span>${cmMoreHtml('nt:' + id)}` : ''}</div>`;
   }
   // A note under its lines: a thread with orchid on its edge. Resolved notes fold, saying who
   // resolved them: you, or the agent.
@@ -2961,8 +3091,9 @@
     if (n.about && !o.under) h += `<div class="nt-quote"><span class="muted">${n.about.kind === 'pr' ? 'About the description' : `About ${esc(n.about.author || 'a')}’s comment`} on GitHub</span><div class="cm-body">${noteMd(trunc(n.about.body, 600).split('\n').map((l) => '> ' + l).join('\n'))}</div></div>`;
     if (said.length) h += talkHtml('n' + n.n, said, [n], 'issue');
     else {
+      const tagged = ntTagged(n);
       let prev = null;
-      h += n.comments.map((c, i) => { const first = !prev || prev.by !== c.by || i === 1; prev = c; return noteCommentHtml(n, c, first, i === 0); }).join('');
+      h += n.comments.map((c, i) => { const first = !prev || prev.by !== c.by || i === 1; prev = c; return noteCommentHtml(n, c, first, i === 0, tagged.has(c.id)); }).join('');
     }
     // A draft asked for on the review went into your review's summary.
     const sum = (n.said || []).filter((x) => x.kind === 'summary').pop();
@@ -2985,6 +3116,7 @@
     const tools = (n.changed && !n.gone ? btn('nt-was', NT.was.has(n.n) ? 'Hide the lines it was on' : 'Show the lines it was on', `The lines you wrote it on, at ${shortSha(n.wrote.head)}`, ` aria-expanded="${NT.was.has(n.n)}"`) : '')
       + btn('nt-copy1', 'Copy', 'Copy this note for your agent')
       + btn('nt-resolve', n.resolved ? 'Unresolve' : 'Resolve', n.resolved ? 'Open it again' : 'Resolve it: it folds away', ntBusyAttr('res:' + n.n));
+    h += ntTurnHtml(n);
     h += `<div class="th-f">${reply}<span class="th-tools">${tools}</span>${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>`;
     return h + '</div>';
   }
@@ -3137,24 +3269,38 @@
     const body = editing ? composerHtml('summary', { placeholder: 'Your review’s summary', buttons: [['Update summary', 'data-act="gh-summary"', true]], cancel: 'summary-cancel' }) : `<div class="cm-body">${noteMd(p.body)}</div>`;
     return `<div class="cm first pending cv-sum${drafted ? ' drafted' : ''}">${avatar(d.viewer || {})}<div class="cm-main"><div class="cm-h"><b class="cm-who">Your review</b><span class="cm-tag pending">Pending</span>${drafted ? `<span class="cm-tag draft" title="${esc(x.by)} drafted it, and it reads as it drafted it: make it yours before you send your review">Draft</span>` : ''}<span class="muted">${p.comments ? `${p.comments} comment${p.comments === 1 ? '' : 's'} with it · ` : ''}only you see it until you send it</span></div>${body}${editing ? '' : '<div class="cv-sum-f"><button type="button" class="btn sm" data-act="summary-edit">Edit</button><button type="button" class="btn sm primary" data-act="review-toggle">Finish review</button></div>'}</div></div>`;
   }
-  // The notes in the Threads tab: those of lines and files that aren't in a GitHub thread, open
-  // ones in the files' order, then the resolved ones. Notes on the review are in its own row.
+  // The notes in the Threads tab: those of lines and files that aren't in a GitHub thread, open ones
+  // by whose turn it is (each group in the files' order), then the resolved ones. With no agent yet,
+  // the open ones are one list. Notes on the review are in its own row.
   function notesTabHtml() {
     const d = NT.data;
     if (!d) return `<div class="sb-gh">${NT.error ? `<span class="d">${esc(NT.error)}</span>` : 'Loading the notes…'}</div>`;
     const order = new Map(M().files.map((f, i) => [f.p, i]));
     const sorted = d.notes.filter((n) => !n.review && !inThread(n)).sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.line || 0) - (y.line || 0));
+    const names = ntNames();
     const row = (n) => {
+      const s = ntStand(n, names);
       const last = n.comments[n.comments.length - 1];
       const text = last.draft && !last.body ? 'Asked for a draft comment' : flat(last.body);
       const where = n.file ? 'file' : n.startLine != null ? `${n.startLine}–${n.line}` : n.line;
-      const mk = n.resolved ? (n.resolved.by ? '<i class="mk ok ag" aria-hidden="true">✦</i>' : `<i class="mk ok">${ICON.check}</i>`) : `<i class="mk note${n.changed || n.gone ? ' ch' : ''}"></i>`;
-      const who = last.by ? `${last.by}: ` : n.comments.length > 1 ? 'You: ' : '';
-      const resolved = n.resolved ? ` · resolved${n.resolved.by ? ` by ${n.resolved.by}` : ''}` : '';
-      return `<button type="button" class="sb-row thr${n.resolved ? ' done' : ''}" data-act="nt-open" data-n="${n.n}" title="${esc(`N${n.n} · ${n.path}:${where}${resolved}${n.changed && !n.gone ? ' · changed since you wrote it' : n.gone ? ' · its lines are gone' : ''} · ${who}${trunc(text, 200)}`)}">${mk}<span class="nm">N${n.n} · ${esc(fileName(n.path))}:${where}<span class="sn">${esc(trunc(who + text, 90))}</span></span><span class="cnt">${n.comments.length > 1 ? n.comments.length : ''}</span></button>`;
+      // Its group says whose the last word is: an agent's keeps its name where the group doesn't say it.
+      const who = last.by && (names.length > 1 || names[0] !== last.by) ? `${last.by}: ` : '';
+      const title = `N${n.n} · ${n.path}:${where}${s.words ? ` · ${s.words}` : ''}${n.changed && !n.gone ? ' · changed since you wrote it' : n.gone ? ' · its lines are gone' : ''} · ${who}${trunc(text, 200)}`;
+      const inner = `<span class="nm">N${n.n} · ${esc(fileName(n.path))}:${where}<span class="sn">${esc(trunc(who + text, 90))}</span></span><span class="cnt">${n.comments.length > 1 ? n.comments.length : ''}</span>`;
+      const attrs = `class="sb-row thr${n.resolved ? ' done' : ''}${n.new ? ' new' : ''}" data-act="nt-open" data-n="${n.n}" data-grp="${s.grp}" title="${esc(title)}"`;
+      if (s.grp !== 'you') return `<button type="button" ${attrs}>${s.mark}${inner}</button>`;
+      // Waiting for you, its dot marks it unread, or seen. A row that holds it is a div, as a button
+      // can't hold a button.
+      const mark = `Mark N${n.n} ${n.new ? 'seen' : 'unread'} (Shift+Space)`;
+      return `<div role="button" tabindex="0" ${attrs}><button type="button" class="mk-b" data-act="nt-mark" data-n="${n.n}" title="${esc(mark)}" aria-label="${esc(mark)}" tabindex="-1">${s.mark}<i class="mk-to ${n.new ? 'ans' : 'new'}"></i></button>${inner}</div>`;
     };
     const open = sorted.filter((n) => !n.resolved), done = sorted.filter((n) => n.resolved);
-    let h = open.length ? open.map(row).join('') : `<div class="sb-gh">${localMode() ? 'None open: the + on a line writes one.' : 'None open.'}</div>`;
+    const group = (label, title, list) => (list.length ? `<div class="sb-group turn" title="${esc(title)}"><span>${esc(label)}</span><span>${list.length}</span></div>` + list.map(row).join('') : '');
+    const them = ntThem(names);
+    let h = !open.length ? `<div class="sb-gh">${localMode() ? 'None open: the + on a line writes one.' : 'None open.'}</div>`
+      : !names.length ? open.map(row).join('')
+        : group('Waiting for you', `${names.length === 1 ? them : 'An agent'} had the last word: yours to answer or resolve`, open.filter((n) => n.turn === 'you'))
+          + group(`Waiting for ${them}`, `You had the last word: ${them === 'the agents' ? 'theirs' : `${them}’s`} to answer`, open.filter((n) => n.turn !== 'you'));
     if (done.length) {
       h += `<button type="button" class="sb-group" data-act="nt-resolved-toggle" aria-expanded="${NT.showResolved}"><span>Resolved notes</span><span>${done.length} ${NT.showResolved ? '▾' : '▸'}</span></button>`;
       if (NT.showResolved) h += done.map(row).join('');
@@ -3174,14 +3320,16 @@
     latest.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
     const sn = d && d.pending && d.pending.body ? `Your pending review: ${flat(d.pending.body)}` : latest.length ? latest[latest.length - 1].text : d ? flat(d.pr.title) : 'Notes about the whole review, for your agent';
     const k = d ? d.comments.length : 0;
-    const counts = (k ? `<span class="n gh" title="${k} comment${k === 1 ? '' : 's'} on the conversation">${k}</span>` : '') + (open ? `<span class="n nt" title="${open} open note${open === 1 ? '' : 's'} on the review">${open}</span>` : '');
-    return `<button type="button" class="sb-row sb-rv" data-act="conversation"${v.kind === 'conversation' ? ' aria-current="true"' : ''} title="The review’s own thread: ${d ? 'the description, the conversation, ' : ''}the notes on the review${d ? ' and your pending review' : ''}"><span class="tw">${ICON.discussion}</span><span class="nm ui">The review<span class="sn">${esc(trunc(sn, 90))}</span></span><span class="cnt">${counts}</span></button>`;
+    const turn = open ? talkWords(notes) : '';
+    const counts = (k ? `<span class="n gh" title="${k} comment${k === 1 ? '' : 's'} on the conversation">${k}</span>` : '') + (open ? `<span class="n nt${talkCls(notes)}" title="${open} open note${open === 1 ? '' : 's'} on the review">${open}</span>` : '');
+    return `<button type="button" class="sb-row sb-rv" data-act="conversation"${v.kind === 'conversation' ? ' aria-current="true"' : ''} title="The review’s own thread: ${d ? 'the description, the conversation, ' : ''}the notes on the review${d ? ' and your pending review' : ''}${turn ? ` · ${esc(turn)}` : ''}"><span class="tw">${ICON.discussion}</span><span class="nm ui">The review<span class="sn">${esc(trunc(sn, 90))}</span></span><span class="cnt">${counts}</span></button>`;
   }
   // A section of the Threads tab, open or folded (kept in this browser): Notes, or From GitHub.
   const sectionOpen = (key) => !(Array.isArray(UI.foldedThreads) && UI.foldedThreads.includes(key));
-  function threadsSectionHtml(key, label, title, count, body) {
+  // Folded over a note with an agent's words new to you, its head has a dot by its count.
+  function threadsSectionHtml(key, label, title, count, body, fresh) {
     const open = sectionOpen(key);
-    return `<button type="button" class="sb-sec ${key}" data-act="threads-fold" data-key="${key}" aria-expanded="${open}" title="${esc(title)}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><i class="sw" aria-hidden="true"></i><span class="nm">${label}</span><span class="cnt">${count}</span></button>`
+    return `<button type="button" class="sb-sec ${key}" data-act="threads-fold" data-key="${key}" aria-expanded="${open}" title="${esc(title)}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><i class="sw" aria-hidden="true"></i><span class="nm">${label}</span><span class="cnt">${count}${!open && fresh ? '<span class="nw" aria-hidden="true"></span>' : ''}</span></button>`
       + (open ? `<div class="sb-sec-body">${body}</div>` : '');
   }
   // The Threads tab: the review's own row first; then the notes (in local mode, or when there are
@@ -3193,8 +3341,9 @@
     if (!NT.on || !(localMode() || (NT.data && (NT.data.notes.length || NT.data.agents.length)))) return top + gh;
     const notes = NT.data ? NT.data.notes.filter((n) => !n.resolved && !n.review && !inThread(n)).length : '';
     const threads = GH.data ? GH.data.threads.filter((t) => !t.resolved).length : '';
-    return top + threadsSectionHtml('notes', 'Notes', 'Kept on this machine, for your agent', notes, notesTabHtml())
-      + threadsSectionHtml('github', 'GitHub', GH.on ? 'The pull request’s threads on GitHub, with your notes in them' : 'This review has no pull request', threads, gh);
+    const fresh = NT.data ? NT.data.notes.filter((n) => n.new && !n.review) : [];
+    return top + threadsSectionHtml('notes', 'Notes', 'Kept on this machine, for your agent', notes, notesTabHtml(), fresh.some((n) => !inThread(n)))
+      + threadsSectionHtml('github', 'GitHub', GH.on ? 'The pull request’s threads on GitHub, with your notes in them' : 'This review has no pull request', threads, gh, fresh.some(inThread));
   }
   function githubTabHtml(v) {
     const d = GH.data;
@@ -3212,10 +3361,11 @@
       const pend = t.comments.some((x) => x.pending), drafted = t.comments.some((x) => draftOf(x));
       const mk = drafted ? '<i class="mk pend draft"></i>' : pend ? '<i class="mk pend"></i>' : t.resolved ? `<i class="mk ok">${ICON.check}</i>` : t.at == null && !t.file ? '<i class="mk away"></i>' : '<i class="mk gh"></i>';
       // Its notes, counted by its comments: the talk with the agent in it, only here.
-      const talk = NT.on ? notesIn(t).reduce((k, n) => k + n.comments.length, 0) : 0;
-      const counts = `${t.comments.length > 1 || talk ? `<span class="n gh">${t.comments.length}</span>` : ''}${talk ? `<span class="n nt" title="${talk} note${talk === 1 ? '' : 's'} with your agent in it, only here">${talk}</span>` : ''}`;
+      const ns = NT.on ? notesIn(t) : [];
+      const talk = ns.reduce((k, n) => k + n.comments.length, 0), turn = talk ? talkWords(ns) : '';
+      const counts = `${t.comments.length > 1 || talk ? `<span class="n gh">${t.comments.length}</span>` : ''}${talk ? `<span class="n nt${talkCls(ns)}" title="${talk} note${talk === 1 ? '' : 's'} with your agent in it, only here">${talk}</span>` : ''}`;
       const leg = STACK && t.pr != null && t.pr !== topLeg() ? `<b class="lgp">#${t.pr}</b>` : '';
-      return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${leg ? `On #${t.pr}: ` : ''}${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}${drafted ? ' · a draft of your agent’s, pending' : ''}">${mk}<span class="nm">${leg}${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${counts}</span></button>`;
+      return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${leg ? `On #${t.pr}: ` : ''}${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}${drafted ? ' · a draft of your agent’s, pending' : ''}${turn ? ` · ${esc(turn)}` : ''}">${mk}<span class="nm">${leg}${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${counts}</span></button>`;
     };
     const open = sorted.filter((t) => !t.resolved), done = sorted.filter((t) => t.resolved);
     h += open.length ? open.map(row).join('') : '<div class="sb-gh">None open.</div>';
@@ -5858,16 +6008,20 @@
     const t = stats(all);
     const pct = t.all ? Math.round((1 - t.lines / t.all) * 100) : 100;
     const v = state.view;
-    const tab = (k, label, n) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}">${label}<i>${n}</i></button>`;
-    // The Threads tab: GitHub's open threads and the open notes.
+    // A tab's dot, by its count in no room of its own, says what's new in it.
+    const tab = (k, label, n, fresh) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}"${fresh ? ` title="${esc(fresh)}"` : ''}>${label}<i>${n}</i>${fresh ? '<span class="nw" aria-hidden="true"></span>' : ''}</button>`;
+    // The Threads tab: GitHub's open threads and the open notes, with a dot while an agent's words
+    // in one are new to you.
     const threadsOn = GH.on || NT.on;
+    const fresh = NT.data ? NT.data.notes.filter((x) => x.new) : [];
+    const freshWords = fresh.length ? `New from ${fresh.length === 1 ? lastAgent(fresh[0]) : ntThem(ntNames())}: ${nList(fresh.map((x) => x.n))}` : '';
     const openNotes = NT.data ? NT.data.notes.filter((x) => !x.resolved).length : 0;
     const openThreads = GH.on && !GH.data && !GH.error ? '…' : (GH.data ? GH.data.threads.filter((x) => !x.resolved).length : 0) + openNotes;
     let h = `<div class="sb-top">${compact() ? `<div class="sb-pr">${prHtml(true)}</div>` : ''}<div class="sb-prog${t.open ? '' : ' all'}" title="${pct}% of the changed lines reviewed: ${t.total - t.open} of ${t.total} changes">`
       + (t.open ? `<b>${t.open}</b><span>change${t.open === 1 ? '' : 's'} to review</span>` : `<b>${ICON.check}</b><span>All ${t.total} changes reviewed</span>`)
       + `<button type="button" class="ib" data-act="menu" data-menu="side" title="Where your marks are kept" aria-label="Marks" aria-haspopup="dialog" aria-expanded="${MENU.open === 'side'}">${ICON.more}</button><div class="sb-bar" aria-hidden="true"><i style="width:${pct}%"></i></div></div>`
       // Four tabs fit the sidebar without their counts: they show when it's wider.
-      + `<div class="sb-tabs${threadsOn && hxOn() ? ' four' : ''}" role="tablist">${tab('chains', 'Chains', m.chains.length)}${tab('files', 'Files', m.files.length)}${threadsOn ? tab('comments', 'Threads', openThreads) : ''}${hxOn() ? tab('commits', 'Commits', HISTORY.commits.length) : ''}</div></div>`;
+      + `<div class="sb-tabs${threadsOn && hxOn() ? ' four' : ''}" role="tablist">${tab('chains', 'Chains', m.chains.length)}${tab('files', 'Files', m.files.length)}${threadsOn ? tab('comments', 'Threads', openThreads, freshWords) : ''}${hxOn() ? tab('commits', 'Commits', HISTORY.commits.length) : ''}</div></div>`;
     // Rows that stay at the top with the tabs, over a line: the views beside the list.
     let pin = '';
     const top = h;
@@ -5960,10 +6114,12 @@
   document.addEventListener('pointerdown', (e) => { pointerAt = [e.clientX, e.clientY]; }, { passive: true, capture: true });
   const under = (el) => { if (!pointerAt) return false; const r = el.getBoundingClientRect(); return pointerAt[0] >= r.left && pointerAt[0] < r.right && pointerAt[1] >= r.top && pointerAt[1] < r.bottom; };
   // The sidebar's rows by what they open, for the motion between two drawings of it.
-  const sideKey = (r) => { const d = r.dataset; return d.chain != null ? 'c' + d.chain : d.open != null ? 'f' + d.open : d.standalone ? 's' : d.thread ? 't' + d.thread : d.map != null ? 'map' : d.dir != null ? 'd' + d.dir : d.act || ''; };
+  const sideKey = (r) => { const d = r.dataset; return d.chain != null ? 'c' + d.chain : d.open != null ? 'f' + d.open : d.standalone ? 's' : d.thread ? 't' + d.thread : d.map != null ? 'map' : d.dir != null ? 'd' + d.dir : d.act === 'nt-open' ? 'n' + d.n : d.act || ''; };
+  // A note's mark, as it looks.
+  const markLook = (r) => { const mk = r.querySelector('.mk'); if (!mk) return null; const cs = getComputedStyle(mk); return { cls: mk.className, bg: cs.backgroundColor, sh: cs.boxShadow }; };
   function sideRows() {
     const out = new Map();
-    side.querySelectorAll('.sb-row').forEach((r) => out.set(sideKey(r), { done: r.classList.contains('done'), cur: r.getAttribute('aria-current') === 'true', top: r.offsetTop, pin: !!r.closest('.sb-pin'), cnt: (r.querySelector('.cnt') || {}).textContent, faded: r.classList.contains('chain-out'), held: !!r.querySelector('.cnt > .mk') }));
+    side.querySelectorAll('.sb-row').forEach((r) => out.set(sideKey(r), { done: r.classList.contains('done'), cur: r.getAttribute('aria-current') === 'true', top: r.offsetTop, pin: !!r.closest('.sb-pin'), cnt: (r.querySelector('.cnt') || {}).textContent, faded: r.classList.contains('chain-out'), held: !!r.querySelector('.cnt > .mk'), grp: r.dataset.grp, mk: r.dataset.grp ? markLook(r) : null }));
     side.querySelectorAll('.cm-row[data-commit]').forEach((r) => out.set('k' + r.dataset.commit, { fade: getComputedStyle(r).opacity }));
     return out;
   }
@@ -5991,6 +6147,10 @@
         const nm = r.querySelector('.nm'), ink = r.classList.contains('s-a') ? ['add-ink', 'add-no'] : r.classList.contains('s-d') ? ['del-ink', 'del-no'] : ['text', 'text-3'];
         if (nm) nm.animate([{ color: `var(--${ink[0]})` }, { color: `var(--${ink[1]})` }], { duration: 200, easing: EASE });
       }
+      // A note that changed group comes into its place there, its mark easing to its new look.
+      if (v.grp && r.dataset.grp && v.grp !== r.dataset.grp) r.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: EASE });
+      const look = v.mk && r.dataset.grp ? markLook(r) : null;
+      if (look && look.cls !== v.mk.cls) r.querySelector('.mk').animate([{ backgroundColor: v.mk.bg, boxShadow: v.mk.sh }, { backgroundColor: look.bg, boxShadow: look.sh }], { duration: 200, easing: EASE });
       // A folder just closed takes the mark of what's left to review inside it.
       const held = r.querySelector('.cnt > .mk');
       if (held && !v.held) held.animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 200, easing: EASE });
@@ -6786,6 +6946,7 @@
     motionAfter(snap);
     glowRows();
     commentsMotion();
+    seenWatch();
     if (MENU.open) renderMenu();
     renderPill();
     mini.update();
@@ -7823,6 +7984,7 @@
     const note = NT.byN.get(n);
     if (!note) return;
     if (note.resolved) NT.opened.add(n);
+    SEEN.opened.add(n);
     state.peek = null;
     // On the review: in the review's own thread. In a GitHub thread: there, pulsing.
     if (note.review) { state.view = { kind: 'conversation' }; NT.reveal = n; return render({ top: true }); }
@@ -7972,6 +8134,17 @@
     if (act === 'nt-away') { NT.folded.has(d.p) ? NT.folded.delete(d.p) : NT.folded.add(d.p); hint({ away: { act, p: d.p } }); return render(); }
     if (act === 'nt-resolved-toggle') { NT.showResolved = !NT.showResolved; return renderSide(); }
     if (act === 'nt-open') return openNote(n);
+    // A note's dot, waiting for you: unread again, or seen. Its row keeps the focus, or takes it
+    // from the dot.
+    if (act === 'nt-mark') {
+      if (!note || note.turn !== 'you') return;
+      const ae = document.activeElement, row = ae && ae.closest ? ae.closest('.sb-row[data-n]') : null;
+      if (!note.new) SEEN.opened.delete(n);
+      ntMark(note, !note.new);
+      const again = row && row.dataset.n === String(n) && side.querySelector(`.sb-row[data-n="${n}"]`);
+      if (again) again.focus({ preventScroll: true });
+      return;
+    }
     if (act === 'nt-copy1') {
       if (note) copyText(ntExport([note]), `N${n} copied for your agent`).then((ok) => { if (ok && !note.copied) ntCopied([n]); });
       return;

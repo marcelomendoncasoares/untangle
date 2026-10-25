@@ -122,14 +122,14 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
       await page!.type('Name it greetUser?');
       await page!.click('.th.new.note [data-act="nt-add"]');
       await page!.until(`!!document.querySelector('.th.note[data-note="2"]') && !!document.querySelector('.ag-line')`, 10_000);
-      saved = await read(page!, `[document.querySelector('#vw-toast')?.textContent ?? '', document.querySelector('.th.note[data-note="2"] .cm-st')?.textContent ?? 'none'].join(' | ')`);
+      saved = await read(page!, `[document.querySelector('#vw-toast')?.textContent ?? '', document.querySelector('.th.note[data-note="2"] .nt-turn')?.textContent ?? 'none'].join(' | ')`);
       opened = await read(page!, menu);
     });
 
-    it('then the bar says Claude isn’t listening, the note reaches no one, and the menu opens, offering to wake Claude with the line for its chat.', () => {
+    it('then the bar says Claude isn’t listening, the line above the note’s Reply says no one is, and the menu opens, offering to wake Claude with the line for its chat.', () => {
       assert.deepEqual([deaf, saved, opened], [
         'st-deaf | Claude isn’t listening | untangle',
-        'Note saved. Claude isn’t listening | no one is listening',
+        'Note saved. Claude isn’t listening | No one is listening',
         'Claude isn’t listening | Wake types into its chat, in Orcauntangle: 1 new note on the review of feature. Run untangle watch to read it. | Copy for agent | Wake Claude | Write to Claude about the review',
       ]);
     });
@@ -162,8 +162,8 @@ describe('Given a review a Claude chat in an Orca terminal holds, ', { skip, tim
       shown = await read(page!, `[${lead}.querySelector('.cm-who').textContent, ...[...${lead}.querySelectorAll('.cm-tag')].map((t) => '(' + t.textContent + ')'), ${lead}.querySelector('.cm-body').textContent.trim(), !!${lead}.querySelector('[data-act="nt-delete"]'), document.querySelector('#vw-toast')?.textContent ?? ''].join(' | ')`);
     });
 
-    it('then it sits under its line as Claude’s thread, which you can delete, and a toast says so.', () => {
-      assert.equal(shown, 'Claude | (Local) | (Agent) | Name the parameter person? | true | Claude wrote N3');
+    it('then it sits under its line as Claude’s thread, new to you, which you can delete, and a toast says so.', () => {
+      assert.equal(shown, 'Claude | (Local) | (Agent) | (New) | Name the parameter person? | true | Claude wrote N3');
     });
   });
 

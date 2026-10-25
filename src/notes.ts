@@ -2,9 +2,10 @@
 // per review in the cache, keyed like the review's marks (pr-168), so they outlive
 // pushes. Each note moves with its lines when the review moves to newer commits. An agent reads
 // them with `untangle watch`, answers in their threads with `untangle reply`, may resolve them,
-// and writes notes of its own with `untangle note`; what each agent has read is kept with the
-// notes. An agent holds the review from one chat at a time: the page says where that chat is, and
-// a Codex chat hears of new notes in a line untangle puts in it.
+// and writes notes of its own with `untangle note`; what each agent has read, and what you've seen
+// of each note's talk, are kept with the notes. An agent holds the review from one chat at a time:
+// the page says where that chat is, and a Codex chat hears of new notes in a line untangle puts in
+// it.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -82,6 +83,10 @@ export interface Note {
   comments: NoteComment[];
   /** The comments on GitHub it made, oldest first: it shows in their thread from then on. */
   said: Said[];
+  /** What you've seen of its talk: the notes' sequence when you last looked. */
+  seen: number;
+  /** Marked unread: an agent's last words in it are new to you until you look again. */
+  unread: boolean;
 }
 
 /** What changed besides new comments, for the agents: by the notes' sequence. */
@@ -160,6 +165,10 @@ export type NoteAction =
   | { action: 'resolve'; n: number; resolved: boolean }
   | { action: 'settings'; mode?: 'local' | 'github'; live?: boolean; opening?: string; scope?: Scope }
   | { action: 'copied'; ns: number[] }
+  /** You've seen a note's talk, up to that sequence (all of it when none). */
+  | { action: 'seen'; n: number; upTo?: number }
+  /** You'd come back to a note: an agent's last words in it are new to you again. */
+  | { action: 'unread'; n: number }
   | { action: 'send' }
   | { action: 'post'; ns: number[] };
 
@@ -370,6 +379,9 @@ export class Notes {
       delete note.quote;
       note.said ??= [];
       note.pr ??= null;
+      // Notes from before untangle kept what you'd seen of them: you had seen them.
+      note.seen ??= this.data.seq;
+      note.unread ??= false;
     }
   }
 
@@ -483,6 +495,32 @@ export class Notes {
     return c;
   }
 
+  /** A new note's first comment, and what you've seen of it: all of a note of yours, none of an agent's. */
+  private newTalk(by: By, body: string, draft: boolean): Pick<Note, 'comments' | 'seen' | 'unread'> {
+    const before = this.data.seq;
+    const comments = [this.comment(by, body, draft)];
+    return { comments, seen: by === null ? this.data.seq : before, unread: false };
+  }
+
+  /** You've seen all of a note's talk: you answered in it, or resolved it. */
+  private saw(note: Note) {
+    note.seen = this.data.seq;
+    note.unread = false;
+  }
+
+  /**
+   * Who had the last word in a note: its last comment's author, or the agent that answered the
+   * draft your last comment asked for, on GitHub.
+   */
+  private lastBy(note: Note): By {
+    const last = note.comments[note.comments.length - 1];
+    if (last.by === null && last.draft) {
+      const s = note.said.findLast((x) => x.by !== null && x.at >= last.at);
+      if (s) return s.by;
+    }
+    return last.by;
+  }
+
   /** What a note is about on GitHub, as the page sends it: kept short, and a known kind or none. */
   private about(a: Extract<NoteAction, { action: 'add' }>): About | null {
     const x = a.about ?? (a.quote ? { kind: 'thread' as const, ...a.quote } : null);
@@ -509,7 +547,7 @@ export class Notes {
       const note: Note = {
         n: d.next++, pr: null, review: true, path: '', file: false, side: 'RIGHT', line: null, startSide: null, startLine: null, code: [],
         wrote: { head: ctx.head, path: '', line: null, startLine: null, code: [] }, changed: false, gone: false,
-        resolved: null, copied: false, about, comments: [this.comment(by, body, draft)], said: [],
+        resolved: null, copied: false, about, ...this.newTalk(by, body, draft), said: [],
       };
       d.notes.push(note);
       return note;
@@ -531,7 +569,7 @@ export class Notes {
     const note: Note = {
       n: d.next++, pr: ctx.leg?.({ path: a.path, side, line: line ?? undefined }, about?.kind === 'thread' ? about.thread : undefined) ?? null, path: a.path, file, side, line, startSide, startLine, code,
       wrote: { head: ctx.head, path: a.path, line, startLine, code }, changed: false, gone: false,
-      resolved: null, copied: false, about, comments: [this.comment(by, body, draft)], said: [],
+      resolved: null, copied: false, about, ...this.newTalk(by, body, draft), said: [],
     };
     d.notes.push(note);
     if (note.pr != null) void ctx.legWork?.(note.pr).catch(() => {});
@@ -677,25 +715,34 @@ export class Notes {
 
   // ---- The page
 
-  /** What the page shows: the settings, the notes with their text, and the agents. */
+  /**
+   * What the page shows: the settings, the notes with their text and where each stands, the agents,
+   * and the names of those that have held the review.
+   */
   view() {
     const d = this.data;
     const agents = this.agents();
     // A note no agent has read waits for one: unless every agent holding the review is deaf or gone.
     const nobody = agents.length > 0 && agents.every((a) => a.state === 'deaf' || a.state === 'left');
+    // Whether an agent read your last comment in a note, or what keeps it from one.
     const read = (note: Note) => {
-      const sent = note.comments[0].sent;
-      if (note.comments[0].by !== null) return null;
+      const sent = note.comments.findLast((c) => c.by === null)?.sent;
+      if (sent === undefined) return null;
       if (sent == null) return 'held';
       const by = Object.entries(d.agents).find(([, a]) => a.seen >= sent);
       return by ? { read: by[0] } : nobody ? 'nobody' : Object.keys(d.agents).length ? 'queued' : null;
     };
+    // Whose word is next in an open note: yours, once an agent had the last; else the agent's.
+    const turn = (note: Note) => (note.resolved ? null : this.lastBy(note) === null ? 'agent' : 'you');
+    // An agent's words you haven't seen: since you last looked, or, marked unread, its last ones.
+    const fresh = (note: Note) => turn(note) === 'you' && (note.unread || note.comments.some((c) => c.by !== null && c.sent != null && c.sent > note.seen));
     return {
       // Where comments go, until you choose: notes, for a review an agent started or one that has some.
       rev: this.rev, gh: this.ghRev, mode: d.mode ?? (this.byAgent || d.notes.length ? 'local' : null), live: d.live, opening: d.opening, scope: d.scope, head: d.head, header: this.header(),
       held: d.notes.reduce((k, n) => k + n.comments.filter((c) => c.by === null && c.sent == null).length, 0),
-      notes: d.notes.map((n) => ({ ...n, text: this.noteText(n), status: read(n) })),
+      notes: d.notes.map((n) => ({ ...n, text: this.noteText(n), status: read(n), turn: turn(n), new: fresh(n) })),
       agents,
+      holders: Object.keys(d.agents),
     };
   }
 
@@ -744,14 +791,14 @@ export class Notes {
   /** The open notes an agent had the last word on: where they are, who, and whether it wrote them. */
   waiting(): Array<{ n: number; path: string; line: number | null; by: string; wrote: boolean }> {
     return this.data.notes
-      .filter((n) => !n.resolved && n.comments[n.comments.length - 1].by !== null)
-      .map((n) => ({ n: n.n, path: n.path, line: n.line, by: n.comments[n.comments.length - 1].by!, wrote: n.comments[0].by !== null }));
+      .filter((n) => !n.resolved && this.lastBy(n) !== null)
+      .map((n) => ({ n: n.n, path: n.path, line: n.line, by: this.lastBy(n)!, wrote: n.comments[0].by !== null }));
   }
 
   /** Open notes, and those an agent had the last word on: they wait for your answer. */
   counts(): { open: number; waiting: number } {
     const open = this.data.notes.filter((n) => !n.resolved);
-    return { open: open.length, waiting: open.filter((n) => n.comments[n.comments.length - 1].by !== null).length };
+    return { open: open.length, waiting: open.filter((n) => this.lastBy(n) !== null).length };
   }
 
   /** Whether an agent holds the review now: untangle then looks for its commits more often. */
@@ -770,7 +817,9 @@ export class Notes {
         break;
       case 'reply': {
         const draft = a.draft === true;
-        this.note(a.n).comments.push(this.comment(null, this.body(a.body, draft), draft));
+        const note = this.note(a.n);
+        note.comments.push(this.comment(null, this.body(a.body, draft), draft));
+        this.saw(note);
         break;
       }
       case 'comment': {
@@ -780,6 +829,7 @@ export class Notes {
         note.said.push(r.said);
         conversation = r.conversation;
         if (note.comments[0].sent != null) this.event({ type: 'said', n: note.n, by: null, body });
+        this.saw(note);
         break;
       }
       case 'edit': {
@@ -808,6 +858,7 @@ export class Notes {
         if (!!note.resolved === !!a.resolved) break;
         note.resolved = a.resolved ? { by: null, at: new Date().toISOString() } : null;
         if (note.comments[0].sent != null) this.event({ type: a.resolved ? 'resolve' : 'reopen', n: note.n, by: null });
+        if (a.resolved) this.saw(note);
         break;
       }
       case 'settings': {
@@ -823,6 +874,17 @@ export class Notes {
       }
       case 'copied':
         (Array.isArray(a.ns) ? a.ns : []).forEach((n) => { const note = d.notes.find((x) => x.n === n); if (note) note.copied = true; });
+        break;
+      case 'seen': {
+        // Up to what the page showed: an answer that came since stays new.
+        const note = this.note(a.n);
+        const upTo = Number.isInteger(a.upTo) ? Math.min(a.upTo!, d.seq) : d.seq;
+        note.seen = Math.max(note.seen, upTo);
+        note.unread = false;
+        break;
+      }
+      case 'unread':
+        this.note(a.n).unread = true;
         break;
       case 'send':
         this.release();

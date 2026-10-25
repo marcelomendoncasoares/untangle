@@ -304,6 +304,25 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
     });
   });
 
+  describe('when Codex answers in the thread’s talk while the review’s own thread is open, ', () => {
+    let row: string;
+
+    before(async () => {
+      await page!.click('[data-tab="comments"]');
+      await page!.until(`!!document.querySelector('.sb-row.sb-rv')`);
+      await page!.click('.sb-row.sb-rv');
+      await page!.until(`!!document.querySelector('#vw-main .conv') && !document.querySelector('#vw-main [data-thread="THREAD_9"]')`);
+      await agent(['reply', '-agent', 'Codex', 'N2', 'It', 'prints', 'the', 'name', 'by', 'mistake.']);
+      await page!.until(`!!document.querySelector('.sb-row[data-thread="THREAD_9"] .n.nt.new')`, 10_000);
+      row = await read(page!, `[document.querySelector('.sb-row[data-thread="THREAD_9"]').title.split(' · ').pop(), document.querySelector('[data-tab="comments"] .nw') ? 'the tab’s dot' : 'no dot'].join(' | ')`);
+      await openApp();
+    });
+
+    it('then the thread’s row has the talk’s dot amber, and says N2 has a new answer from Codex, as the tab’s dot does.', () => {
+      assert.equal(row, 'N2 has a new answer from Codex | the tab’s dot');
+    });
+  });
+
   describe('when the hunk with GitHub’s thread and the notes is folded, ', () => {
     let counts: string;
 

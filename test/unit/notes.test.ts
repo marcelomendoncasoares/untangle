@@ -616,6 +616,70 @@ describe('Given notes a review keeps, and an agent that reviews the change too, 
   });
 });
 
+describe('Given a note an agent answers, and what you’ve seen of it, ', () => {
+  let g: ReturnType<typeof greeting>;
+  let dir = '';
+  let notes: InstanceType<typeof Notes>;
+  const note = (n: number) => notes.view().notes.find((x) => x.n === n)!;
+  // Whose turn it is, whether it's new to you, and whether an agent read your last word.
+  const stands = (n: number) => { const x = note(n); return [x.turn, x.new, x.status]; };
+
+  before(() => {
+    g = greeting();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-notes-'));
+    notes = new Notes(path.join(dir, 'feature.json'), () => {}, standIn().bell);
+    notes.attach(context(g.repo, g.base, g.head));
+  });
+
+  after(() => {
+    notes.close();
+    g.repo.remove();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('when you write it, then it waits for the agent, nothing in it is new to you, and no agent has held the review yet.', async () => {
+    await add(notes, 3, 'Why a local?');
+    assert.deepEqual([stands(1), notes.view().holders], [['agent', false, null], []]);
+  });
+
+  it('when the agent reads it and answers, then it waits for you, new, and the agent read your word.', async () => {
+    await notes.watch('Claude', { timeout: 5_000 });
+    await notes.reply('Claude', 1, 'To name the message.', false);
+    assert.deepEqual([stands(1), notes.view().holders], [['you', true, { read: 'Claude' }], ['Claude']]);
+  });
+
+  it('when the page says you saw it up to what it showed, then an answer that came since is still new, until you see that too.', async () => {
+    const shown = Math.max(...note(1).comments.map((c) => c.sent ?? 0));
+    await notes.reply('Claude', 1, 'And to keep the line short.', false);
+    await notes.act({ action: 'seen', n: 1, upTo: shown });
+    const still = note(1).new;
+    await notes.act({ action: 'seen', n: 1 });
+    assert.deepEqual([still, note(1).new], [true, false]);
+  });
+
+  it('when you mark it unread, then it is new again, until you see it.', async () => {
+    await notes.act({ action: 'unread', n: 1 });
+    const unread = [note(1).new, note(1).unread];
+    await notes.act({ action: 'seen', n: 1 });
+    assert.deepEqual([unread, [note(1).new, note(1).unread]], [[true, true], [false, false]]);
+  });
+
+  it('when you reply, then it waits for the agent, and whether it read it follows your reply, not your first word.', async () => {
+    await notes.act({ action: 'unread', n: 1 });
+    await notes.act({ action: 'reply', n: 1, body: 'Inline it, then.' });
+    const replied = [...stands(1), note(1).unread];
+    await notes.watch('Claude', { timeout: 5_000 });
+    assert.deepEqual([replied, stands(1)], [['agent', false, 'nobody', false], ['agent', false, { read: 'Claude' }]]);
+  });
+
+  it('when the agent writes a note of its own, then it is new to you; once you resolve it, it waits for no one.', async () => {
+    const wrote = notes.write('Claude', { path: 'lib/app.dart', side: 'RIGHT', line: 4, body: 'Flush after it?' });
+    const fresh = stands(wrote.n);
+    await notes.act({ action: 'resolve', n: wrote.n, resolved: true });
+    assert.deepEqual([fresh, stands(wrote.n), notes.counts()], [['you', true, null], [null, false, null], { open: 1, waiting: 0 }]);
+  });
+});
+
 describe('Given where comments go, before you choose, ', () => {
   let g: ReturnType<typeof greeting>;
   let dir = '';
@@ -875,5 +939,19 @@ describe('Given a notes file from before notes knew what they made on GitHub, ',
     const note = new Notes(file).view().notes[0] as Record<string, unknown>;
     fs.rmSync(dir, { recursive: true, force: true });
     assert.deepEqual([note.about, note.said, 'quote' in note], [{ kind: 'thread', thread: 'THREAD_1', author: 'grace', body: 'Rename it.', url: 'https://github.com/x' }, [], false]);
+  });
+});
+
+describe('Given a notes file from before untangle kept what you’d seen, with an answer of Claude’s, ', () => {
+  it('when it’s read, then the note waits for you, but nothing in it is new.', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-notes-'));
+    const file = path.join(dir, 'pr-7.json');
+    const said = (id: string, by: string | null, sent: number) => ({ id, by, body: 'Why?', at: '2020-06-01T00:00:00Z', edited: null, sent });
+    fs.writeFileSync(file, JSON.stringify({ version: 1, mode: 'local', live: true, opening: 'Go.', scope: 'open', base: null, head: null, next: 2, seq: 2, events: [], agents: { Claude: { seen: 1, first: '2020-06-01T00:00:00Z', told: true } }, notes: [
+      { n: 1, pr: null, path: 'lib/app.dart', file: false, side: 'RIGHT', line: 3, startSide: null, startLine: null, code: [], wrote: { head: 'h', path: 'lib/app.dart', line: 3, startLine: null, code: [] }, changed: false, gone: false, resolved: null, copied: false, about: null, comments: [said('a1', null, 1), said('a2', 'Claude', 2)], said: [] },
+    ] }));
+    const note = new Notes(file).view().notes[0];
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.deepEqual([note.turn, note.new, note.seen, note.unread], ['you', false, 2, false]);
   });
 });
