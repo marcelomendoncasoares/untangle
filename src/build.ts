@@ -43,6 +43,16 @@ function fingerprint(files: string[]): string {
   return h.digest('hex').slice(0, 16);
 }
 const EXTRACTION_STAGE = ['dist/analyzer/client.js', 'dist/analyzer/extract.js', 'analyzer/bin/extract.dart', 'analyzer/pubspec.lock', 'dist/pipeline/diff.js', 'dist/pipeline/definitions.js', 'dist/pipeline/links.js', 'dist/model-definitions.js', 'analysis/adapters.js'];
+// What the code this process runs was, as of its first build: a stage's results are cached under the
+// code that made them, and a process that outlives an upgrade of untangle still runs what it loaded.
+let versions: { extractor: string; model: string } | null = null;
+const stageVersions = () => {
+  if (!versions) {
+    const extractor = fingerprint(EXTRACTION_STAGE);
+    versions = { extractor, model: extractor + '.' + fingerprint(MODEL_STAGE) };
+  }
+  return versions;
+};
 const MODEL_STAGE = ['analysis/analyze.js', 'analysis/dart.js', 'analysis/models.js', 'analysis/pubspecs.js', 'analysis/units.js', 'analysis/structure.js', 'analysis/chains.js', 'analysis/commits.js', 'analysis/outline.js', 'dist/provenance.js'];
 
 /** What chains follow: the commits that started each change, or the code's structure alone. */
@@ -87,7 +97,7 @@ export async function buildReview(target: Target, opts: { noCache: boolean; labe
   // The checkouts older untangles made as worktrees of your repository: it stops listing them.
   await rehomeCheckouts(target.repoKey);
   const byCommit = opts.chains === 'history';
-  const extractorVersion = fingerprint(EXTRACTION_STAGE), modelVersion = extractorVersion + '.' + fingerprint(MODEL_STAGE);
+  const { extractor: extractorVersion, model: modelVersion } = stageVersions();
   // Each way of chaining keeps its own analysis, so switching between them reuses both.
   const suffix = byCommit ? '-history' : '';
 

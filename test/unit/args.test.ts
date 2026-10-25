@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { duration, parseArgs, parseCommand, UsageError, type Options } from '../../dist/args.js';
+import { duration, parseArgs, parseCommand, restartArgs, UsageError, type Options } from '../../dist/args.js';
 
 function shown(options: Options): string {
   return [
@@ -348,5 +348,20 @@ describe('Given the agent’s commands, ', () => {
 describe('Given durations as Go writes them, ', () => {
   it('when they are read, then each is its milliseconds.', () => {
     assert.deepEqual(['0', '300ms', '90s', '1h30m', '1.5m'].map(duration), [0, 300, 90_000, 5_400_000, 90_000]);
+  });
+});
+
+describe('Given a review’s arguments, restarted on a newer untangle, ', () => {
+  it('when they are given again, then the port is the one it serves at and no page opens, its other flags and its target kept.', () => {
+    assert.deepEqual([
+      restartArgs(['https://github.com/acme/app/pull/7'], 7778),
+      restartArgs(['-port', '0', '-no-open', '-base', 'main', '.'], 40123),
+      restartArgs(['--port=9000', '-no-open=false', '-autoclose=false', '--', '-port'], 9001),
+    ], [
+      ['-port=7778', '-no-open', 'https://github.com/acme/app/pull/7'],
+      ['-port=40123', '-no-open', '-base', 'main', '.'],
+      ['-port=9001', '-no-open', '-autoclose=false', '--', '-port'],
+    ]);
+    assert.equal(parseCommand(restartArgs(['-port', '0', '-base', 'main', '.'], 40123)).cmd, 'review');
   });
 });

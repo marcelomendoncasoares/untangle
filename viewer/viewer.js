@@ -7671,7 +7671,9 @@
   // ---------- refreshing in place
   // untangle looks up the pull request again; when it moved, it builds the new review while this
   // page keeps working, and the page then reloads on the same view. New commits show as a banner.
-  const FRESH = { state: null, head: null, steps: [], plan: null, error: null, latest: null, moved: null, timer: null };
+  // Bringing the review up to date: new commits, or a newer untangle installed (updated; the process
+  // that served the review before a restart is was).
+  const FRESH = { state: null, head: null, steps: [], plan: null, error: null, latest: null, moved: null, timer: null, updated: false, was: null };
   const RESUME = 'untangle:resume';
   function startRefresh() {
     if (!CONFIG.served || FRESH.state === 'checking' || FRESH.state === 'building') return;
@@ -7691,14 +7693,39 @@
     renderFresh();
     if (j.state === 'checking' || j.state === 'building') FRESH.timer = setTimeout(() => api('refresh').then((r) => r.json()).then(onFresh).catch(() => onFresh({ state: FRESH.state, head: FRESH.head, steps: FRESH.steps, plan: FRESH.plan })), 700);
   }
-  // Whether newer commits exist (asked at most every half minute by untangle, however many ask).
+  // A newer untangle is installed: the review restarts on it, at this address, and builds at its
+  // latest commits; the page reloads into it once it's there. The marks go first.
+  function startRestart() {
+    if (!CONFIG.served || FRESH.state === 'restarting') return;
+    clearTimeout(FRESH.timer);
+    Object.assign(FRESH, { state: 'restarting', error: null, steps: [] });
+    renderFresh();
+    Promise.race([flushSave(true), new Promise((done) => setTimeout(done, 2000))])
+      .then(() => api('restart', { method: 'POST' }))
+      .then((r) => r.json().then((j) => { if (!r.ok) throw new Error(j.error || r.status); return j; }))
+      .then((j) => { FRESH.was = j.pid; waitRestart(Date.now()); })
+      .catch((e) => onFresh({ state: 'failed', error: e.message }));
+  }
+  // Until the untangle that took the review over serves it: the one before answers no more, and the
+  // new one says it's still building until it's done.
+  function waitRestart(t0) {
+    FRESH.timer = setTimeout(() => api('refresh?check=1').then((r) => r.json()).then((j) => {
+      if (j.pid && j.pid !== FRESH.was && j.head) return reloadHere();
+      waitRestart(t0);
+    }).catch(() => {
+      if (Date.now() - t0 < 600000) waitRestart(t0);
+      else onFresh({ state: 'failed', error: 'the review didn’t come back' });
+    }), 700);
+  }
+  // Whether newer commits exist (asked at most every half minute by untangle, however many ask), and
+  // whether a newer untangle is installed than the one serving the review.
   function freshCheck() {
     if (!CONFIG.served || FRESH.state) return;
     api('refresh?check=1').then((r) => r.json()).then((j) => {
       if ('stack' in j) setStack(j.stack);
       if ('local' in j) setLocal(j.local);
       const newer = j.latest && j.latest !== CONFIG.head ? j.latest : null;
-      if (newer !== FRESH.latest) { FRESH.latest = newer; renderFresh(); }
+      if (newer !== FRESH.latest || !!j.updated !== FRESH.updated) { FRESH.latest = newer; FRESH.updated = !!j.updated; renderFresh(); }
     }).catch(() => {});
   }
   function reloadHere() {
@@ -7729,6 +7756,7 @@
     let h = '', title = '';
     if (FRESH.moved) { h = `<span class="fr-t">Now on <code>${short(FRESH.moved)}</code></span><button type="button" class="btn xs primary" data-act="reload">Reload</button>`; title = `untangle now reviews ${short(FRESH.moved)}; this page shows ${short(CONFIG.head)}`; }
     else if (FRESH.state === 'checking') h = '<span class="spin" aria-hidden="true"></span><span class="fr-t">Looking for new commits</span>';
+    else if (FRESH.state === 'restarting') { h = '<span class="spin" aria-hidden="true"></span><span class="fr-t">Restarting on the new untangle</span>'; title = 'untangle restarts the review on the untangle installed now, at its latest commits; the page reloads once it’s there'; }
     else if (FRESH.state === 'building') {
       const p = freshShare();
       title = run ? run.label + (run.detail ? ': ' + run.detail : '') : '';
@@ -7742,6 +7770,8 @@
       }
       h = `<span class="spin" aria-hidden="true"></span><span class="fr-t">Updating to <code>${short(FRESH.head)}</code></span>${p == null ? '' : `<b class="fr-pct" aria-hidden="true">${Math.round(p * 100)}%</b><span class="fr-bar" aria-hidden="true"><i style="width:${(p * 100).toFixed(1)}%"></i></span>`}`;
     } else if (FRESH.state === 'failed') { h = '<span class="fr-t d">Couldn’t update</span><button type="button" class="btn xs" data-act="refresh">Try again</button>'; title = FRESH.error || ''; }
+    // A newer untangle: refreshing restarts the review on it, which brings any new commits too.
+    else if (FRESH.updated) { h = '<span class="fr-t">untangle was updated</span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>'; title = `A newer untangle is installed${FRESH.latest ? `, and there are new commits up to ${short(FRESH.latest)}` : ''}: refreshing restarts the review on it, at its latest commits`; }
     else if (FRESH.latest) h = `<span class="fr-t">New commits: <code>${short(FRESH.latest)}</code></span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>`;
     else if (STK.live && STK.live.changed) { h = '<span class="fr-t">The stack changed</span><button type="button" class="btn xs primary" data-act="refresh">Refresh</button>'; title = 'A pull request of the stack was merged, added or moved: refreshing reviews the stack as it is now'; }
     else if (LOCAL.now && LOCAL.now.behind) { h = `<span class="fr-t">${plural(LOCAL.now.behind, 'new commit')} on GitHub</span>`; title = behindTitle(LOCAL.now); }
@@ -8613,7 +8643,7 @@
       if (again) again.focus();
       return;
     }
-    if (act === 'refresh') return startRefresh();
+    if (act === 'refresh') return FRESH.updated ? startRestart() : startRefresh();
     if (act === 'lens-unpushed') {
       if (state.lens && state.lens.why === 'unpushed') return setLens(null);
       const shas = unpushedHere();
@@ -9213,6 +9243,8 @@
   if (CONFIG.served) {
     setInterval(() => { if (document.visibilityState === 'visible') freshCheck(); }, 120000);
     setTimeout(freshCheck, 5000);
+    // Back on the tab, it asks at once: untangle may have been updated meanwhile.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') freshCheck(); });
     $('#vw-fb').hidden = false;
     // A draft from untangle feedback: said at once to an open page, and asked for by one that opens later.
     addEventListener('untangle:push', (e) => { const f = e.detail && e.detail.feedback; if (f && f.draft) { FB.draft = f.draft; fbAlarm(); } });

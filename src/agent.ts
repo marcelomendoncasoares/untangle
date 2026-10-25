@@ -65,6 +65,23 @@ async function find(target: string): Promise<RunInfo | null> {
   }
 }
 
+/**
+ * The untangle that took a review over when the one serving it restarted on a newer untangle, once
+ * it serves the review: null when none comes within the time given (the review stopped instead).
+ */
+async function successor(run: RunInfo, agent: string, target: string, ms: number): Promise<{ run: RunInfo; hello: Record<string, unknown> } | null> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const next = findRun(wanted(target));
+    if (next && next.pid !== run.pid && pidAlive(next.pid)) {
+      const r = await ready(next, agent, null, target);
+      return { run: r.run, hello: r.hello };
+    }
+    await sleep(300);
+  }
+  return null;
+}
+
 /** The review a command is about, or an error that says how to start one. */
 async function running(review: string | null): Promise<RunInfo> {
   const target = review ?? '.';
@@ -143,7 +160,7 @@ export async function watch(o: { target: string; given: boolean; forward: string
   const stop = new AbortController();
   process.once('SIGINT', () => stop.abort());
   process.once('SIGTERM', () => stop.abort());
-  const how = () => explain(chat, String(hello.url || run.url), reply, again);
+  const how = () => explain(chat, String(hello.url || run?.url), reply, again);
   for (;;) {
     const wait = Math.min(ROUND, deadline - Date.now());
     let r;
@@ -154,11 +171,20 @@ export async function watch(o: { target: string; given: boolean; forward: string
     } catch (e) {
       if (stop.signal.aborted) return 130;
       if (!(e instanceof Gone)) throw e;
+      // Gone between two waits: a review that restarted is served again in a moment.
+      const next = await successor(run, agent, o.target, 10_000);
+      if (next) { ({ run, hello } = next); continue; }
       r = { status: 200, data: { closed: true } };
     }
     const err = failed(r);
     if (err) throw new Error(err);
-    const a = r.data;
+    let a = r.data;
+    // Restarting on a newer untangle: the watch goes on with the one that takes the review over.
+    if (a.restarted) {
+      const next = await successor(run, agent, o.target, 180_000);
+      if (next) { ({ run, hello } = next); continue; }
+      a = { closed: true };
+    }
     if (a.closed) {
       say(a.paused
         ? `the review of ${hello.title} paused: its notes and this chat are kept. Resume, in untangle reviews, brings it back and says so here; there’s nothing more to watch until then.`

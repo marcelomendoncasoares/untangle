@@ -249,7 +249,9 @@ reviews page, and the agent's chat in a workspace of its own, Reviews.
 ### And more
 
 - **Refresh in place.** When the pull request gets new commits, a banner offers to refresh. Marks
-carry over and unsent comments stay.
+carry over and unsent comments stay. When `untangle` itself was upgraded or built again, the banner
+says so, and refreshing restarts the review on the new `untangle` in the same tab; an agent's
+watch waits for it.
 - **A key for every step** of a review: see [Keys](#keys).
 - **Share it read-only:** `-export review.html` writes the review as one HTML file.
 - **Report a bug where you see it.** Feedback, in the top bar, takes a picture of the page for you
@@ -437,7 +439,8 @@ then on. Last, the new `untangle` updates the skill where it's installed (`untan
 The build compiles the Dart extractor again when the Dart SDK changed, so an upgrade also follows a
 new Dart. After the first upgrade, the clone you built in [Getting started](#2-build-untangle) is
 no longer the one on `PATH`, and you can delete it. Reviews already running keep the version they
-started with until you start them again.
+started with until you refresh them: each page says when a newer `untangle` is installed, and its
+Refresh restarts the review on it, at the same address.
 
 When a review starts, `untangle` looks up GitHub's `main` with `git ls-remote`, at most once a
 day, and once the review is up it says whether an upgrade brings a newer `untangle`.

@@ -205,6 +205,7 @@ export type WatchAnswer =
   | { text: string; notes: number; replies: number; first: boolean }
   | { idle: true; first: boolean }
   | { closed: true; paused?: true }
+  | { restarted: true }
   | { taken: true };
 
 /** An agent holding the review in this run: the chat it holds it from, and what it read last. */
@@ -341,7 +342,7 @@ export class Notes {
   private ghRev = 0;
   private closed = false;
   // Closed by a pause: its chats hear it'll be back.
-  private paused = false;
+  private how: 'closed' | 'paused' | 'restarted' = 'closed';
   private lastSent = 0;
   // The last time the book stamped on a comment or on what a note said: each stamp comes after the
   // one before, so a talk and what it said on GitHub never tie, even within a millisecond.
@@ -1150,7 +1151,7 @@ export class Notes {
       };
       const idle = (): WatchAnswer => { const first = !a.told; a.told = true; this.save(); return { idle: true, first }; };
       const check = () => {
-        if (this.closed) return done(this.paused ? { closed: true, paused: true } : { closed: true });
+        if (this.closed) return done(this.how === 'restarted' ? { restarted: true } : this.how === 'paused' ? { closed: true, paused: true } : { closed: true });
         if (!this.ctx || preparing) return;
         if (this.ctx.stack && (h.fresh || this.unseen(agent).count)) {
           const u = this.unseen(agent);
@@ -1262,9 +1263,10 @@ export class Notes {
   }
 
   /** The review is closing, or pausing: waiting agents hear so. */
-  close(paused = false): void {
+  /** The review closes, pauses, or restarts on a newer untangle (a watch waits for that one then). */
+  close(how: 'closed' | 'paused' | 'restarted' = 'closed'): void {
     this.closed = true;
-    this.paused = paused;
+    this.how = how;
     this.waiters.forEach((w) => w());
     if (this.pulse) clearInterval(this.pulse);
     if (this.ringing) clearTimeout(this.ringing);

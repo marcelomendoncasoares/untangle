@@ -38,6 +38,8 @@ export interface ServerOptions {
    * `after` ms (a reload), and no call is still being answered.
    */
   idle?: { after: number; then(): void };
+  /** The token to keep, when a restart hands the review on: the open page's cookie still lets it in. */
+  token?: string;
 }
 
 const MAX_BODY = 32 << 20;
@@ -50,7 +52,7 @@ const SOCKET_BEAT = 15_000;
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 export class ReviewServer {
-  readonly token = crypto.randomBytes(18).toString('base64url');
+  readonly token: string;
   private server: http.Server | null = null;
   private cookie = '';
   // The pages open now, by the id each one made up: the presence sockets each holds, and whether
@@ -69,7 +71,9 @@ export class ReviewServer {
     private readonly api: Api,
     private readonly progressPage: string,
     private readonly log: (line: string) => void,
-  ) {}
+  ) {
+    this.token = opts.token && /^[\w-]{24}$/.test(opts.token) ? opts.token : crypto.randomBytes(18).toString('base64url');
+  }
 
   /** Listens, and returns the URL to open (with the token). */
   async listen(): Promise<string> {

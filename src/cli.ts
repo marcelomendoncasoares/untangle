@@ -7,13 +7,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as agent from './agent.js';
-import { feedbackUsage, noteUsage, notesUsage, parseCommand, replyUsage, reviewsUsage, skillUsage, stopUsage, upgradeUsage, usage, UsageError, watchUsage, type Options } from './args.js';
+import { feedbackUsage, noteUsage, notesUsage, parseCommand, replyUsage, restartArgs, reviewsUsage, skillUsage, stopUsage, upgradeUsage, usage, UsageError, watchUsage, type Options } from './args.js';
 import { buildReview, buildSteps, type ReviewData } from './build.js';
 import { reviewDir, worktreeDir } from './cache.js';
 import { chatFolder, chatFrom } from './chats.js';
 import { readHistory } from './history.js';
 import { gitMaybe } from './exec.js';
 import { Feedback, feedbackCommand, reviewFeedbackRepo } from './feedback.js';
+import { launch, logTail } from './launcher.js';
 import { LiveSession } from './live.js';
 import { LocalChanges, localSummary } from './local.js';
 import { rss } from './metrics.js';
@@ -25,13 +26,13 @@ import { feedbackPanel, fonts, highlighter, progressPage, reviewPage, type PageC
 import { readRecord, recordFile, serves, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
 import { Manager, openManager } from './manager.js';
 import { reviews, type Summary } from './reviews.js';
-import { findRun, holder, listRuns, PID_NS, prKey, removeRun, wantedDir, wantedUrl, writeRun, type RunInfo } from './runs.js';
+import { findRun, holder, listRuns, PID_NS, pidAlive, prKey, removeRun, wantedDir, wantedUrl, writeRun, type RunInfo } from './runs.js';
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
 import { skill } from './skill.js';
 import { isPrUrl, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
 import { upgrade, upgradeNotice } from './upgrade.js';
-import { VERSION } from './version.js';
+import { builtAt, STARTED_BUILT, VERSION } from './version.js';
 import { stackIdentity, stackRecord } from './stack.js';
 
 // After its last page closes, untangle waits this long for a page to open again (a reload)
@@ -115,6 +116,12 @@ async function review(opts: Options): Promise<number> {
   let opened: 'orca' | 'browser' | null = null;
   let opening: Promise<unknown> | null = null;
   let run: RunInfo | null = null;
+  // Restarted by the untangle that served this review, for a newer one installed since: this one
+  // takes the review over once that one has ended, at its port and with its token, so that the page
+  // open there reloads into this one. And while this one hands it on, it isn't stopping.
+  const takeOver = process.env.UNTANGLE_RESTART_OF ? { pid: Number(process.env.UNTANGLE_RESTART_OF) || 0, token: process.env.UNTANGLE_TOKEN || undefined, page: process.env.UNTANGLE_PAGE || null } : null;
+  for (const k of ['UNTANGLE_RESTART_OF', 'UNTANGLE_TOKEN', 'UNTANGLE_PAGE']) delete process.env[k];
+  let restarting = false;
   // Another untangle serves this review: the page that waits here goes to its page, or its own
   // comes to the front, and this untangle ends.
   const giveWay = async (other: RunInfo, title: string): Promise<number> => {
@@ -132,13 +139,14 @@ async function review(opts: Options): Promise<number> {
     return 0;
   };
   if (!exporting) {
+    if (takeOver?.pid) for (let i = 0; i < 300 && pidAlive(takeOver.pid); i++) await new Promise((r) => setTimeout(r, 50));
     // One untangle serves a review: when it's open already, its page comes to the front instead.
     const asked = byUrl ? wantedUrl(opts.target) : wantedDir(dir);
     const other = asked && findRun(asked);
     if (asked && other && (await serves(other))) return giveWay(other, other.title || `The review of ${asked.pr ?? path.basename(asked.dir ?? dir)}`);
     const idle = { after: AUTOCLOSE_AFTER, then: () => { say.stopping('The review’s page closed, so untangle stops (-autoclose=false keeps it serving).'); void stop('tab'); } };
     server = new ReviewServer(
-      { host: opts.host, port: opts.port, portExplicit: opts.portExplicit, basePath: opts.basePath, idle: opts.autoclose ? idle : undefined },
+      { host: opts.host, port: opts.port, portExplicit: opts.portExplicit, basePath: opts.basePath, idle: opts.autoclose ? idle : undefined, token: takeOver?.token },
       say,
       {
         // The page comes with the notes, so it opens in the mode they're in.
@@ -158,6 +166,7 @@ async function review(opts: Options): Promise<number> {
             setTimeout(() => { say.stopping(close ? 'The review was closed.' : why === 'paused' ? 'The review was paused.' : 'untangle stop closed the review.'); void stop(why, close); }, 50);
             return Promise.resolve({ data: { stopping: true } });
           }
+          if (route === 'restart' && method === 'POST') return Promise.resolve(restart());
           if (route === 'summary' && method === 'GET') return Promise.resolve({ data: summary() });
           if (route === 'reviews' || route.startsWith('reviews/')) return reviewsCall(route, method, body);
           if (!session || !target || !notes) return Promise.resolve({ status: 503, data: { error: 'the review is still being built' } });
@@ -187,27 +196,29 @@ async function review(opts: Options): Promise<number> {
     // The run file: how untangle's commands (watch, reply, notes, stop) reach this review.
     const w = byUrl ? null : asked;
     run = { pid: process.pid, url, token: server.token, dir: w ? w.dir : null, pr: byUrl ? asked?.pr ?? null : null, repoKey: w?.repoKey ?? undefined, branch: w?.branch ?? null, started: new Date().toISOString(), ns: PID_NS };
+    if (takeOver?.page) run.page = takeOver.page;
     writeRun(run);
     process.on('exit', () => {
       removeRun(process.pid);
       // Ended without saying why: an error, say.
-      if (record && !record.stopped) {
+      if (record && !record.stopped && !restarting) {
         record.stopped = { at: new Date().toISOString(), why: 'ended' };
         recordNow();
       }
     });
   }
 
-  const stop = async (why: StopReason, close = false) => {
+  // Restarting, the review isn't stopped: the untangle that takes it over goes on with its record.
+  const stop = async (why: StopReason | 'restart', close = false) => {
     local?.stop();
-    if (record) {
+    if (record && why !== 'restart') {
       const at = new Date().toISOString();
       record.stopped = { at, why };
       record.closed = close ? at : null;
       recordNow();
     }
-    // A waiting untangle watch hears that the review closed before it does.
-    if (notes) { notes.close(why === 'paused'); await new Promise((r) => setTimeout(r, 100)); }
+    // A waiting untangle watch hears that the review closed, paused or restarts before it does.
+    if (notes) { notes.close(why === 'restart' ? 'restarted' : why === 'paused' ? 'paused' : 'closed'); await new Promise((r) => setTimeout(r, 100)); }
     await server?.close();
     await live?.stop();
     process.exit(0);
@@ -422,7 +433,22 @@ async function review(opts: Options): Promise<number> {
   const refreshView = () => (refreshing ? { state: refreshing.state, head: refreshing.head, steps: refreshing.status.steps, plan: refreshing.status.plan ?? null, error: refreshing.error } : { state: 'idle', head: target?.headSha || null });
   const check = async (ask: boolean) => {
     await local?.check(true);
-    return { data: { ...refreshView(), latest: ask ? local?.latest ?? null : undefined, watched: notes?.watched() || false, local: local?.local ?? null, stack: local?.stack ?? null } };
+    // And whether the untangle installed now is newer than the one this process runs.
+    return { data: { ...refreshView(), latest: ask ? local?.latest ?? null : undefined, watched: notes?.watched() || false, local: local?.local ?? null, stack: local?.stack ?? null, pid: process.pid, updated: builtAt() > STARTED_BUILT } };
+  };
+  // Restarting: the untangle installed now takes the review over, at this port and with this token,
+  // and this one ends without stopping the review. It builds the review at its latest commits, the
+  // page reloads into it once it's there, and an agent's watch waits for it.
+  const restart = (): { status?: number; data: unknown } => {
+    if (!server || !run) return { status: 503, data: { error: 'the review is still starting' } };
+    if (restarting) return { data: { restarting: true, pid: process.pid } };
+    const port = Number(new URL(url).port);
+    const env = { ...process.env, UNTANGLE_RESTART_OF: String(process.pid), UNTANGLE_TOKEN: server.token, ...(run.page ? { UNTANGLE_PAGE: run.page } : {}) };
+    const { pid, log } = launch(restartArgs(process.argv.slice(2), port), env);
+    if (!pid) return { status: 502, data: { error: `the new untangle didn’t start${logTail(log) ? ': ' + logTail(log).split('\n').pop() : ''}` } };
+    restarting = true;
+    setTimeout(() => { say.stopping('The review restarts on the untangle installed now.'); void stop('restart'); }, 50);
+    return { data: { restarting: true, pid: process.pid } };
   };
   const refresh = async (): Promise<{ status?: number; data: unknown }> => {
     if (!target) return { status: 503, data: { error: 'the review is still being built' } };

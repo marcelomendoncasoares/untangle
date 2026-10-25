@@ -290,6 +290,25 @@ export const reviewsUsage = () => commandUsage('reviews', 'the reviews on this m
   'reviews print in the terminal. A directory named reviews is ./reviews.',
 ], REVIEWS_FLAGS);
 
+/**
+ * A review's arguments again, for the untangle that takes it over on a restart: at the same port,
+ * opening no page (the open one reloads into it). What follows -- is the target's, and stays.
+ */
+export function restartArgs(argv: string[], port: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') {
+      out.push(...argv.slice(i));
+      break;
+    }
+    const m = /^--?(port|no-open)(=.*)?$/.exec(a);
+    if (!m) out.push(a);
+    else if (m[1] === 'port' && !m[2]) i++;
+  }
+  return [`-port=${port}`, '-no-open', ...out];
+}
+
 /** The command line: a review, or one of the agent's commands (its first word). */
 export function parseCommand(argv: string[]): Command {
   const [first, ...more] = argv;
