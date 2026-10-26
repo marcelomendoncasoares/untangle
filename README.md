@@ -430,8 +430,9 @@ the same way. What a review closed before still holds is freed fourteen days on,
 space*.
 - **On GitHub**, a pull request you reviewed says whose move it is: *Waiting on* its author, or, in
 amber once it's back to you, *Updated since your review*, *Review requested again*, or the threads
-its author answered. Beside it, your threads the author hasn't answered nor resolved; hover for
-when each thing happened. The page asks GitHub every five minutes while it's open, in one call for
+its author answered. Pushes and answers count when they come after your last word: your latest
+review, reply, comment or push. Beside it, your threads the author hasn't answered nor resolved;
+hover for when each thing happened. The page asks GitHub every five minutes while it's open, in one call for
 all the reviews, and again when you come back to it.
 - **Repositories**, in the side, list the reviews by repository. A branch of your fork goes by the
 repository it came from, its `upstream` remote, as its pull requests do.

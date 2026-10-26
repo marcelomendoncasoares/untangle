@@ -12,19 +12,22 @@ const skip = e2eSkip();
 const [first, second, head] = ['a', 'b', 'c'].map((c) => c.repeat(40));
 const at = (day: number) => `2020-06-${String(day).padStart(2, '0')}T12:00:00Z`;
 const review = (state: string, day: number, commit: string) => ({ state, submittedAt: at(day), body: 'A few things.', commit: { oid: commit }, comments: { nodes: [{ replyTo: null }] } });
-const thread = (last: string) => ({ isResolved: false, isOutdated: false, first: { nodes: [{ author: { login: 'ada' }, state: 'SUBMITTED' }] }, last: { nodes: [{ author: { login: last } }] } });
+// Ada's thread, and who spoke last in it, on the third day.
+const thread = (last: string) => ({ isResolved: false, isOutdated: false, first: { nodes: [{ author: { login: 'ada' }, state: 'SUBMITTED' }] }, last: { nodes: [{ author: { login: last }, createdAt: at(3) }] } });
+// Grace's commits, made on the first day unless said otherwise.
+const commits = (days = [1, 1, 1]) => ({ nodes: [first, second, head].map((oid, i) => ({ commit: { oid, committedDate: at(days[i]), author: { user: { login: 'grace' } } } })) });
 // What GitHub says of each pull request ada reviewed.
 const pull = (o: Record<string, unknown>) => ({
   pullRequest: {
     state: 'OPEN', headRefOid: head, viewerDidAuthor: false, author: { login: 'grace' },
-    reviewRequests: { nodes: [] }, asked: { nodes: [] }, pushed: { nodes: [] }, commits: { nodes: [first, second, head].map((oid) => ({ commit: { oid } })) },
+    reviewRequests: { nodes: [] }, talk: { nodes: [] }, asked: { nodes: [] }, pushed: { nodes: [] }, commits: commits(),
     mine: { nodes: [] }, reviewThreads: { nodes: [] }, ...o,
   },
 });
 // Each row's tags: what they say, how they look, and what they say on hover.
 const tags = `[...document.querySelectorAll('.row')].map((r) => [r.querySelector('.num').textContent, ...[...r.querySelectorAll('.ev.gh')].map((e) => [e.className.replace('ev gh', '').trim(), e.textContent].filter(Boolean).join(': '))].join(' | '))`;
 
-describe('Given four reviews of pull requests ada reviewed on GitHub, paused, in the manager, ', { skip, timeout: 180_000 }, () => {
+describe('Given five reviews of pull requests ada reviewed on GitHub, paused, in the manager, ', { skip, timeout: 180_000 }, () => {
   let gh: GhStub;
   let cache = '', cwd = '';
   let page: Browser;
@@ -36,11 +39,13 @@ describe('Given four reviews of pull requests ada reviewed on GitHub, paused, in
         // Changes requested on its head, two threads grace hasn't answered, one she has.
         p0: pull({ mine: { nodes: [review('CHANGES_REQUESTED', 2, head)] }, reviewThreads: { nodes: [thread('ada'), thread('ada'), thread('grace')] } }),
         // Asked for again by grace, after a force push.
-        p1: pull({ mine: { nodes: [review('CHANGES_REQUESTED', 2, head)] }, pushed: { nodes: [{ createdAt: at(3) }] }, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ada' } }] }, asked: { nodes: [{ createdAt: at(4), actor: { login: 'grace' }, requestedReviewer: { login: 'ada' } }] }, reviewThreads: { nodes: [thread('ada')] } }),
+        p1: pull({ mine: { nodes: [review('CHANGES_REQUESTED', 2, head)] }, commits: commits([3, 3, 3]), pushed: { nodes: [{ createdAt: at(3), actor: { login: 'grace' } }] }, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ada' } }] }, asked: { nodes: [{ createdAt: at(4), actor: { login: 'grace' }, requestedReviewer: { login: 'ada' } }] }, reviewThreads: { nodes: [thread('ada')] } }),
         // Two commits pushed since.
-        p2: pull({ mine: { nodes: [review('COMMENTED', 2, first)] } }),
+        p2: pull({ mine: { nodes: [review('COMMENTED', 2, first)] }, commits: commits([1, 3, 3]) }),
         // Approved, and nothing since.
         p3: pull({ mine: { nodes: [review('APPROVED', 2, head)] } }),
+        // Two commits pushed since, and a thread answered, then ada's comment in the conversation.
+        p4: pull({ mine: { nodes: [review('CHANGES_REQUESTED', 2, first)] }, commits: commits([1, 3, 3]), reviewThreads: { nodes: [thread('grace')] }, talk: { nodes: [{ author: { login: 'ada' }, createdAt: at(4) }] } }),
       } } },
     ]);
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
@@ -48,7 +53,7 @@ describe('Given four reviews of pull requests ada reviewed on GitHub, paused, in
     const gone = spawnSync(process.execPath, ['-e', '0']).pid!;
     const dir = path.join(cache, 'sessions', 'github.com', 'acme', 'app');
     fs.mkdirSync(dir, { recursive: true });
-    const titles = ['Retry calls', 'Cache tokens', 'Log less', 'Drop the old client'];
+    const titles = ['Retry calls', 'Cache tokens', 'Log less', 'Drop the old client', 'Name the queues'];
     titles.forEach((title, i) => {
       // Paused one after another, the first last: the newest first, as GitHub is asked.
       const stopped = new Date(Date.now() - (i + 1) * 60_000).toISOString();
@@ -63,7 +68,7 @@ describe('Given four reviews of pull requests ada reviewed on GitHub, paused, in
     assert.equal(started.code, 0, started.err);
     page = await launchBrowser(1440, 900);
     await page.goto(/http:\/\/\S+/.exec(started.out)![0]);
-    await page.until(`document.querySelectorAll('.ev.gh').length === 6`, 30_000);
+    await page.until(`document.querySelectorAll('.ev.gh').length === 7`, 30_000);
   });
 
   after(async () => {
@@ -76,13 +81,14 @@ describe('Given four reviews of pull requests ada reviewed on GitHub, paused, in
 
   it(
     'when the reviews are listed, '
-    + 'then each row says whose move it is on GitHub, amber once it’s back to ada, and her threads grace hasn’t answered.',
+    + 'then each row says whose move it is on GitHub, amber once it’s back to ada since her last word, and her threads grace hasn’t answered.',
     async () => {
       assert.deepEqual(await page.eval(tags), [
         '#1 | back: 1 thread answered | 2 threads unanswered',
         '#2 | back: Review requested again | 1 thread unanswered',
         '#3 | back: Updated since your review',
         '#4 | ok: Approved',
+        '#5 | wait: Waiting on grace',
       ]);
     },
   );
@@ -96,6 +102,7 @@ describe('Given four reviews of pull requests ada reviewed on GitHub, paused, in
         'You requested changes on Jun 2.\nForce-pushed on Jun 3.\ngrace asked for your review again on Jun 4.\nYour threads: 1 unanswered.',
         'You commented on Jun 2.\n2 commits pushed since.',
         'You approved on Jun 2.\nNothing pushed since.',
+        'You requested changes on Jun 2.\nYou last commented in the conversation on Jun 4.\nNothing pushed since.\nYour threads: 1 answered but open.',
       ]);
     },
   );

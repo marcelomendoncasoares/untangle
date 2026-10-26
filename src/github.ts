@@ -590,14 +590,22 @@ export interface Stand {
    */
   review: { state: Verdict; last: Verdict; at: string; commit: string | null } | null;
   /**
-   * Pushed since your review: the commits after the one you reviewed (null when it isn't on the
-   * branch any more, or GitHub moved your review onto the new head), and when it was force-pushed.
+   * Your last word on it, when it came after your latest review: a reply in a thread, a comment in its
+   * conversation, or a push of yours.
+   */
+  word: { at: string; how: 'reply' | 'comment' | 'push' } | null;
+  /**
+   * Pushed by others since your last word: the commits dated after it (null when a force push may
+   * have rewritten older ones), and when it was force-pushed.
    */
   since: { commits: number | null; forced: string | null } | null;
   /** Your review asked for again after it: when, and by whom (null for you), when GitHub's timeline says. */
   again: { at: string | null; by: string | null } | null;
-  /** Your threads: those the author hasn't answered nor resolved (outdated among them), those answered, and those resolved. */
-  threads: { open: number; outdated: number; answered: number; resolved: number };
+  /**
+   * Your threads: those the author hasn't answered nor resolved (outdated among them), those answered
+   * (fresh: since your last word), and those resolved.
+   */
+  threads: { open: number; outdated: number; answered: number; fresh: number; resolved: number };
 }
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED';
@@ -607,19 +615,21 @@ export interface RawStand {
   state: string; headRefOid: string; viewerDidAuthor: boolean; author: Login;
   reviewRequests: { nodes: Array<{ requestedReviewer: Login }> };
   mine: { nodes: Array<{ state: string; submittedAt: string | null; body: string; commit: { oid: string } | null; comments: { nodes: Array<{ replyTo: { id: string } | null }> } }> };
+  talk: { nodes: Array<{ author: Login; createdAt: string }> };
   asked: { nodes: Array<{ createdAt?: string; actor?: Login; requestedReviewer?: Login }> };
-  pushed: { nodes: Array<{ createdAt?: string }> };
-  commits: { nodes: Array<{ commit: { oid: string } }> };
-  reviewThreads: { nodes: Array<{ isResolved: boolean; isOutdated: boolean; first: { nodes: Array<{ author: Login; state: string }> }; last: { nodes: Array<{ author: Login }> } }> };
+  pushed: { nodes: Array<{ createdAt?: string; actor?: Login }> };
+  commits: { nodes: Array<{ commit: { oid: string; committedDate: string; author: { user: Login } | null } }> };
+  reviewThreads: { nodes: Array<{ isResolved: boolean; isOutdated: boolean; first: { nodes: Array<{ author: Login; state: string }> }; last: { nodes: Array<{ author: Login; createdAt: string }> } }> };
 }
 const STAND = `fragment Stand on PullRequest {
   state headRefOid viewerDidAuthor author { login }
   reviewRequests(first: 30) { nodes { requestedReviewer { ... on User { login } } } }
   mine: reviews(last: 20, author: $me) { nodes { state submittedAt body commit { oid } comments(first: 10) { nodes { replyTo { id } } } } }
+  talk: comments(last: 20) { nodes { author { login } createdAt } }
   asked: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } } } } }
-  pushed: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) { nodes { ... on HeadRefForcePushedEvent { createdAt } } }
-  commits(last: 100) { nodes { commit { oid } } }
-  reviewThreads(first: 100) { nodes { isResolved isOutdated first: comments(first: 1) { nodes { author { login } state } } last: comments(last: 1) { nodes { author { login } } } } }
+  pushed: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) { nodes { ... on HeadRefForcePushedEvent { createdAt actor { login } } } }
+  commits(last: 100) { nodes { commit { oid committedDate author { user { login } } } } }
+  reviewThreads(first: 100) { nodes { isResolved isOutdated first: comments(first: 1) { nodes { author { login } state } } last: comments(last: 1) { nodes { author { login } createdAt } } } }
 }`;
 
 /** Where your review of a pull request stands, from what GitHub says of it; none for one you wrote, one not open, or one you haven't reviewed. */
@@ -628,42 +638,59 @@ export function standOf(p: RawStand, me: string): Stand | null {
   const is = (a: Login | undefined, login: string) => !!a?.login && a.login.toLowerCase() === login.toLowerCase();
   const author = p.author?.login ?? 'ghost';
   const ms = (iso: string) => Date.parse(iso);
+  const submitted = p.mine.nodes.filter((r) => r.state !== 'PENDING' && r.submittedAt);
   // Your reviews posted: one that only replies in threads answers there, and doesn't review.
-  const posted = p.mine.nodes.filter((r) => r.state !== 'PENDING' && r.submittedAt && (r.state !== 'COMMENTED' || r.body.trim() !== '' || !r.comments.nodes.length || r.comments.nodes.some((c) => !c.replyTo)))
-    .sort((a, b) => ms(a.submittedAt!) - ms(b.submittedAt!));
+  const replies = (r: RawStand['mine']['nodes'][number]) => r.state === 'COMMENTED' && r.body.trim() === '' && r.comments.nodes.length > 0 && r.comments.nodes.every((c) => c.replyTo);
+  const posted = submitted.filter((r) => !replies(r)).sort((a, b) => ms(a.submittedAt!) - ms(b.submittedAt!));
   const last = posted[posted.length - 1];
   // A verdict stands until the next, as GitHub counts it: a comment after changes requested leaves
   // them requested. One dismissed is a comment.
   const said = (state: string): Verdict => (state === 'APPROVED' || state === 'CHANGES_REQUESTED' ? state : 'COMMENTED');
   const verdict = [...posted].reverse().find((r) => r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED' || r.state === 'DISMISSED');
   const review: Stand['review'] = last ? { state: said(verdict?.state ?? 'COMMENTED'), last: said(last.state), at: last.submittedAt!, commit: last.commit?.oid ?? null } : null;
+  // Your last word on it: a review, a reply in a thread, a comment in its conversation, or a push: a
+  // commit you made (the Update branch button's among them), or a force push. What others did before
+  // it isn't news to you.
+  const mine = (n: RawStand['commits']['nodes'][number]) => is(n.commit.author?.user, me);
+  const word = [
+    ...submitted.map((r) => ({ at: r.submittedAt!, how: replies(r) ? 'reply' as const : 'review' as const })),
+    ...p.talk.nodes.filter((c) => is(c.author, me)).map((c) => ({ at: c.createdAt, how: 'comment' as const })),
+    ...p.commits.nodes.filter(mine).map((n) => ({ at: n.commit.committedDate, how: 'push' as const })),
+    ...p.pushed.nodes.filter((e) => e.createdAt && is(e.actor, me)).map((e) => ({ at: e.createdAt!, how: 'push' as const })),
+  ].sort((a, b) => ms(a.at) - ms(b.at)).pop();
+  const later = (iso: string | undefined) => !!iso && (!word || ms(iso) > ms(word.at));
   // A force push can carry your review onto the new head with it: then only the push says it moved.
-  const forced = (review && p.pushed.nodes.find((e) => !!e.createdAt && ms(e.createdAt) > ms(review.at))?.createdAt) || null;
-  let since: Stand['since'] = null;
-  if (review && ((review.commit && review.commit !== p.headRefOid) || forced)) {
-    const oids = p.commits.nodes.map((n) => n.commit.oid);
-    const at = review.commit && review.commit !== p.headRefOid ? oids.lastIndexOf(review.commit) : -1;
-    since = { commits: at >= 0 ? oids.length - 1 - at : null, forced };
-  }
+  const forced = (review && p.pushed.nodes.find((e) => later(e.createdAt) && !is(e.actor, me))?.createdAt) || null;
+  // Others' commits dated after your last word: GitHub doesn't say when a commit was pushed. After a
+  // force push, only those after the commit you reviewed, if it's still on the branch: the others may
+  // be older ones it rewrote.
+  const oids = p.commits.nodes.map((n) => n.commit.oid);
+  const at = review?.commit && review.commit !== p.headRefOid ? oids.lastIndexOf(review.commit) : -1;
+  const pushed = p.commits.nodes.filter((n, i) => !mine(n) && later(n.commit.committedDate) && (!forced || i > at)).length;
+  const since: Stand['since'] = review && (pushed || forced) ? { commits: pushed && (!forced || at >= 0) ? pushed : null, forced } : null;
   // Asked for again: GitHub drops a request once its review is in, so one still there came after,
   // unless the timeline says it came before.
   const asked = p.asked.nodes.filter((e) => e.createdAt && is(e.requestedReviewer, me)).pop();
   const again = review && p.reviewRequests.nodes.some((n) => is(n.requestedReviewer, me)) && (!asked || ms(asked.createdAt!) > ms(review.at))
     ? { at: asked?.createdAt ?? null, by: asked?.actor?.login && !is(asked.actor, me) ? asked.actor.login : null }
     : null;
-  const threads = { open: 0, outdated: 0, answered: 0, resolved: 0 };
+  const threads = { open: 0, outdated: 0, answered: 0, fresh: 0, resolved: 0 };
   for (const t of p.reviewThreads.nodes) {
-    const first = t.first.nodes[0];
+    const first = t.first.nodes[0], answer = t.last.nodes[0];
     // Yours, and posted: a pending one is still your draft.
     if (!first || !is(first.author, me) || first.state === 'PENDING') continue;
     if (t.isResolved) threads.resolved++;
-    else if (is(t.last.nodes[0]?.author, author)) threads.answered++;
-    else {
+    else if (is(answer?.author, author)) {
+      threads.answered++;
+      if (later(answer.createdAt)) threads.fresh++;
+    } else {
       threads.open++;
       if (t.isOutdated) threads.outdated++;
     }
   }
-  return review || threads.open || threads.answered ? { author, review, since, again, threads } : null;
+  return review || threads.open || threads.answered
+    ? { author, review, word: word && word.how !== 'review' ? { at: word.at, how: word.how } : null, since, again, threads }
+    : null;
 }
 
 // Your login, as gh has it: asked once.

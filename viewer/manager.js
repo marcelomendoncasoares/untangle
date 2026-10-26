@@ -295,14 +295,16 @@
 
   // A review of a stack says so: the pull requests under the one opened are in it too.
   const stackTag = (r) => (r.stack && r.stack.legs && r.stack.legs.length > 1 ? `<span class="kind stk" title="${esc(`A stack of ${r.stack.legs.length} pull requests, from ${r.stack.base}: ${r.stack.legs.map((n) => '#' + n).join(', ')}`)}">Stack of ${r.stack.legs.length}</span>` : '');
-  // Where your review stands on GitHub: whose move it is (amber once it's back to you, green once you
-  // approved and nothing came since), then your threads its author hasn't answered nor resolved.
+  // Where your review stands on GitHub: whose move it is (amber once it's back to you since your last
+  // word, green once you approved and nothing came since), then your threads its author hasn't
+  // answered nor resolved.
   const VERDICT = { APPROVED: 'You approved', CHANGES_REQUESTED: 'You requested changes', COMMENTED: 'You commented' };
+  const WORD = { reply: 'replied in a thread', comment: 'commented in the conversation', push: 'pushed to its branch' };
   function standTags(r) {
     const s = r.stand;
     if (!s) return '';
     const t = s.threads, title = esc(standWords(s));
-    const back = s.again ? 'Review requested again' : s.since ? 'Updated since your review' : t.answered ? `${plural(t.answered, 'thread', 'threads')} answered` : '';
+    const back = s.again ? 'Review requested again' : s.since ? 'Updated since your review' : t.fresh ? `${plural(t.answered, 'thread', 'threads')} answered` : '';
     const state = back || (!s.review ? '' : s.review.state === 'APPROVED' ? 'Approved' : `Waiting on ${s.author}`);
     const kind = back ? 'back' : s.review && s.review.state === 'APPROVED' ? 'ok' : 'wait';
     return (state ? `<span class="ev gh ${kind}" title="${title}"><i></i>${esc(state)}</span>` : '')
@@ -311,12 +313,19 @@
   function standWords(s) {
     const t = s.threads, rv = s.review;
     const since = rv && (!s.since ? 'Nothing pushed since.'
-      : [s.since.commits != null ? `${plural(s.since.commits, 'commit', 'commits')} pushed since` : '', s.since.forced ? `force-pushed on ${day(s.since.forced)}` : ''].filter(Boolean).join(', and ').replace(/^./, (c) => c.toUpperCase()) + '.' || 'Pushed since.');
+      : [s.since.commits ? `${plural(s.since.commits, 'commit', 'commits')} pushed since` : '', s.since.forced ? `force-pushed on ${day(s.since.forced)}` : ''].filter(Boolean).join(', and ').replace(/^./, (c) => c.toUpperCase()) + '.');
     const asked = s.again && `${s.again.by ? `${s.again.by} asked for your review again` : 'Your review was asked for again'}${s.again.at ? ` on ${day(s.again.at)}` : ''}.`;
     const threads = [t.open ? `${t.open} unanswered${t.outdated ? ` (${t.outdated} on lines changed since)` : ''}` : '', t.answered ? `${t.answered} answered but open` : '', t.resolved ? `${t.resolved} resolved` : ''].filter(Boolean);
-    // What came after your review, in the order it came.
-    const after = s.since && s.since.forced && s.again && s.again.at && s.again.at < s.since.forced ? [asked, since] : [since, asked];
-    return [rv && `${VERDICT[rv.state]}${rv.last !== rv.state ? ', then commented' : ''} on ${day(rv.at)}.`, ...after, threads.length && `Your threads: ${threads.join(', ')}.`].filter(Boolean).join('\n');
+    // Your review and what came after it, in the order it came: what was pushed since your last word
+    // right after it, or when it was force-pushed.
+    const said = s.word ? s.word.at : rv && rv.at;
+    const told = [
+      [rv && rv.at, rv && `${VERDICT[rv.state]}${rv.last !== rv.state ? ', then commented' : ''} on ${day(rv.at)}.`],
+      [said, s.word && `You last ${WORD[s.word.how]} on ${day(s.word.at)}.`],
+      [(s.since && s.since.forced) || said, since],
+      [(s.again && s.again.at) || '~', asked],
+    ].filter(([, text]) => text).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return [...told.map(([, text]) => text), threads.length && `Your threads: ${threads.join(', ')}.`].filter(Boolean).join('\n');
   }
   function row(r) {
     const sel = S.sel === r.id, on = S.opened.has(r.id);

@@ -24,9 +24,10 @@ const head = 'c'.repeat(40);
 // What GitHub says of the pull request ada reviewed: changes requested on its head, a thread grace hasn't answered.
 const reviewed = {
   state: 'OPEN', headRefOid: head, viewerDidAuthor: false, author: { login: 'grace' },
-  reviewRequests: { nodes: [] }, asked: { nodes: [] }, pushed: { nodes: [] }, commits: { nodes: [{ commit: { oid: head } }] },
+  reviewRequests: { nodes: [] }, talk: { nodes: [] }, asked: { nodes: [] }, pushed: { nodes: [] },
+  commits: { nodes: [{ commit: { oid: head, committedDate: '2020-06-01T12:00:00Z', author: { user: { login: 'grace' } } } }] },
   mine: { nodes: [{ state: 'CHANGES_REQUESTED', submittedAt: '2020-06-02T12:00:00Z', body: 'A few things.', commit: { oid: head }, comments: { nodes: [{ replyTo: null }] } }] },
-  reviewThreads: { nodes: [{ isResolved: false, isOutdated: false, first: { nodes: [{ author: { login: 'ada' }, state: 'SUBMITTED' }] }, last: { nodes: [{ author: { login: 'ada' } }] } }] },
+  reviewThreads: { nodes: [{ isResolved: false, isOutdated: false, first: { nodes: [{ author: { login: 'ada' }, state: 'SUBMITTED' }] }, last: { nodes: [{ author: { login: 'ada' }, createdAt: '2020-06-02T12:00:00Z' }] } }] },
 };
 
 describe('Given reviews of two pull requests, one paused and one closed, and a branch’s, in the manager, ', { timeout: 120_000 }, () => {
