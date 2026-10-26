@@ -3597,13 +3597,31 @@
   let toastTimer = null;
   // ---------- Reviews: the others on this machine, from this one. untangle reads them as its
   // manager lists them; a click brings one's tab to the front.
-  const RV = { list: null, self: null, said: new Set(), timer: 0 };
+  // `me`: this review as the manager lists it; `pausing`: it waits for the agent's turn to end to
+  // pause; `paused`: paused from here, with the Reviews page's link to resume it.
+  const RV = { list: null, self: null, me: null, said: new Set(), timer: 0, pausing: false, pausedTo: null, paused: null };
   const revsEl = $('#vw-revs');
   const rvName = (r) => r.name.replace(/^[^#]*#/, '#');
   function revsPopHtml() {
     const list = RV.list || [];
     const items = list.map((r) => `<button type="button" class="rv-it" data-act="rv-open" data-id="${esc(r.id)}"${r.status === 'running' ? '' : ' title="Paused: it starts again from the manager"'}><i class="dot${r.status === 'paused' ? ' paused' : r.need ? ' need' : ''}"></i><span class="num">${esc(rvName(r))}</span><span class="t">${esc(r.title)}</span><small class="${r.need ? 'need' : ''}">${esc(r.need || (r.twin ? 'open twice' : r.status === 'paused' ? 'paused' : r.agents[0] ? r.agents[0].label : r.build ? 'building' : r.older ? 'older untangle' : ''))}</small></button>`).join('');
-    return `<div class="rv-h">Your reviews<button type="button" class="linkish" data-act="rv-manager">Open the manager</button></div>${RV.list ? items || '<p class="rv-none">No other reviews: this one is the only one.</p>' : '<p class="rv-none">Asking untangle…</p>'}<button type="button" class="rv-new" data-act="rv-new"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Start a review</button>`;
+    // This review, paused as the Reviews page pauses it: once its agent's turn ends, unless now.
+    const agent = RV.me && RV.me.agents[0];
+    const pause = !RV.self ? '' : RV.pausing || (RV.me && RV.me.pausing)
+      ? `<span class="rv-pausing" role="status"><i></i>Pausing after ${esc(agent ? agent.name : 'the agent')}’s turn</span><button type="button" class="linkish" data-act="rv-pause-now" title="Pause it now, mid-turn">Pause now</button>`
+      : `<button type="button" class="rv-pause" data-act="rv-pause" title="Pause this review: it gives its memory back and its tab closes, once ${esc(agent ? agent.name : 'its agent')}’s turn ends; its notes, marks and chat are kept, for Resume on the Reviews page"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5v9M10.5 3.5v9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Pause this review</button>`;
+    return `<div class="rv-h">Your reviews<button type="button" class="linkish" data-act="rv-manager">Open the manager</button></div>${RV.list ? items || '<p class="rv-none">No other reviews: this one is the only one.</p>' : '<p class="rv-none">Asking untangle…</p>'}<div class="rv-f"><button type="button" class="rv-new" data-act="rv-new"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Start a review</button>${pause}</div>`;
+  }
+  // Paused from here: untangle stops with the page in its tab (Orca closes the tab), and the top bar
+  // says so, with the Reviews page's link to resume it.
+  function rvPaused(reviews) {
+    RV.paused = { reviews: reviews || null };
+    RV.pausing = false;
+    closeMenu();
+    clearTimeout(RV.timer);
+    clearTimeout(metricsTimer);
+    lspEl.hidden = true;
+    fbAlarm();
   }
   function rvLoad() {
     clearTimeout(RV.timer);
@@ -3612,6 +3630,7 @@
       if (!d) return;
       const first = !RV.list;
       RV.self = d.self;
+      RV.me = d.reviews.find((r) => r.id === d.self) || null;
       RV.list = d.reviews.filter((r) => r.id !== d.self && r.status !== 'closed');
       // A review that needs you, newly: said once, unless it's what the page found as it opened.
       RV.list.forEach((r) => { if (r.need && !RV.said.has(r.id + r.need)) { RV.said.add(r.id + r.need); if (!first) toast(`${r.need} on ${rvName(r)}`); } });
@@ -8671,6 +8690,20 @@
     if (act === 'feedback') { closeMenu(); return feedback(); }
     if (act === 'fb-report') return feedback();
     if (act === 'fb-draft') return feedback({ draft: FB.draft });
+    if (act === 'rv-pause' || act === 'rv-pause-now') {
+      const who = RV.me && RV.me.agents[0] ? RV.me.agents[0].name : 'the agent';
+      api('reviews/pause', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ now: act === 'rv-pause-now' }) })
+        .then((r) => r.json().then((j) => {
+          if (!r.ok) return toast(j.error || 'untangle couldn’t pause it');
+          if (!j.waiting) return rvPaused(j.reviews);
+          RV.pausing = true;
+          RV.pausedTo = j.reviews || null;
+          renderMenu();
+          toast(`It pauses once ${who}’s turn ends`);
+        }))
+        .catch(() => toast('untangle couldn’t pause it'));
+      return;
+    }
     if (act === 'rv-open' || act === 'rv-manager' || act === 'rv-new') {
       closeMenu();
       const go = act === 'rv-open' ? api('reviews/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: t.dataset.id }) }) : api('reviews/manager', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ palette: act === 'rv-new' }) });
@@ -9160,6 +9193,13 @@
     const el = $('#vw-alarm');
     if (!el) return;
     const quiet = FB.quietSince ? Math.round((Date.now() - FB.quietSince) / 1000) : 0;
+    el.classList.toggle('paused', !!RV.paused);
+    if (RV.paused) {
+      const to = RV.paused.reviews;
+      el.innerHTML = `<i></i><span>Paused <em>· its notes, marks and chat are kept${to ? '' : ' · untangle reviews resumes it'}</em></span>${to ? `<a href="${esc(to)}" target="_blank" rel="noopener" title="Resume it there">Reviews page</a>` : ''}`;
+      el.hidden = false;
+      return;
+    }
     if (quiet >= 20) el.innerHTML = `<i></i><span>untangle isn’t answering <em>· ${quiet} s</em></span><button type="button" data-act="fb-report" title="Report it: untangle can’t take the report now, so it opens on GitHub">Report it</button>`;
     else if (FB.draft) el.innerHTML = `<i></i><span>A report is drafted <em>· for you to check</em></span><button type="button" data-act="fb-draft" title="${esc(FB.draft.text || '')}">Open it</button>`;
     el.hidden = !(quiet >= 20 || FB.draft);
@@ -9217,6 +9257,8 @@
       .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then((m) => { metricsMisses = 0; if (FB.quietSince) { FB.quietSince = 0; fbAlarm(); } showMetrics(m); metricsTimer = setTimeout(pollMetrics, 2000); })
       .catch((e) => {
+        // Paused from here, at once or once the agent's turn ended: untangle stopped as asked.
+        if (RV.paused || RV.pausing) { if (!RV.paused) rvPaused(RV.pausedTo); return; }
         if (e.name === 'AbortError') { FB.quietSince ||= Date.now() - 5000; fbAlarm(); metricsTimer = setTimeout(pollMetrics, 1000); return; }
         if (++metricsMisses >= 3) return showMetrics(null);
         metricsTimer = setTimeout(pollMetrics, 2000);

@@ -419,7 +419,8 @@ change, and *Advanced* shows the flags the agent starts with, kept for the next 
 running without an agent gets one the same way, from its row.
 - **Pause** gives a review's memory back and keeps its notes, its marks and its chat. It waits for
 the agent's turn to end, so the chat stops at a good place; *Pause now*, in the row's menu,
-doesn't. A review left idle for an hour says so. A paused pull request that's merged or closed on
+doesn't. A review pauses from its own page too, with *Pause this review* in its Reviews menu. A
+review left idle for an hour says so. A paused pull request that's merged or closed on
 GitHub moves to Closed.
 - **Close** stops a review as Pause does, its tab and its chat's terminal with it, waiting for the
 agent's turn to end (*Close now*, in the row's menu, doesn't), and frees the space it holds on

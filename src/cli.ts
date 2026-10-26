@@ -24,7 +24,7 @@ import { openPage } from './open.js';
 import { showTab } from './orca.js';
 import { feedbackPanel, fonts, highlighter, progressPage, reviewPage, type PageConfig } from './page.js';
 import { readRecord, recordFile, serves, writeRecord, type ChatRecord, type ReviewRecord, type StopReason } from './records.js';
-import { Manager, openManager } from './manager.js';
+import { Manager, openManager, runningManager } from './manager.js';
 import { reviews, type Summary } from './reviews.js';
 import { findRun, holder, listRuns, PID_NS, pidAlive, prKey, removeRun, wantedDir, wantedUrl, writeRun, type RunInfo } from './runs.js';
 import { ReviewServer } from './server.js';
@@ -227,14 +227,20 @@ async function review(opts: Options): Promise<number> {
   process.on('SIGTERM', () => stop('signal'));
 
   // The other reviews, for the page's Reviews menu: what the manager lists, read from here, and
-  // its page, opened from here.
+  // its page, opened from here. And this one, paused from here as the manager pauses it: once its
+  // agent's turn ends, unless now; its page hears where the Reviews page is, to resume it there.
   let others: Manager | null = null;
   const reviewsCall = async (route: string, method: string, body: unknown): Promise<{ status?: number; data: unknown }> => {
     others ??= new Manager();
-    const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown; palette?: unknown };
+    const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown; palette?: unknown; now?: unknown };
     if (route === 'reviews' && method === 'GET') return { data: { ...(await others.view({ disk: false })), self: record ? `${record.repoKey}/${record.key}` : null } };
     if (route === 'reviews/open' && method === 'POST') return others.call('open', 'POST', new URLSearchParams(), { id: b.id });
     if (route === 'reviews/manager' && method === 'POST') return { data: await openManager({ palette: b.palette === true }) };
+    if (route === 'reviews/pause' && method === 'POST') {
+      if (!record) return { status: 409, data: { error: 'the review is still being built: pause it once it’s open' } };
+      const a = await others.call('pause', 'POST', new URLSearchParams(), { id: `${record.repoKey}/${record.key}`, now: b.now === true });
+      return a.status ? a : { data: { ...(a.data as object), reviews: runningManager()?.url ?? null } };
+    }
     return { status: 404, data: { error: `no such call: ${method} ${route}` } };
   };
 

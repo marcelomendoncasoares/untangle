@@ -150,8 +150,14 @@ mark { background: var(--accent-soft); color: var(--accent-ink); border-radius: 
 .rv-it small { font-size: 11.5px; color: var(--text-3); white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .rv-it small.need { color: var(--local-ink); }
 .rv-none { padding: 6px 8px 10px; font-size: 12.5px; color: var(--text-3); }
-.rv-new { appearance: none; border: 0; border-top: 1px solid var(--hair); background: none; color: var(--text-2); font: 500 12.5px/1 var(--ui); display: flex; align-items: center; gap: 9px; height: 36px; margin-top: 4px; padding: 0 8px; cursor: pointer; }
-.rv-new:hover { color: var(--text); }
+.rv-f { display: flex; align-items: center; gap: 8px; margin-top: 4px; border-top: 1px solid var(--hair); }
+.rv-new, .rv-pause { appearance: none; border: 0; background: none; color: var(--text-2); font: 500 12.5px/1 var(--ui); display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 8px; cursor: pointer; }
+.rv-new:hover, .rv-pause:hover { color: var(--text); }
+/* This review's Pause, at the footer's end; while it waits for the agent's turn, it says so. */
+.rv-pause, .rv-pausing { margin-left: auto; }
+.rv-pausing { display: inline-flex; align-items: center; gap: 8px; font: 500 12.5px/1 var(--ui); color: var(--text-2); }
+.rv-pausing > i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent; animation: spin .9s linear infinite; }
+.rv-f .linkish { padding-right: 8px; font-size: 12px; }
 .rv-new kbd { margin-left: auto; }
 .t-pr { min-width: 0; max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; color: var(--text); text-decoration: none; }
 a.t-pr:hover { text-decoration: underline; text-decoration-color: var(--text-3); text-underline-offset: 3px; }
@@ -215,7 +221,11 @@ a.t-pr:hover { text-decoration: underline; text-decoration-color: var(--text-3);
 .vw-alarm { display: inline-flex; align-items: center; gap: 8px; flex: none; height: 28px; padding: 0 3px 0 10px; border-radius: 999px; background: rgba(255, 107, 94, .14); color: var(--text); font: 500 12px/1 var(--ui); white-space: nowrap; }
 .vw-alarm > i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #FF6B5E; }
 .vw-alarm em { font-style: normal; color: var(--text-2); }
-.vw-alarm button { appearance: none; border: 0; height: 22px; padding: 0 10px; border-radius: 999px; background: var(--text); color: var(--ground); font: 600 11.5px/1 var(--ui); cursor: pointer; }
+.vw-alarm button, .vw-alarm a { appearance: none; border: 0; height: 22px; padding: 0 10px; border-radius: 999px; background: var(--text); color: var(--ground); font: 600 11.5px/22px var(--ui); text-decoration: none; cursor: pointer; }
+/* Paused from its page: a ring, as on the Reviews page, and nothing to alarm. */
+.vw-alarm.paused { padding-right: 10px; background: var(--hover); }
+.vw-alarm.paused:has(a) { padding-right: 3px; }
+.vw-alarm.paused > i { background: none; box-shadow: inset 0 0 0 1.5px var(--text-3); }
 /* The agents holding the review: each one's label says where its chat is (listening, working on
    notes, a line waiting for its turn, not listening, or gone), and opens a menu. */
 .vw-agents { display: inline-flex; align-items: center; gap: 6px; flex: none; }

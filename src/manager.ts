@@ -85,6 +85,12 @@ export async function findManager(): Promise<ManagerRun | null> {
   return null;
 }
 
+/** The manager that runs now, by its run file, asked nothing: an older one isn't let go. */
+export function runningManager(): ManagerRun | null {
+  const m = readManager();
+  return m && pidAlive(m.pid) ? m : null;
+}
+
 /** The manager running now, or one started for this: its page opened, with the palette when asked. */
 export async function openManager(o: { palette: boolean }): Promise<{ where: 'orca' | 'browser' | null; url: string }> {
   const m = (await findManager()) ?? (await startManager(null));
@@ -647,12 +653,15 @@ export class Manager {
 
   private async pauseNow(record: Listed, run: RunInfo) {
     this.stopping.delete(idOf(record));
+    // A review paused from its own page stops its own process: what it leaves in Orca goes first.
+    const own = run.pid === process.pid;
+    if (own) await this.leave(run, record);
     try {
       await call(run, 'POST', 'stop', { body: { why: 'paused' } });
     } catch (e) {
       if (!(e instanceof Gone)) throw e;
     }
-    await this.leave(run, record);
+    if (!own) await this.leave(run, record);
   }
 
   /**
