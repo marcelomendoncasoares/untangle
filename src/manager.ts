@@ -18,6 +18,7 @@ import { FLOATING, newTerminal, orca, orcaCli, reviewsWorkspace, showTab, showTe
 import { childPids, rss } from './metrics.js';
 import { feedbackPanel, fonts, managerPage } from './page.js';
 import { Feedback } from './feedback.js';
+import { stands, type Stand } from './github.js';
 import { notesFile } from './notes.js';
 import { localSummary, recordedLocal, type LocalSummary } from './local.js';
 import { dirSizeAsync, listRecords, readRecord, recordFile, recordId, serves, writeRecord, type Listed, type ReviewRecord } from './records.js';
@@ -146,6 +147,8 @@ export interface Row {
   closing: boolean;
   /** Merged or closed on GitHub, when it was. */
   github: { state: 'merged' | 'closed'; at: string } | null;
+  /** Where your review of its pull request stands on GitHub, as last asked. */
+  stand: Stand | null;
   /** What waits for you, in words: Claude answered N3 and N4. And the first note it's about. */
   need: string | null;
   needAt: number | null;
@@ -199,7 +202,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
     memory: old ? memoryOf(run.pid) : s?.memory ?? null,
     build: old || s?.phase === 'ready' ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
-    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false, local: s?.local ?? null, stack: s?.stack ?? null,
+    pages: s?.pages ?? 0, pausing: false, closing: false, github: null, stand: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false, local: s?.local ?? null, stack: s?.stack ?? null,
   };
 }
 
@@ -292,6 +295,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     pausing: false,
     closing: false,
     github: r.github ?? null,
+    stand: null,
     need: need(waiting),
     needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null,
     active: s?.active ?? null,
@@ -413,6 +417,28 @@ export class Manager {
   private readonly toFree = new Set<string>();
   // GitHub's pull requests for the palette, asked at most once a minute.
   private pullsKept: { at: number; value: { asked: Pull[]; yours: Pull[]; error: string | null } } | null = null;
+  // Where your reviews of the open reviews' pull requests stand on GitHub, by pull request: asked
+  // for all of them in one call, every five minutes while the page is open.
+  private readonly stood = new Map<string, Stand | null>();
+  private stoodAt = 0;
+  private standing = false;
+
+  /**
+   * Asks GitHub again where your reviews stand, when its answer is older than `age`, or a minute
+   * old with a pull request it wasn't asked about. Until it answers, the page has the last answer.
+   */
+  private stand(prs: string[], age: number) {
+    const since = Date.now() - this.stoodAt;
+    if (this.standing || !prs.length || (since < age && (since < 60_000 || prs.every((pr) => this.stood.has(pr)))) || !has('gh')) return;
+    this.standing = true;
+    this.stoodAt = Date.now();
+    void stands(prs).then((m) => {
+      this.stood.clear();
+      m.forEach((v, k) => this.stood.set(k, v));
+    }, () => {
+      // GitHub didn't answer: the last answer stands, till the next time.
+    }).finally(() => { this.standing = false; });
+  }
 
   /** The pull requests GitHub asks you to review, and your own, through gh. */
   async pulls(): Promise<{ asked: Pull[]; yours: Pull[]; error: string | null }> {
@@ -772,8 +798,11 @@ export class Manager {
     return p ? { data: { where: p.where } } : { status: 502, data: { error: 'no browser to open it in' } };
   }
 
-  /** The reviews, as the page shows them, with memory and disk (a review's Reviews menu skips disk). */
-  async view(o: { disk: boolean } = { disk: true }) {
+  /**
+   * The reviews, as the page shows them, with memory and disk (a review's Reviews menu skips disk).
+   * Shown again, the page asks for GitHub's word a minute old at most.
+   */
+  async view(o: { disk: boolean; shown?: boolean } = { disk: true }) {
     await this.freeClosed();
     const list = listRecords();
     const live = await summaries(list);
@@ -810,6 +839,10 @@ export class Manager {
         else rows[at] = { ...rows[at], status: 'running', stopped: null, closed: null, github: null, freed: null, parts: null, opened: s.opened, memory: s.memory, build: s.build, older: s.older, pages: s.pages, active: s.active, agents: s.agents, waiting: s.waiting, need: s.need, needAt: s.needAt };
       }
     }
+    // Where your reviews stand on GitHub, for the open reviews of pull requests.
+    const prOf = (x: Row) => (x.status !== 'closed' && !x.twin ? wantedUrl(x.target)?.pr ?? null : null);
+    rows.forEach((x) => { const pr = prOf(x); x.stand = pr ? this.stood.get(pr) ?? null : null; });
+    if (o.disk) this.stand([...new Set(rows.map(prOf).filter((pr): pr is string => !!pr))], o.shown ? 60_000 : 300_000);
     return {
       version: VERSION,
       reviews: rows,
@@ -866,7 +899,7 @@ export class Manager {
     const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown };
     // And whether the untangle installed now is newer than the one this process runs.
     if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid, built: BUILT, busy: this.busy, updated: builtAt() > STARTED_BUILT } };
-    if (route === 'reviews' && method === 'GET') return { data: await this.view() };
+    if (route === 'reviews' && method === 'GET') return { data: await this.view({ disk: true, shown: query.has('shown') }) };
     if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
     if (route === 'folder' && method === 'GET') return { data: pathView(query.get('path') ?? '') };
     if (route === 'folders' && method === 'GET') return { data: await this.folders() };

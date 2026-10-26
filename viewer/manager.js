@@ -295,6 +295,29 @@
 
   // A review of a stack says so: the pull requests under the one opened are in it too.
   const stackTag = (r) => (r.stack && r.stack.legs && r.stack.legs.length > 1 ? `<span class="kind stk" title="${esc(`A stack of ${r.stack.legs.length} pull requests, from ${r.stack.base}: ${r.stack.legs.map((n) => '#' + n).join(', ')}`)}">Stack of ${r.stack.legs.length}</span>` : '');
+  // Where your review stands on GitHub: whose move it is (amber once it's back to you, green once you
+  // approved and nothing came since), then your threads its author hasn't answered nor resolved.
+  const VERDICT = { APPROVED: 'You approved', CHANGES_REQUESTED: 'You requested changes', COMMENTED: 'You commented' };
+  function standTags(r) {
+    const s = r.stand;
+    if (!s) return '';
+    const t = s.threads, title = esc(standWords(s));
+    const back = s.again ? 'Review requested again' : s.since ? 'Updated since your review' : t.answered ? `${plural(t.answered, 'thread', 'threads')} answered` : '';
+    const state = back || (!s.review ? '' : s.review.state === 'APPROVED' ? 'Approved' : `Waiting on ${s.author}`);
+    const kind = back ? 'back' : s.review && s.review.state === 'APPROVED' ? 'ok' : 'wait';
+    return (state ? `<span class="ev gh ${kind}" title="${title}"><i></i>${esc(state)}</span>` : '')
+      + (t.open ? `<span class="ev gh" title="${title}">${plural(t.open, 'thread', 'threads')} unanswered</span>` : '');
+  }
+  function standWords(s) {
+    const t = s.threads, rv = s.review;
+    const since = rv && (!s.since ? 'Nothing pushed since.'
+      : [s.since.commits != null ? `${plural(s.since.commits, 'commit', 'commits')} pushed since` : '', s.since.forced ? `force-pushed on ${day(s.since.forced)}` : ''].filter(Boolean).join(', and ').replace(/^./, (c) => c.toUpperCase()) + '.' || 'Pushed since.');
+    const asked = s.again && `${s.again.by ? `${s.again.by} asked for your review again` : 'Your review was asked for again'}${s.again.at ? ` on ${day(s.again.at)}` : ''}.`;
+    const threads = [t.open ? `${t.open} unanswered${t.outdated ? ` (${t.outdated} on lines changed since)` : ''}` : '', t.answered ? `${t.answered} answered but open` : '', t.resolved ? `${t.resolved} resolved` : ''].filter(Boolean);
+    // What came after your review, in the order it came.
+    const after = s.since && s.since.forced && s.again && s.again.at && s.again.at < s.since.forced ? [asked, since] : [since, asked];
+    return [rv && `${VERDICT[rv.state]}${rv.last !== rv.state ? ', then commented' : ''} on ${day(rv.at)}.`, ...after, threads.length && `Your threads: ${threads.join(', ')}.`].filter(Boolean).join('\n');
+  }
   function row(r) {
     const sel = S.sel === r.id, on = S.opened.has(r.id);
     const st = r.status !== 'running' ? r.status : r.build ? 'build' : needs(r) ? 'need' : '';
@@ -305,7 +328,7 @@
       : r.status === 'running'
       ? `${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}${size}${localTags(r)}`
       : `${r.github ? (r.github.state === 'merged' ? 'Merged' : 'Closed on GitHub') : r.status === 'closed' ? 'Closed' : whyText[r.stopped ? r.stopped.why : 'stop']} ${ago(r.status === 'closed' ? r.closed : r.stopped && r.stopped.at)} · ${esc(r.repo)}${r.author ? ' · ' + esc(r.author) : ''}${localTags(r)}`;
-    const ev = r.status === 'running' ? events(r) : '';
+    const ev = (r.status === 'running' ? events(r) : '') + (r.status !== 'closed' && !r.twin ? standTags(r) : '');
     // One started here that untangle doesn't list yet has nothing to open or close.
     return `<div class="rw${on ? ' open' : ''}${sel ? ' sel' : ''}" data-id="${esc(r.id)}">
       <div class="row ${r.status}${r.pending ? ' pending' : ''}"${r.pending ? '' : ` data-act="sel" data-id="${esc(r.id)}"`}>
@@ -827,12 +850,13 @@
 
   // ---- Talking to untangle
 
-  let timer = 0, asks = 0, shownAsk = 0;
+  // Shown again, the page asks for GitHub's word on your reviews if it's more than a minute old.
+  let timer = 0, asks = 0, shownAsk = 0, shownAgain = false;
   function poll() {
     clearTimeout(timer);
     if (document.visibilityState === 'hidden') return;
     const n = ++asks, at = Date.now();
-    api('reviews').then((d) => {
+    api(shownAgain ? 'reviews?shown=1' : 'reviews').then((d) => {
       // An answer to an earlier ask than the one shown is older news.
       if (n < shownAsk) return;
       shownAsk = n;
@@ -842,6 +866,7 @@
       for (const id of S.opened) if (!rows().some((r) => r.id === id)) { S.opened.delete(id); S.tails.delete(id); }
       render();
     }, () => {}).finally(() => { timer = setTimeout(poll, 2000); });
+    shownAgain = false;
     loadTail();
   }
 
@@ -1177,7 +1202,7 @@
     }, 240);
   });
 
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { poll(); freshCheck(); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { shownAgain = true; poll(); freshCheck(); } });
   setTimeout(freshCheck, 3000);
   setInterval(() => { if (document.visibilityState === 'visible') freshCheck(); }, 120000);
   addEventListener('resize', () => { if (S.menu) layer(); if (P.open && P.stage === 'start') fitMsg(); });

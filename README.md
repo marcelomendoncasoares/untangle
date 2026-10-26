@@ -425,6 +425,11 @@ disk. Its notes and marks stay, so *Reopen* builds the rest again, and *Forget*,
 asks first, then removes those too. A paused pull request that's merged or closed on GitHub closes
 the same way. What a review closed before still holds is freed fourteen days on, or with *Free the
 space*.
+- **On GitHub**, a pull request you reviewed says whose move it is: *Waiting on* its author, or, in
+amber once it's back to you, *Updated since your review*, *Review requested again*, or the threads
+its author answered. Beside it, your threads the author hasn't answered nor resolved; hover for
+when each thing happened. The page asks GitHub every five minutes while it's open, in one call for
+all the reviews, and again when you come back to it.
 - **Repositories**, in the side, list the reviews by repository. A branch of your fork goes by the
 repository it came from, its `upstream` remote, as its pull requests do.
 - **Outside Orca**, the agent's command is copied for you to run in a terminal.
