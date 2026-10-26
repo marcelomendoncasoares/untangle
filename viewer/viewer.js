@@ -2282,8 +2282,8 @@
     data: null, error: null, loading: false, again: false, busy: null, errors: new Map(),
     anchors: new Map(), files: new Map(), byN: new Map(), review: [],
     opened: new Set(), replying: new Set(), editing: null, folded: new Set(), was: new Set(), showResolved: false,
-    // Runs of talk in a thread, opened though a comment follows them.
-    unfold: new Set(),
+    // Runs of a note's talk in a GitHub thread, opened or folded by hand, by run (and resolved or not).
+    talk: new Map(),
     reveal: null, opening: null, openingTimer: null, seenAgents: new Set(), agentOpen: null,
     // An agent's menu just opened from its label: its box takes the keys.
     agentFocus: false,
@@ -2872,8 +2872,11 @@
   // The buttons a box sends a note with: Reply (or Add note), and the ask for a draft before it.
   const noteButtons = (act, attrs, label) => (NT.on && canPost() ? [['Draft comment', `data-act="nt-draft" data-via="${act}" data-draft-ask="1" ${attrs || ''} title="Ask ${esc(agentWho())} for the comment: its answer is your pending comment on GitHub, to edit and send"`, false]] : [])
     .concat([[label, `data-act="${act}" ${attrs || ''}`, true]]);
-  // A GitHub thread's comments and its notes' comments, by time. A run of talk that a comment
-  // follows folds to one line, "N5 · 3 notes with Claude", that opens it again.
+  // A GitHub thread's comments and its notes' comments, by time. A note's talk between them is a
+  // thread of its own, with orchid on its edge. In a GitHub thread (`thread`), each run of it has a
+  // head that names the note and folds the run, and the note's last run resolves it and says whose
+  // turn it is; elsewhere, only a run that a comment follows has one, "N5 · 3 notes with Claude". A
+  // run a comment follows starts folded, and so does a resolved note's.
   function talkHtml(key, comments, notes, kind, thread) {
     const tags = new Map(), tagged = (n) => { if (!tags.has(n.n)) tags.set(n.n, ntTagged(n)); return tags.get(n.n); };
     // A comment a note made comes after the talk that made it, whatever GitHub's clock says.
@@ -2881,8 +2884,11 @@
     const items = comments.map((c) => ({ at: Math.max(Date.parse(c.created), made.get(c.id) || 0), c }))
       .concat(notes.flatMap((n) => n.comments.map((c, i) => ({ at: Date.parse(c.at), nc: c, n, lead: i === 0 }))))
       .sort((x, y) => x.at - y.at);
+    // GitHub's comments one by one, a note's talk for as long as it goes on.
     const runs = [];
-    items.forEach((it) => { const last = runs[runs.length - 1]; if (it.nc && last && last.notes) last.items.push(it); else runs.push({ notes: !!it.nc, items: [it] }); });
+    items.forEach((it) => { const last = runs[runs.length - 1]; if (it.nc && last && last.notes && last.items[0].n === it.n) last.items.push(it); else runs.push({ notes: !!it.nc, items: [it] }); });
+    const lastRun = new Map();
+    runs.forEach((r, k) => { if (r.notes) lastRun.set(r.items[0].n.n, k); });
     let h = '', prev = null;
     runs.forEach((r, k) => {
       if (!r.notes) {
@@ -2892,17 +2898,26 @@
         return;
       }
       prev = null;
-      const fold = key + ':' + r.items[0].nc.id;
-      const foldable = runs.slice(k + 1).some((x) => !x.notes);
-      const open = !foldable || NT.unfold.has(fold);
-      if (foldable) {
-        const who = (r.items.find((x) => x.nc.by) || {}).nc;
-        const k2 = r.items.length;
-        h += `<button type="button" class="th-talk" data-act="nt-talk" data-key="${esc(fold)}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span><b>${nList([...new Set(r.items.map((x) => x.n.n))])}</b> <span>· ${k2} note${k2 === 1 ? '' : 's'} with ${esc(who ? who.by : agentWho())}</span> <span class="muted">· only here</span></button>`;
+      const n = r.items[0].n, last = lastRun.get(n.n) === k;
+      // Resolving or opening the note again folds or opens its runs anew.
+      const fold = key + ':' + r.items[0].nc.id + (n.resolved ? ':done' : '');
+      const followed = runs.slice(k + 1).some((x) => !x.notes);
+      const headed = !!thread || followed;
+      const open = !headed || (NT.talk.has(fold) ? NT.talk.get(fold) : !followed && !n.resolved);
+      let s = '';
+      if (headed) {
+        const who = (r.items.find((x) => x.nc.by) || {}).nc, c = r.items.length;
+        const done = !n.resolved ? '' : n.resolved.by ? `<span class="ag-mark" aria-hidden="true">✦</span><span>Resolved by ${esc(n.resolved.by)} ·</span> ` : `${ICON.check}<span>Resolved ·</span> `;
+        const res = thread && last ? `<button type="button" class="btn sm th-sub-res" data-act="nt-resolve" data-n="${n.n}" title="${n.resolved ? `Open N${n.n} again` : `Resolve N${n.n}: its talk folds away, and the thread on GitHub stays as it is`}"${ntBusyAttr('res:' + n.n)}>${NT.busy === 'res:' + n.n ? 'Saving…' : `${n.resolved ? 'Unresolve' : 'Resolve'} N${n.n}`}</button>` : '';
+        s += `<div class="th-sub-h"><button type="button" class="th-talk" data-act="nt-talk" data-key="${esc(fold)}" data-open="${open}" aria-expanded="${open}"><span class="tw">${open ? ICON.chevronDown : ICON.chevronRight}</span>${done}<b>N${n.n}</b> <span>· ${c} note${c === 1 ? '' : 's'} with ${esc(who ? who.by : agentWho())}</span> <span class="muted">· only here</span></button>${res}</div>`;
       }
-      if (!open) return;
-      let p = null;
-      r.items.forEach((x) => { h += noteCommentHtml(x.n, x.nc, !p || p.nc.by !== x.nc.by || p.n !== x.n || x.lead, x.lead, tagged(x.n).has(x.nc.id)); p = x; });
+      if (open) {
+        let p = null;
+        r.items.forEach((x) => { s += noteCommentHtml(x.n, x.nc, !p || p.nc.by !== x.nc.by || x.lead, x.lead, tagged(x.n).has(x.nc.id)); p = x; });
+      }
+      // Where the agent is with your last word, at the end of the note's talk.
+      if (thread && last) s += ntTurnHtml(n);
+      h += `<div class="th-sub${n.resolved ? ' resolved' : ''}" data-sub="${n.n}">${s}</div>`;
     });
     return h;
   }
@@ -2923,7 +2938,7 @@
     if (t.outdated && !o.head) h += '<div class="th-note">Outdated: the code changed since.</div>';
     const notes = NT.on ? notesIn(t) : [];
     h += talkHtml(t.id, t.comments, notes, 'review', t.id);
-    const key = 'reply:' + t.id, err = GH.errors.get('resolve:' + t.id) || NT.errors.get(key);
+    const key = 'reply:' + t.id, err = GH.errors.get('resolve:' + t.id) || NT.errors.get(key) || notes.map((n) => NT.errors.get('res:' + n.n)).find(Boolean);
     // The note its box adds to: the open one in it, else a new one about it.
     const talk = notes.filter((n) => !n.resolved).pop();
     const local = voiceOf(key) === 'local';
@@ -2934,7 +2949,6 @@
       buttons: local ? noteButtons('nt-thread', `data-thread="${esc(t.id)}"`, 'Add note') : talk ? sendButtons('nt-comment', `data-n="${talk.n}" data-thread="${esc(t.id)}"`, true) : sendButtons('gh-reply', `data-thread="${esc(t.id)}"`, true),
     })
       : t.canReply ? `<button type="button" class="th-reply" data-act="reply-open" data-thread="${esc(t.id)}">Reply…</button>` : '';
-    h += ntTurnHtml(talk);
     if (reply || resBtn || err) h += `<div class="th-f">${reply}${resBtn}${err ? `<div class="cmp-err" role="alert">${esc(err)}</div>` : ''}</div>`;
     return h + '</div>';
   }
@@ -8257,7 +8271,7 @@
       return ntAct(d.key, { action: 'add', review: true, path: '', body: text(), draft, about }, () => { setDraft(d.key, ''); GH.preview.delete(d.key); GH.asking.delete(d.key); toast(draft ? draftAsked() : noteSaved()); });
     }
     if (act === 'nt-ask-cancel') { if (letGo(d.key)) { GH.asking.delete(d.key); render(); } return; }
-    if (act === 'nt-talk') { NT.unfold.has(d.key) ? NT.unfold.delete(d.key) : NT.unfold.add(d.key); return render(); }
+    if (act === 'nt-talk') { NT.talk.set(d.key, d.open !== 'true'); return render(); }
     if (act === 'nt-add') {
       const c = state.compose;
       if (!d.file && !c) return;

@@ -1306,6 +1306,20 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
 .th-talk .muted { color: var(--text-3); }
 .th-talk[aria-expanded="true"] { background: none; padding-left: 4px; }
 .th-talk:hover { color: var(--text); }
+/* A note's talk in a GitHub thread: a thread of its own, orchid on its edge (grey once resolved), its
+   head naming it, and Resolve at the head's end under the pointer. */
+.th-sub { box-shadow: inset 2px 0 0 var(--local), inset 3px 0 0 var(--raised); }
+.th-sub.resolved { box-shadow: inset 2px 0 0 var(--hair-2), inset 3px 0 0 var(--raised); }
+.th-sub-h { display: flex; align-items: center; gap: 8px; padding-right: 14px; }
+.th-sub-h .th-talk { flex: 1 1 auto; min-width: 0; width: auto; margin-right: 0; }
+.th-sub.resolved .th-talk { color: var(--text-2); background: var(--hover); }
+.th-sub.resolved .th-talk[aria-expanded="true"] { background: none; }
+.th-sub.resolved .th-talk > svg { color: var(--done); }
+.th-sub.resolved .th-talk .ag-mark { color: var(--done); font: 700 12px/1 var(--ui); }
+.th-sub-res { flex: none; opacity: 0; transition: opacity var(--fast) var(--ease); }
+.th-sub:hover .th-sub-res, .th-sub-res:focus-visible, .th-sub-res[aria-busy="true"] { opacity: 1; }
+@media (hover: none) { .th-sub-res { opacity: 1; } }
+.th-sub .nt-turn { padding-bottom: 8px; }
 /* An agent's draft, pending and as it wrote it: it asks to be made yours. The thread's gutter turns
    amber beside it, drawn as the thread's blue is and over a strip of the thread's ground, so that no
    blue shows at its edge at any zoom; at the thread's ends it rounds with it. */

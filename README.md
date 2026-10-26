@@ -218,8 +218,10 @@ A talk with the agent can end in a comment on the pull request, in the same thre
   your review's summary.
 - *Ask*, on a comment from GitHub, writes a note about it, which the agent reads with the comment.
 
-The talk folds above the comment it made, and the thread is listed with GitHub's, its notes
-counted with it.
+In the GitHub thread, the note's talk is a thread of its own, with orchid on its edge: each run of
+it has a head that names the note and folds it, the runs above the comment it made start folded,
+and *Resolve N1*, at the end of its last head, resolves the note and leaves GitHub's thread as it
+is. The thread is listed with GitHub's, its notes counted with it.
 
 ![Notes on #168's sync_streams.dart: Claude listening, its answers in the threads, a note changed since the head it was written on, and one it resolved](docs/images/notes.png)
 

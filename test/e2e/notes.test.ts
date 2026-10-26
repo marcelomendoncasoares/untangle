@@ -296,11 +296,11 @@ describe('Given a served review of pull request 7, and an agent’s commands, ',
       await fill(page!, '[data-thread="THREAD_9"] textarea[data-draft="reply:THREAD_9"]', 'Say why it prints the name at all.');
       await page!.click('[data-thread="THREAD_9"] [data-act="nt-thread"]');
       await page!.until(`[...document.querySelectorAll('[data-thread="THREAD_9"] .cm-body')].some((b) => b.textContent.includes('Say why'))`);
-      shown += ' / ' + await read(page!, `[...document.querySelector('[data-thread="THREAD_9"]').children].filter((el) => el.matches('.cm, .th-talk')).map((el) => el.matches('.th-talk') ? 'talk: ' + el.textContent.replace(/\\s+/g, ' ').trim() : (el.matches('.pending') ? 'GitHub' : 'note') + ': ' + el.querySelector('.cm-body').textContent.trim()).join(' | ')`);
+      shown += ' / ' + await read(page!, `[...document.querySelector('[data-thread="THREAD_9"]').querySelectorAll(':scope > .cm, :scope > .th-sub > .cm, :scope > .th-sub > .th-sub-h > .th-talk')].map((el) => el.matches('.th-talk') ? 'talk: ' + el.textContent.replace(/\\s+/g, ' ').trim() : (el.matches('.pending') ? 'GitHub' : 'note') + ': ' + el.querySelector('.cm-body').textContent.trim()).join(' | ')`);
     });
 
-    it('then the answer joins the note’s talk in that thread, after the comment it made, kept here, not a reply on GitHub.', () => {
-      assert.equal(shown, 'Cancel | Draft comment | Add note / talk: N2 · 1 note with Codex · only here | GitHub: Print a greeting, not the name. | note: Say why it prints the name at all.');
+    it('then the answer joins the note’s talk in that thread, under its head, after the comment it made, kept here, not a reply on GitHub.', () => {
+      assert.equal(shown, 'Cancel | Draft comment | Add note / talk: N2 · 1 note with Codex · only here | GitHub: Print a greeting, not the name. | talk: N2 · 1 note with Codex · only here | note: Say why it prints the name at all.');
     });
   });
 
