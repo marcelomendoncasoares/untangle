@@ -440,7 +440,7 @@ The build compiles the Dart extractor again when the Dart SDK changed, so an upg
 new Dart. After the first upgrade, the clone you built in [Getting started](#2-build-untangle) is
 no longer the one on `PATH`, and you can delete it. Reviews already running keep the version they
 started with until you refresh them: each page says when a newer `untangle` is installed, and its
-Refresh restarts the review on it, at the same address.
+Refresh restarts the review on it, at the same address. The Reviews page does the same for itself.
 
 When a review starts, `untangle` looks up GitHub's `main` with `git ls-remote`, at most once a
 day, and once the review is up it says whether an upgrade brings a newer `untangle`.

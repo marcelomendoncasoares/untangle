@@ -27,7 +27,7 @@ import { ReviewServer } from './server.js';
 import { Building, forget, free, freeOld, holdings, isCheckout, keptDirs, olderDirs, removeOld, type Holdings } from './space.js';
 import { isPrUrl, upstreamOf } from './target.js';
 import { chatTail } from './transcripts.js';
-import { VERSION } from './version.js';
+import { builtAt, STARTED_BUILT, VERSION } from './version.js';
 
 /** The manager's address, unless something else has it. */
 export const MANAGER_PORT = 7777;
@@ -864,7 +864,8 @@ export class Manager {
   /** The page's API. */
   async call(route: string, method: string, query: URLSearchParams, body: unknown): Promise<{ status?: number; data: unknown }> {
     const b = (body && typeof body === 'object' ? body : {}) as { id?: unknown };
-    if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid, built: BUILT, busy: this.busy } };
+    // And whether the untangle installed now is newer than the one this process runs.
+    if (route === 'hello' && method === 'GET') return { data: { version: VERSION, pid: process.pid, built: BUILT, busy: this.busy, updated: builtAt() > STARTED_BUILT } };
     if (route === 'reviews' && method === 'GET') return { data: await this.view() };
     if (route === 'pulls' && method === 'GET') return { data: await this.pulls() };
     if (route === 'folder' && method === 'GET') return { data: pathView(query.get('path') ?? '') };
@@ -943,13 +944,18 @@ export class Manager {
 
 /** Serves the manager's page here, until it's been idle a while; its link goes in the run folder. */
 export async function serveManager(o: { port: number | null; quiet: boolean }): Promise<number> {
+  // Restarted by the manager that served here, for a newer untangle installed since: this one serves
+  // once that one has ended, at its port and with its token, so the page open there reloads into it.
+  const after = Number(process.env.UNTANGLE_RESTART_OF) || 0, token = process.env.UNTANGLE_TOKEN || undefined;
+  for (const k of ['UNTANGLE_RESTART_OF', 'UNTANGLE_TOKEN']) delete process.env[k];
+  if (after) for (let i = 0; i < 300 && pidAlive(after); i++) await new Promise((r) => setTimeout(r, 50));
   const manager = new Manager();
   const progress = new Narrator({ quiet: true, verbose: false, color: false });
   let seen = Date.now();
   const page = () => managerPage({ version: VERSION });
   const feedback: Feedback = new Feedback({ review: null, broadcast: (value) => server.broadcast(value), pages: () => server.pageCount });
   const server = new ReviewServer(
-    { host: '127.0.0.1', port: o.port ?? MANAGER_PORT, portExplicit: o.port != null, basePath: '/' },
+    { host: '127.0.0.1', port: o.port ?? MANAGER_PORT, portExplicit: o.port != null, basePath: '/', token },
     progress,
     {
       page,
@@ -960,6 +966,7 @@ export async function serveManager(o: { port: number | null; quiet: boolean }): 
       call: (route, method, query, body) => {
         seen = Date.now();
         if (route === 'feedback' || route.startsWith('feedback/')) return feedback.call(route, method, body);
+        if (route === 'restart' && method === 'POST') return Promise.resolve(restart());
         return manager.call(route, method, query, body);
       },
     },
@@ -976,6 +983,20 @@ export async function serveManager(o: { port: number | null; quiet: boolean }): 
   const stop = async () => {
     await server.close();
     process.exit(0);
+  };
+  // Restarting: the untangle installed now serves this page instead, at this port and with this
+  // token, and the page reloads into it. Not while it waits for an agent's turn to end to pause or
+  // close a review: it would forget to.
+  let restarting = false;
+  const restart = (): { status?: number; data: unknown } => {
+    if (manager.busy) return { status: 409, data: { error: 'it waits for an agent’s turn to end, to pause or close a review: try again once it has' } };
+    if (!restarting) {
+      const { pid, log } = launch(['reviews', '-serve', '-port', new URL(url).port], { ...process.env, UNTANGLE_RESTART_OF: String(process.pid), UNTANGLE_TOKEN: server.token });
+      if (!pid) return { status: 502, data: { error: `the new untangle didn’t start${logTail(log) ? ': ' + logTail(log).split('\n').pop() : ''}` } };
+      restarting = true;
+      setTimeout(() => void stop(), 50);
+    }
+    return { data: { restarting: true, pid: process.pid } };
   };
   process.on('exit', () => { if (readManager()?.pid === process.pid) fs.rmSync(managerFile(), { force: true }); });
   process.on('SIGINT', stop);

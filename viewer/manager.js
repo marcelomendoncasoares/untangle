@@ -146,6 +146,40 @@
     return open().filter((r) => S.filter === 'all' || (S.filter === 'need' && needs(r)) || (S.filter === 'work' && working(r)) || (S.filter === 'paused' && r.status === 'paused') || (S.filter.startsWith('repo:') && r.repo === S.filter.slice(5)));
   };
 
+  // ---- A newer untangle installed: the manager restarts on it, at this address, and the page
+  // reloads into it (asked as the page opens, every two minutes, and when it's shown again).
+  const FRESH = { updated: false, state: null, was: null, timer: null };
+  function freshCheck() {
+    if (FRESH.state) return;
+    api('hello').then((d) => { if (!!d.updated !== FRESH.updated) { FRESH.updated = !!d.updated; fresh(); } }, () => {});
+  }
+  function fresh() {
+    const el = $('#fresh');
+    const h = FRESH.state === 'restarting' ? '<span class="spin" aria-hidden="true"></span><span class="fr-t">Restarting on the new untangle</span>'
+      : FRESH.updated ? '<span class="fr-t">untangle was updated</span><button type="button" class="btn primary" data-act="restart">Refresh</button>' : '';
+    el.hidden = !h;
+    el.innerHTML = h;
+    el.title = FRESH.state === 'restarting' ? 'untangle restarts this page on the untangle installed now; it reloads once that one answers' : FRESH.updated ? 'A newer untangle is installed: refreshing restarts this page on it. Reviews open in their tabs restart from their own Refresh.' : '';
+  }
+  function restart() {
+    if (FRESH.state) return;
+    FRESH.state = 'restarting';
+    fresh();
+    post('restart', {}).then((d) => { FRESH.was = d.pid; waitRestart(Date.now()); }, (e) => { FRESH.state = null; fresh(); toast(`Couldn’t restart: ${e.message}`, true); });
+  }
+  // Until the untangle that took the page over answers: the one before answers no more.
+  function waitRestart(t0) {
+    FRESH.timer = setTimeout(() => api('hello').then((d) => {
+      if (d.pid && d.pid !== FRESH.was) return location.reload();
+      waitRestart(t0);
+    }, () => {
+      if (Date.now() - t0 < 120000) return waitRestart(t0);
+      FRESH.state = null;
+      fresh();
+      toast('Couldn’t restart: untangle didn’t come back', true);
+    }), 500);
+  }
+
   function toast(text, bad) {
     S.toast = { text, bad: !!bad, n: ++toastN };
     clearTimeout(toastTimer);
@@ -910,6 +944,9 @@
       case 'feedback':
         feedback();
         break;
+      case 'restart':
+        restart();
+        break;
       case 'sel':
         S.sel = id;
         if (S.opened.has(id)) { S.opened.delete(id); S.tails.delete(id); }
@@ -1140,7 +1177,9 @@
     }, 240);
   });
 
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { poll(); freshCheck(); } });
+  setTimeout(freshCheck, 3000);
+  setInterval(() => { if (document.visibilityState === 'visible') freshCheck(); }, 120000);
   addEventListener('resize', () => { if (S.menu) layer(); if (P.open && P.stage === 'start') fitMsg(); });
   poll();
   // From a review's Start a review: the palette opens with the page.
