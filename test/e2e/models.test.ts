@@ -17,6 +17,9 @@ const ledger = 'lib/src/models/ledger.spy.yaml';
 const thing = 'test/sample_test_server/lib/src/models/thing.spy.yaml';
 const generated = (cls: string, fields: string[]) => `abstract class ${cls} {\n  ${cls}({${fields.map((f) => `required this.${f.split(' ')[1]}`).join(', ')}});\n${fields.map((f) => `  ${f};\n`).join('')}}\n`;
 const card = (file: string) => `.md-card[data-model="${file}"]`;
+// The Files tab's rows, folders ending in a slash, each saying whether it's faded or reviewed.
+const fileRows = `[...document.querySelectorAll('.sb-row.tr')].map((r) => (r.dataset.open || r.dataset.dir + '/') + (r.classList.contains('chain-out') ? ' (faded)' : '') + (r.classList.contains('done') ? ' (reviewed)' : '')).join('\\n')`;
+const filesCount = `document.querySelector('.sb-group.fs > span + span').textContent`;
 
 describe('Given a review that changes a model and its migration, adds a long one and changes a test package’s, ', { skip, timeout: 180_000 }, () => {
   let repo: TempRepo;
@@ -194,19 +197,36 @@ describe('Given a review that changes a model and its migration, adds a long one
     before(async () => {
       await page.click('[data-tab="files"]');
       await page.until(`!!document.querySelector('.sb-row.tr[data-open]')`);
-      rows = await read(page, `[...document.querySelectorAll('.sb-row.tr')].map((r) => (r.dataset.open || r.dataset.dir + '/') + (r.classList.contains('chain-out') ? ' (faded)' : '')).join('\\n')`);
+      rows = await read(page, fileRows);
     });
 
     it('then only the models, and the folders that hold them, stand out: the other files fade.', () => {
       assert.equal(rows, [
         'lib/src/',
         'lib/src/models/',
-        `${invoice}`,
+        `${invoice} (reviewed)`,
         `${ledger}`,
         'lib/src/greeting.dart (faded)',
         'test/sample_test_server/lib/src/models/',
         `${thing}`,
       ].join('\n'));
+    });
+  });
+
+  describe('when the filter is turned on, with Models open, ', () => {
+    let rows = '';
+    let count = '';
+
+    before(async () => {
+      await page.click('[data-act="files-hide"]');
+      await page.until(`document.querySelector('[data-act="files-hide"]').getAttribute('aria-pressed') === 'true'`);
+      rows = await read(page, fileRows);
+      count = await read(page, filesCount);
+    });
+
+    it('then the files that faded are hidden, and the count says how many show.', () => {
+      assert.equal(rows, ['lib/src/models/', `${invoice} (reviewed)`, ledger, 'test/sample_test_server/lib/src/models/', thing].join('\n'));
+      assert.equal(count, '3 of 4 files · +64 −0');
     });
   });
 });

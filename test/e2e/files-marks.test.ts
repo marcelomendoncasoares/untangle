@@ -142,3 +142,76 @@ describe('Given a review of a folder with two changed files and a file beside it
     });
   });
 });
+
+describe('Given a chain in a file of a folder, a change of its own beside it, and one in another folder, ', { skip, timeout: 180_000 }, () => {
+  let repo: TempRepo;
+  let run: UntangleRun;
+  let page: Browser;
+  let cache: string;
+  const rows = `[...document.querySelectorAll('.sb-row.tr')].map((r) => r.dataset.open || r.dataset.dir + '/').join(' | ')`;
+  const count = `document.querySelector('.sb-group.fs > span + span').textContent`;
+
+  before(async () => {
+    repo = TempRepo.create();
+    repo.write('pubspec.yaml', pubspec);
+    repo.write('lib/a/app.dart', "void greet() {\n  print('hi');\n}\n\nvoid main() {\n  greet();\n}\n");
+    repo.write('lib/a/other.dart', dart(['other'], () => 'first'));
+    repo.write('lib/b.dart', dart(['four'], () => 'first'));
+    repo.commit({ subject: 'Start', author, committer: author });
+    repo.branch('feature');
+    repo.write('lib/a/app.dart', "void greet(String name) {\n  print(name);\n}\n\nvoid main() {\n  greet('ada');\n}\n");
+    repo.write('lib/a/other.dart', dart(['other'], () => 'second'));
+    repo.write('lib/b.dart', dart(['four'], () => 'second'));
+    repo.commit({ subject: 'Name who to greet', author, committer: author });
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    run = await startUntangle(repo.dir, { base: 'main', cacheDir: cache });
+    await waitForReview(reviewClient(run.url));
+    page = await launchBrowser();
+    await page.reducedMotion(true);
+    await page.goto(run.url);
+    await page.until(`!!document.querySelector('[data-chain]')`, 30_000);
+  });
+
+  after(async () => {
+    await page?.close();
+    await run?.stop();
+    repo?.remove();
+    if (cache) fs.rmSync(cache, { recursive: true, force: true });
+  });
+
+  describe('when the chain is opened and the filter turned on in the Files tab, ', () => {
+    let shown = '';
+    let faded = '';
+
+    before(async () => {
+      await page.click('[data-chain]');
+      await page.click('[data-tab="files"]');
+      await page.until(`!!document.querySelector('${row('lib/a/app.dart')}')`);
+      faded = await read(page, `[...document.querySelectorAll('.sb-row.tr')].map((r) => (r.dataset.open || r.dataset.dir + '/') + (r.classList.contains('chain-out') ? ' (faded)' : '')).join(' | ') + ' || ' + ${count}`);
+      await page.click('[data-act="files-hide"]');
+      await page.until(`document.querySelector('[data-act="files-hide"]').getAttribute('aria-pressed') === 'true'`);
+      shown = await read(page, `${rows} + ' || ' + ${count}`);
+    });
+
+    it('then the files outside the chain, faded before, are hidden, and the count says how many of the files show.', () => {
+      assert.equal(faded, 'lib/ | lib/a/ | lib/a/app.dart | lib/a/other.dart (faded) | lib/b.dart (faded) || 3 files · +5 −5');
+      assert.equal(shown, 'lib/a/ | lib/a/app.dart || 1 of 3 files · +3 −3');
+    });
+  });
+
+  describe('when the folder’s dot is clicked with the filter on, then the filter is turned off, ', () => {
+    let marks = '';
+
+    before(async () => {
+      await page.eval(`document.querySelector('[data-act="mark-dir"][data-dir="lib/a"]').click()`);
+      await page.click('[data-act="files-hide"]');
+      await page.until(`document.querySelector('[data-act="files-hide"]').getAttribute('aria-pressed') === 'false'`);
+      if (await read(page, `document.querySelector('${row('lib/a')}').getAttribute('aria-expanded')`) === 'false') await page.click(row('lib/a'));
+      marks = [await read(page, state('lib/a/app.dart')), await read(page, state('lib/a/other.dart'))].join(' | ');
+    });
+
+    it('then it marked only the file it showed: the hidden one is left to review.', () => {
+      assert.equal(marks, 'reviewed - | to review 1');
+    });
+  });
+});

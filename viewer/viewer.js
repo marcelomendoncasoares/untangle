@@ -82,6 +82,7 @@
     close: path1('M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.707.708L7.293 8l-3.646 3.646.707.708L8 8.707z'),
     listTree: path1('M1 2h12v1H1zM2.5 3h1v6.5h-1zM3.5 5.5H15v1H3.5zM3.5 9H15v1H3.5zM1 12.5h12v1H1z'),
     listFlat: path1('M1 2h14v1H1zM1 5.5h14v1H1zM1 9h14v1H1zM1 12.5h14v1H1z'),
+    filter: path1('M15 2v1.67l-5 4.759V14H6V8.429l-5-4.76V2h14zM7 8v5h2V8l5-4.76V3H2v.24L7 8z'),
     stack: svg('<path d="M2.5 4h11M4 8h8M5.5 12h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'),
     warn: path1('M7.56 1h.88l6.54 12.26-.44.74H1.44L1 13.26 7.56 1zM8 2.28L2.28 13H13.7L8 2.28zM8.625 12v-1h-1.25v1h1.25zm-1.25-2V6h1.25v4h-1.25z'),
     history: path1('M13.507 12.324a7 7 0 0 0 .065-8.56A7 7 0 0 0 2 4.393V2H1v3.5l.5.5H5V5H2.811a6.008 6.008 0 1 1-.135 5.77l-.887.462a7 7 0 0 0 11.718 1.092zm-3.361-.97l.708-.707L8 7.792V4H7v4l.146.354 3 3z'),
@@ -201,9 +202,10 @@
   }
   window.addEventListener('pagehide', () => flushSave(true));
   // This browser's layout: the sidebar's width and whether it shows, the minimap, a commit's files
-  // as a tree or a list, and the Threads tab's folded sections.
+  // as a tree or a list, whether the Files tab hides the files it would fade, and the Threads tab's
+  // folded sections.
   const UI_KEY = 'untangle:ui';
-  const UI = { side: 272, sideOff: false, minimap: true, filesList: false, foldedThreads: [] };
+  const UI = { side: 272, sideOff: false, minimap: true, filesList: false, filesHide: false, foldedThreads: [] };
   // Contents, open over the view in a narrow window, and the view it was opened on.
   const SIDE = { open: false, at: '' };
   try { Object.assign(UI, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch (e) { /* storage unavailable */ }
@@ -6195,6 +6197,14 @@
     const title = st.open ? `Mark ${whose} ${st.open < st.total ? `${plural(st.open, 'change')} left` : plural(st.open, 'change')}${where} reviewed (Shift+Space)` : `Reviewed: mark ${whose} ${plural(st.total, 'change')}${where} unreviewed`;
     return `<button type="button" class="mk-b${cls || ''}${st.open ? '' : ' ok'}" ${attrs} title="${esc(title)}" aria-label="${esc(title)}" aria-pressed="${!st.open}" tabindex="-1">${st.open ? `<i class="mk"></i><span class="mk-to">${ICON.check}</span>` : `<i class="mk ok">${ICON.check}</i>`}</button>`;
   }
+  // The files the Files tab keeps in view: a chain's, with the chain open, or the models', with
+  // Models open (none apart otherwise). The others fade, or with the filter on, they're hidden.
+  function filesKept() {
+    const m = M(), v = state.view;
+    const chain = v.kind === 'chain' && m.chains[v.id];
+    const kept = chain ? new Set(chain.blocks.map((id) => m.blockById.get(id).file.p)) : v.kind === 'models' ? new Set(modelsAll().map((md) => m.files[md.f].p)) : null;
+    return { chain, kept, hide: !!kept && !!UI.filesHide };
+  }
   function renderSide() {
     const m = M();
     const all = m.files.flatMap((f) => f.blocks);
@@ -6261,18 +6271,21 @@
     } else {
       const on = (f) => (v.kind === 'file' && v.path === f.p ? ' aria-current="true"' : '');
       // A chain open: the files it has no changes in fade, as its commits do in the Commits tab.
-      // Models open: the files that aren't models fade.
-      const chainOn = v.kind === 'chain' && m.chains[v.id];
-      const mine = chainOn ? new Set(chainOn.blocks.map((id) => m.blockById.get(id).file.p)) : v.kind === 'models' ? new Set(modelsAll().map((md) => m.files[md.f].p)) : null;
-      const out = (files) => !!mine && !files.some((f) => mine.has(f.p));
+      // Models open: the files that aren't models fade. With the filter on, they're hidden.
+      const { chain: chainOn, kept, hide } = filesKept();
+      const out = (files) => !!kept && !files.some((f) => kept.has(f.p));
       const outCls = (files) => (out(files) ? ' chain-out' : '');
       const outWords = (f) => (out([f]) ? (chainOn ? '. None of its changes are in the open chain' : '. Not a model') : '');
+      const shown = (files) => (hide ? files.filter((f) => !out([f])) : files);
       // A file the changes add, or delete, says so in its color, as in a diff.
       const status = (f) => ' s-' + f.s.toLowerCase();
       const statusWords = (f) => (f.s === 'A' ? 'added, ' : f.s === 'D' ? 'deleted, ' : '');
       // What the review covers, in lines: the generated files and migrations below aren't in it.
-      if (m.files.length) h += `<div class="sb-group" title="The lines the review’s files add and remove. Generated files and migrations, below, aren’t reviewed or counted."><span>In the review</span><span>${plural(m.files.length, 'file')} · ${plusMinus(sumOf(m.files, 'a'), sumOf(m.files, 'd'))}</span></div>`;
-      h += treeHtml(fileTree(m.files), 0, {
+      // Hidden files are left out of the count, which says so.
+      const files = shown(m.files);
+      const filter = iconBtn(ICON.filter, UI.filesHide ? 'Hiding the files that would fade, outside the open chain or not models: click to fade them instead' : 'Hide the files that would fade, outside the open chain or not models, instead of fading them', 'data-act="files-hide"', { label: 'Hide what fades', on: !!UI.filesHide });
+      if (m.files.length) h += `<div class="sb-group fs" title="The lines the review’s files add and remove. Generated files and migrations, below, aren’t reviewed or counted."><span>In the review</span><span>${files.length < m.files.length ? `${files.length} of ${plural(m.files.length, 'file')}` : plural(m.files.length, 'file')} · ${plusMinus(sumOf(files, 'a'), sumOf(files, 'd'))}</span>${filter}</div>`;
+      h += treeHtml(fileTree(files), 0, {
         prefix: '',
         count: (files) => { const st = stats(files.flatMap((f) => f.blocks)); return { text: st.open || '', done: !st.open, diff: filesDiff(files), cls: outCls(files) }; },
         file: (f, depth, g) => {
@@ -6283,10 +6296,11 @@
         mark: (key, name, files) => treeMarkHtml(stats(files.flatMap((f) => f.blocks)), `data-act="mark-dir" data-dir="${esc(key)}" data-name="${esc(name)}"`, 'the', ` in ${name}`, ' dir'),
       });
       const migration = (f) => /(^|\/)migrations?\//i.test(f.p);
-      for (const [key, label, files] of [
+      for (const [key, label, all] of [
         ['generated', 'Generated', m.generated.filter((f) => !migration(f))],
         ['migrations', 'Migrations', m.generated.filter(migration)],
       ]) {
+        const files = shown(all);
         if (!files.length) continue;
         const open = state.fileSections.has(key);
         h += `<button type="button" class="sb-group" data-act="file-section" data-section="${key}" aria-expanded="${open}" aria-controls="files-${key}"><span>${label}, not reviewed</span><span>${files.length} · ${open ? 'Collapse' : 'Expand'}</span></button>`;
@@ -8602,6 +8616,7 @@
     }
     if (act === 'wb-seg') return lensCommit(d.sha, e.shiftKey);
     if (act === 'hd-view') { UI.filesList = d.v === 'list'; saveUI(); return render(); }
+    if (act === 'files-hide') { UI.filesHide = !UI.filesHide; saveUI(); return render(); }
     if (act === 'hd-dir') {
       HX.closed.has(d.key) ? HX.closed.delete(d.key) : HX.closed.add(d.key);
       render();
@@ -8808,7 +8823,7 @@
       return;
     }
     if (act === 'mark-file' && d.tree) return markFromTree([m.files[Number(d.file)]], null, fileName(m.files[Number(d.file)].p), t);
-    if (act === 'mark-dir') return markFromTree(m.files.filter((f) => f.p.startsWith(d.dir + '/')), d.dir, d.name, t);
+    if (act === 'mark-dir') { const fk = filesKept(); return markFromTree(m.files.filter((f) => f.p.startsWith(d.dir + '/') && (!fk.hide || fk.kept.has(f.p))), d.dir, d.name, t); }
     if (act === 'mark-file') { const bs = m.files[Number(d.file)].blocks.filter((b) => b.edits.length); toggleBlocks(bs); hint({ mark: bs.map((b) => b.id) }); return render(); }
     if (act === 'mark-blocks') { toggleBlocks(blocksOf(d.blocks.split(' '))); hint(markHint(d.blocks.split(' '), t)); return render(); }
     if (act === 'mark-chain') { toggleBlocks(blocksOf(m.chains[Number(d.chainId)].blocks)); hint({ mark: m.chains[Number(d.chainId)].blocks }); return render(); }

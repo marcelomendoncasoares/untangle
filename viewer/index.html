@@ -319,6 +319,11 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .sb-group span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-group > span + span { flex: none; white-space: nowrap; }
 button.sb-group { appearance: none; border: 0; background: none; width: 100%; font-family: var(--ui); text-align: left; cursor: pointer; }
+/* The Files tab's first group: the count, then the filter, which hides what would fade. */
+.sb-group.fs { align-items: center; }
+.sb-group.fs > span + span { margin-left: auto; }
+.sb-group.fs > .ib { width: 22px; height: 22px; margin: -4px -4px -4px -2px; color: var(--text-3); }
+.sb-group.fs > .ib svg { width: 13px; height: 13px; }
 button.sb-group:hover { color: var(--text-2); }
 /* The Threads tab's sections (notes, and what comes from GitHub): each folds. */
 .sb-sec { appearance: none; display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 14px; padding: 6px 6px; border: 0; border-radius: 6px; background: none; color: var(--text-2); font: 600 12px/1.2 var(--ui); text-align: left; cursor: pointer; }
