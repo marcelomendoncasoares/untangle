@@ -5810,7 +5810,8 @@
   function ghostRowHtml(vm, g, cls) {
     const gh = vm.item.ghost, on = !!state.lens && state.lens.kind === 'since' && state.lens.from === gh.sha;
     const who = gh.actor ? `Force-pushed by ${esc(gh.actor)}` : 'Your review, of a head the branch no longer has';
-    const meta = `<code>${shortSha(gh.sha)}</code> · ${dayOf(gh.at)}${gh.replaced ? ` · ${plural(gh.replaced, 'commit')} replaced` : ''}${gh.yours && gh.actor ? ' · your review' : ''}`;
+    // Removed when the branch is now where they left it: nothing came in their place.
+    const meta = `<code>${shortSha(gh.sha)}</code> · ${dayOf(gh.at)}${gh.replaced ? ` · ${plural(gh.replaced, 'commit')} ${gh.fork === CONFIG.head ? 'removed' : 'replaced'}` : ''}${gh.yours && gh.actor ? ' · your review' : ''}`;
     const title = gh.here ? `The head before${gh.actor ? ' this force push' : ''}: ${shortSha(gh.sha)}. Click for what changed since.` : 'GitHub no longer has this head';
     const inner = cls === 'lp-row' ? `${laneSvg(vm, g, dotSvg('ghost'))}<code>${shortSha(gh.sha)}</code><span class="lp-s">${who}</span><span class="cm-n"></span>`
       : `${laneSvg(vm, g, dotSvg('ghost'))}<span class="${cls === 'cm-row' ? 'cm-s' : 'hs-s'}">${who}</span><span class="${cls === 'cm-row' ? 'cm-m' : 'hs-m'}">${meta}</span>${cls === 'cm-row' ? '<span class="cm-n"></span>' : ''}`;
@@ -5961,8 +5962,16 @@
     const lanes = laneThrough(vm.output, { ...g, flagH: 30 }, -1);
     if (!got) return `<div class="hs-sub">${lanes}<span class="muted">Loading…</span></div>`;
     if (got.error) return `<div class="hs-sub">${lanes}<span class="muted">${esc(got.error)}</span></div>`;
-    return got.commits.map((x) => `<div class="hs-sub" title="${esc(x.subject)}">${lanes}<code>${shortSha(x.sha)}</code><span class="hs-sub-s">${esc(x.subject)}</span><span class="muted">${esc(x.author)} · ${dayOf(x.at)}</span></div>`).join('')
-      + (got.more ? `<div class="hs-sub">${lanes}<span class="muted">and more: the first ${got.commits.length} are listed</span></div>` : '');
+    return subCommitsHtml(lanes, got.commits, got.more);
+  }
+  // The commits an old head had that the branch doesn’t, under it: the ones taken off the branch.
+  function takenOffHtml(vm, g) {
+    const gh = vm.item.ghost;
+    return subCommitsHtml(laneThrough(vm.output, { ...g, flagH: 30 }, -1), gh.commits, gh.replaced > gh.commits.length);
+  }
+  function subCommitsHtml(lanes, list, more) {
+    return list.map((x) => `<div class="hs-sub" title="${esc(x.subject)}">${lanes}<code>${shortSha(x.sha)}</code><span class="hs-sub-s">${esc(x.subject)}</span><span class="muted">${esc(x.author)} · ${dayOf(x.at)}</span></div>`).join('')
+      + (more ? `<div class="hs-sub">${lanes}<span class="muted">and more: the first ${list.length} are listed</span></div>` : '');
   }
   // ---------- a commit's details, under its row, as Git Graph shows them: the commit, its parents,
   // who wrote and committed it and when, its message, and the files it changed (a tree or a list),
@@ -6072,6 +6081,7 @@
       h += histRowHtml(vm, g);
       if (vm.item.c && HX.detail === vm.item.c.sha) h += detailHtml(vm.item.i, `<span class="lanes-v" style="width:${g.width}px" aria-hidden="true">${vm.output.map((n, i) => `<i class="${n.k}" style="left:${g.pad + i * g.W}px"></i>`).join('')}</span>`);
       if (vm.item.c && vm.item.c.brought && HX.open.has(vm.item.c.sha)) h += broughtHtml(vm, g);
+      if (vm.item.ghost && vm.item.ghost.commits && vm.item.ghost.commits.length) h += takenOffHtml(vm, g);
     });
     const last = list[list.length - 1];
     if (last.outside[0]) h += `<div class="hs-start">Branched from ${esc(baseName())} at <code>${shortSha(last.outside[0])}</code></div>`;

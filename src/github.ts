@@ -190,6 +190,15 @@ const ISSUE_BITS = '__typename ... on Issue { number title state } ... on PullRe
 /** gh, ready to use: it's on PATH. (Whether it's logged in shows on the first call.) */
 export const ghReady = () => has('gh');
 
+/** Whether GitHub has a commit: one pushed to the repository or a fork of it, though no branch may have it now. */
+export async function onGitHub(owner: string, repo: string, sha: string): Promise<boolean> {
+  const d = await graphql<{ repository: { object: { oid: string } | null } | null }>(
+    'query($owner: String!, $repo: String!, $oid: GitObjectID!) { repository(owner: $owner, name: $repo) { object(oid: $oid) { oid } } }',
+    { owner, repo, oid: sha },
+  );
+  return !!d.repository?.object;
+}
+
 /** A pull request's conversation: what the page shows, and what it changes. */
 export class PullRequestConversation {
   private viewer: Person | null = null;

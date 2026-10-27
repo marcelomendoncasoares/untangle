@@ -425,12 +425,19 @@ export function reviewedHead(repo: string, ref: string, head: string): { head: s
   return null;
 }
 
+export interface ListedCommit { sha: string; subject: string; author: string; at: number }
+
+/** The commits `tips` have and `not` don't, newest first: the first `max`, and whether there are more. */
+export async function commitsOf(repo: string, tips: string[], not: string[], max: number): Promise<{ commits: ListedCommit[]; more: boolean }> {
+  const out = await gitAsync(repo, ['log', '--topo-order', `--max-count=${max + 1}`, '--format=%H%x00%an%x00%at%x00%s', ...tips, ...not.map((s) => `^${s}`)]);
+  const commits = out.split('\n').filter(Boolean).map((r) => { const [sha, author, at, subject] = r.split('\x00'); return { sha, author, at: Number(at), subject }; });
+  return { commits: commits.slice(0, max), more: commits.length > max };
+}
+
 /** The commits a merge brought in: from its first parent to another parent, newest first. */
-export async function broughtBy(repo: string, merge: string, max = 200): Promise<{ commits: Array<{ sha: string; subject: string; author: string; at: number }>; more: boolean } | null> {
+export async function broughtBy(repo: string, merge: string, max = 200): Promise<{ commits: ListedCommit[]; more: boolean } | null> {
   if (!hasCommit(repo, merge)) return null;
   const parents = (gitMaybe(repo, 'rev-list', '--parents', '-n', '1', merge) || '').trim().split(' ').slice(1);
   if (parents.length < 2) return { commits: [], more: false };
-  const out = await gitAsync(repo, ['log', '--topo-order', `--max-count=${max + 1}`, '--format=%H%x00%an%x00%at%x00%s', ...parents.slice(1), `^${parents[0]}`]);
-  const commits = out.split('\n').filter(Boolean).map((r) => { const [sha, author, at, subject] = r.split('\x00'); return { sha, author, at: Number(at), subject }; });
-  return { commits: commits.slice(0, max), more: commits.length > max };
+  return commitsOf(repo, parents.slice(1), [parents[0]], max);
 }

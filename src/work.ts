@@ -5,6 +5,7 @@ import path from 'node:path';
 import { workDir } from './cache.js';
 import { linkOf } from './checkouts.js';
 import { CommandError, gitAsync, runAsync } from './exec.js';
+import { onGitHub } from './github.js';
 import type { PullRequest } from './target.js';
 
 export interface WorkingCopy {
@@ -33,15 +34,29 @@ export async function fetchTip(repo: string, remote: string, from: string, ref: 
   return (await gitAsync(repo, ['rev-parse', '--verify', `${ref}^{commit}`])).trim();
 }
 
-/** Only a clean branch with no commits of its own may follow GitHub automatically. */
-export async function followGitHub(dir: string, github: string): Promise<void> {
+// Heads GitHub didn't have, with GitHub's tip then: asked once.
+const notOnGitHub = new Set<string>();
+
+/**
+ * Only the working copy's branch, clean and with no commits of its own, follows GitHub
+ * automatically: forward, or onto a force push when GitHub has its head (what the push took off
+ * was pushed, not its own).
+ */
+export async function followGitHub(work: WorkingCopy, github: string, pr: { owner: string; repo: string }): Promise<void> {
+  const dir = work.dir;
   if ((await gitAsync(dir, ['--no-optional-locks', 'status', '--porcelain'])).trim()) return;
+  if ((await gitAsync(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '')).trim() !== work.branch) return;
   const head = (await gitAsync(dir, ['rev-parse', 'HEAD'])).trim();
   if (head === github) return;
+  // Git still checks the index and files if the agent changed them while we were looking.
   if (await gitAsync(dir, ['merge-base', '--is-ancestor', head, github]).then(() => true, () => false)) {
-    // Git still checks the index and files if the agent changed them while we were looking.
     await gitAsync(dir, ['merge', '--ff-only', '--no-edit', github]);
+    return;
   }
+  const key = `${head} ${github}`;
+  if (notOnGitHub.has(key)) return;
+  if (await onGitHub(pr.owner, pr.repo, head)) await gitAsync(dir, ['reset', '--keep', github]);
+  else notOnGitHub.add(key);
 }
 
 /** Makes it once, or reuses it without checking out over anything the agent has done. */

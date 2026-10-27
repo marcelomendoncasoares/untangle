@@ -46,9 +46,13 @@ export function workingFixture(o: { fork?: boolean; protocol?: 'ssh' | 'https'; 
     headRepositoryOwner: o.missing ? null : { login: o.fork ? 'ada' : 'acme' }, isCrossRepository: o.fork ?? false,
   };
   const gh = stubGh();
+  // GitHub keeps every commit pushed, including those a force push took off the branch.
+  const pushed = new Set([base, head]);
   const answer = () => gh.setReplies([
     { match: ['config', 'get', 'git_protocol'], stdout: o.protocol ?? 'https' },
     { match: ['pr', 'view'], stdout: pr },
+    ...[...pushed].map((sha) => ({ match: ['api', 'graphql'], stdinIncludes: sha, stdout: { data: { repository: { object: { oid: sha } } } } })),
+    { match: ['api', 'graphql'], stdinIncludes: 'object(oid', stdout: { data: { repository: { object: null } } } },
   ]);
   answer();
   const commit = (dir: string, file = 'added.txt', text = 'a change\n') => {
@@ -59,11 +63,12 @@ export function workingFixture(o: { fork?: boolean; protocol?: 'ssh' | 'https'; 
   };
   return {
     root, cache, bare, remote, author, base, head, url, env, gh, pr, git, commit, answer,
-    push: () => {
-      git(author.dir, 'push', 'origin', 'feature');
+    push: (force = false) => {
+      git(author.dir, 'push', ...(force ? ['--force'] : []), 'origin', 'feature');
       // The pull ref lives in the base repository even when the head lives in a fork.
       git(bare, 'fetch', remote, '+refs/heads/feature:refs/pull/7/head');
       pr.headRefOid = git(remote, 'rev-parse', 'feature');
+      git(remote, 'rev-list', 'feature').split('\n').forEach((sha) => pushed.add(sha));
       answer();
     },
     use() {

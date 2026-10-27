@@ -447,8 +447,9 @@ describe('Given a pull request force-pushed over a commit the review no longer h
       await run?.stop();
     });
 
-    it('then that old head is listed: pushed over by ada, replaced by one commit, and still in the clone.', () => {
-      assert.equal(ghosts, JSON.stringify([{ sha: old, at: Date.parse('2020-06-03T15:00:00Z') / 1000, actor: 'ada', after: head, yours: false, here: true, fork: head, replaced: 1 }]));
+    it('then that old head is listed: pushed over by ada, still in the clone, with the one commit taken off the branch.', () => {
+      const dropped = { sha: old, author: 'Ada Review', at: Date.parse('2020-06-03T00:00:00Z') / 1000, subject: 'dropped' };
+      assert.equal(ghosts, JSON.stringify([{ sha: old, at: Date.parse('2020-06-03T15:00:00Z') / 1000, actor: 'ada', after: head, yours: false, here: true, fork: head, replaced: 1, commits: [dropped] }]));
     });
   });
 });

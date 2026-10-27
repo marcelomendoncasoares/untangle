@@ -191,7 +191,7 @@ export async function resolveUrl(url: string, say: (line: string) => void, baseO
     work = await workingCopy(repo, repoKey, pr, say);
     if (work) {
       const github = await fetchTip(repo, work.remote, `refs/heads/${pr.headRefName}`, work.ref).catch(() => null);
-      if (github) await followGitHub(work.dir, github).catch(() => {});
+      if (github) await followGitHub(work, github, pr).catch(() => {});
       headSha = (await gitAsync(work.dir, ['rev-parse', 'HEAD'])).trim();
     }
   } catch (e) {

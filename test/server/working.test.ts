@@ -250,4 +250,17 @@ describe('Given a clean working copy whose pull request moves on, ', () => {
       assert.deepEqual(s.local, { work, branch: 'feature', github: next, unpushed: [], behind: 0, dirty: false });
     });
   });
+
+  describe('when its author force-pushes back over that commit, ', () => {
+    it('then the working copy follows GitHub back, and latest offers it with nothing not pushed.', async () => {
+      f.git(f.author.dir, 'reset', '--hard', f.head);
+      f.push(true);
+      const s = await until('the follow back', async () => {
+        const s = await state(client);
+        return s.latest === f.head && s.local?.github === f.head ? s : null;
+      });
+      assert.equal(f.git(work, 'rev-parse', 'HEAD'), f.head);
+      assert.deepEqual(s.local, { work, branch: 'feature', github: f.head, unpushed: [], behind: 0, dirty: false });
+    });
+  });
 });

@@ -18,6 +18,8 @@ const missing = 'd'.repeat(40);
 const startApp = ['void greet() {', "  print('hi');", '}', '', 'void main() {', '  greet();', '}', ''].join('\n');
 const passedApp = ['void greet(String name) {', '  print(name);', '}', '', 'void main() {', "  greet('ada');", '}', ''].join('\n');
 const amendedApp = ['void greet(String name) {', "  print('ada');", '}', '', 'void main() {', "  greet('ada');", '}', ''].join('\n');
+// Under each old head's row in History, the commits listed: "<sha> <subject>", one row per old head.
+const takenOff = `[...document.querySelectorAll('.hs-row.old-head')].map((row) => { const out = []; for (let el = row.nextElementSibling; el && el.classList.contains('hs-sub'); el = el.nextElementSibling) out.push(el.querySelector('code').textContent + ' ' + el.querySelector('.hs-sub-s').textContent); return out.join(', '); }).join('\\n')`;
 
 describe('Given a served review whose head was amended after the branch was pushed, and GitHub reports that force push plus one whose old head is gone, ', { skip, timeout: 300_000 }, () => {
   let repo: TempRepo | undefined;
@@ -91,6 +93,10 @@ describe('Given a served review whose head was amended after the branch was push
     it('then a head GitHub no longer has is disabled.', () => {
       assert.equal(ghosts.split('\n').find((line) => line.startsWith('disabled ')), 'disabled dashed Force-pushed by grace');
     });
+
+    it('then the commit the amend replaced is listed under its force push, and none under the head GitHub no longer has.', async () => {
+      assert.deepEqual((await read(page!, takenOff)).split('\n').sort(), ['', `${oldHead.slice(0, 7)} Pass the name`]);
+    });
   });
 
   describe('when that old head is clicked, ', () => {
@@ -107,6 +113,71 @@ describe('Given a served review whose head was amended after the branch was push
 
     it('then the lens is what changed since that head.', () => {
       assert.equal(label, `Since ${oldHead.slice(0, 7)}, before the force push`);
+    });
+  });
+});
+
+describe('Given a served review whose branch was force-pushed back, taking two commits off, ', { skip, timeout: 300_000 }, () => {
+  let repo: TempRepo | undefined;
+  let gh: GhStub | undefined;
+  let run: UntangleRun | undefined;
+  let page: Browser | undefined;
+  let cache: string | undefined;
+  const off: string[] = [];
+
+  before(async () => {
+    repo = TempRepo.create();
+    repo.write('pubspec.yaml', pubspec);
+    repo.write('lib/app.dart', startApp);
+    const base = repo.commit({ subject: 'Start the package', author: ada('2020-01-04T15:00:00Z'), committer: ada('2020-01-04T15:00:00Z') });
+    repo.branch('feature');
+    repo.write('lib/app.dart', passedApp);
+    const head = repo.commit({ subject: 'Pass the name', author: ada('2020-01-05T15:00:00Z'), committer: ada('2020-01-05T15:00:00Z') });
+    repo.write('lib/app.dart', amendedApp);
+    off.push(repo.commit({ subject: 'Greet ada', author: ada('2020-01-06T15:00:00Z'), committer: ada('2020-01-06T15:00:00Z') }));
+    repo.write('lib/app.dart', startApp);
+    off.push(repo.commit({ subject: 'Greet no one', author: ada('2020-01-07T15:00:00Z'), committer: ada('2020-01-07T15:00:00Z') }));
+    repo.checkout('HEAD~2');
+    gh = pullRequestGh({
+      number: 7, title: 'Add a greeting', url: 'https://github.com/acme/sample/pull/7',
+      base: 'main', baseSha: base, head: 'feature', headSha: head,
+      pushes: [{ actor: 'ada', before: off[1], after: head, at: '2020-01-08T15:00:00Z' }],
+    });
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    run = await startUntangle(repo.dir, { cacheDir: cache, gh });
+    await waitForReview(reviewClient(run.url));
+    page = await launchBrowser();
+    await page.reducedMotion(true);
+    await page.goto(run.url);
+    await page.until(`!!document.querySelector('.t-head')`, 30_000);
+  });
+
+  after(async () => {
+    await page?.close();
+    await run?.stop();
+    repo?.remove();
+    gh?.remove();
+    if (cache) fs.rmSync(cache, { recursive: true, force: true });
+  });
+
+  describe('when History is opened, ', () => {
+    let meta: string;
+    let listed: string;
+
+    before(async () => {
+      await rest(page!);
+      await page!.click('[data-act="history-open"]');
+      await page!.until(`!!document.querySelector('.hs-row.old-head + .hs-sub')`, 30_000);
+      meta = await read(page!, `document.querySelector('.hs-row.old-head .hs-m').textContent`);
+      listed = await read(page!, takenOff);
+    });
+
+    it('then the force push says the two commits were removed, nothing in their place.', () => {
+      assert.match(meta, /· 2 commits removed$/);
+    });
+
+    it('then both are listed under it, newest first.', () => {
+      assert.equal(listed, `${off[1].slice(0, 7)} Greet no one, ${off[0].slice(0, 7)} Greet ada`);
     });
   });
 });

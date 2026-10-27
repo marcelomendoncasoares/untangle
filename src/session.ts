@@ -8,7 +8,7 @@ import { Metrics } from './metrics.js';
 import type { PageConfig } from './page.js';
 import { ghReady, GitHubError, PullRequestConversation, type Action, type CommitFacts } from './github.js';
 import type { NotesContext, Side as NoteSide } from './notes.js';
-import { broughtBy, hasCommit, reviewedHead, sinceRows, type History } from './history.js';
+import { broughtBy, commitsOf, hasCommit, reviewedHead, sinceRows, type History } from './history.js';
 import { git, gitAsync, gitMaybe, runAsync } from './exec.js';
 import { orcaHere } from './orca.js';
 import { fileHunks, generatedPatterns, parseHunks } from './pipeline/diff.js';
@@ -137,7 +137,8 @@ export class ReviewSession {
   /**
    * What the commits' graph learns live: the head of your last review before this one, GitHub's
    * checks, reviews and force pushes, and each old head (a force push's, or the one you reviewed
-   * when it's no longer in the branch) with where it left the branch and how many commits it had.
+   * when it's no longer in the branch) with where it left the branch and the commits it had that
+   * the branch doesn't.
    */
   private async commitsNow() {
     const t = this.target;
@@ -162,10 +163,12 @@ export class ReviewSession {
     const kept = [...olds].sort((a, b) => b[1].at - a[1].at).filter(([, o], i) => o.yours || i < 5);
     const ghosts = await Promise.all(kept.map(async ([sha, o]) => {
       const here = await this.oldHead(sha);
-      if (!here) return { sha, ...o, here, fork: null, replaced: null };
+      if (!here) return { sha, ...o, here, fork: null, replaced: null, commits: [] };
       const fork = gitMaybe(t.repo, 'merge-base', sha, t.headSha)?.trim() || null;
       const replaced = Number(gitMaybe(t.repo, 'rev-list', '--count', sha, `^${t.headSha}`, `^${t.baseSha}`)?.trim()) || 0;
-      return { sha, ...o, here, fork: fork && inHistory.has(fork) ? fork : null, replaced };
+      // What it had that the branch doesn't, the newest few: the commits taken off the branch.
+      const commits = replaced ? (await commitsOf(t.repo, [sha], [t.headSha, t.baseSha], 10)).commits : [];
+      return { sha, ...o, here, fork: fork && inHistory.has(fork) ? fork : null, replaced, commits };
     }));
     return {
       review: prev ? { head: prev.head, at: prev.at, here: prev.head === t.headSha ? true : await this.oldHead(prev.head), inBranch: inHistory.has(prev.head) } : null,

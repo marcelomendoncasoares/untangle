@@ -169,7 +169,7 @@ export class LocalChanges {
       if (this.stopped) return;
       const github = await fetchTip(t.repo, t.work.remote, `refs/heads/${pr.headRefName}`, t.work.ref);
       if (this.stopped) return;
-      await followGitHub(t.work.dir, github).catch(() => {});
+      await followGitHub(t.work, github, pr).catch(() => {});
       source = { work: t.work.dir, branch: t.work.githubBranch, ref: t.work.ref };
     } else if (t.pr) {
       const pr = await fetchPr(t.pr.owner, t.pr.repo, t.pr.number);

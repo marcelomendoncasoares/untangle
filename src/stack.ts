@@ -102,7 +102,7 @@ export async function findStack(repo: string, repoKey: string, pr: PullRequest, 
     if (byUrl && !work && fs.existsSync(workDir(repoKey, p.number))) work = await workingCopy(repo, repoKey, p, () => {});
     if (work && p.number !== pr.number) {
       const tip = await fetchTip(repo, work.remote, `refs/heads/${p.headRefName}`, work.ref).catch(() => null);
-      if (tip) await followGitHub(work.dir, tip).catch(() => {});
+      if (tip) await followGitHub(work, tip, p).catch(() => {});
     }
     const own = p.number === pr.number ? head : work ? (await gitAsync(work.dir, ['rev-parse', 'HEAD'])).trim() : fetched;
     legs.push({ pr: { ...p, headRefOid: fetched }, head: own, base: '', work });

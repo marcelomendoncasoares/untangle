@@ -168,6 +168,47 @@ describe('Given an open pull request in its base repository, ', () => {
     });
   });
 
+  describe('when GitHub’s branch is force-pushed back over a commit the working copy took from it, ', () => {
+    it('then the review follows GitHub back, and nothing reads as not pushed.', async () => {
+      await resolve(f);
+      const dropped = f.commit(f.author.dir);
+      f.push();
+      const t = await resolve(f);
+      assert.equal(t.headSha, dropped);
+      f.git(f.author.dir, 'reset', '--hard', f.head);
+      f.push(true);
+      const again = await resolve(f);
+      assert.equal(again.headSha, f.head);
+      assert.deepEqual((await local(again)).local, { work: t.work!.dir, branch: 'feature', github: f.head, unpushed: [], behind: 0, dirty: false });
+    });
+  });
+
+  describe('when GitHub’s branch is rewritten and force-pushed, ', () => {
+    it('then a working copy with nothing of its own follows it.', async () => {
+      const t = await resolve(f);
+      f.git(f.author.dir, 'commit', '--amend', '-m', 'Greet the whole world');
+      f.push(true);
+      const amended = f.git(f.remote, 'rev-parse', 'feature');
+      assert.equal((await resolve(f)).headSha, amended);
+      assert.equal(f.git(t.work!.dir, 'rev-parse', 'HEAD'), amended);
+    });
+  });
+
+  describe('when GitHub’s branch is force-pushed back under a commit of the working copy’s own, ', () => {
+    it('then its commits stay, and the ones GitHub’s branch lacks count as not pushed.', async () => {
+      await resolve(f);
+      const dropped = f.commit(f.author.dir);
+      f.push();
+      const t = await resolve(f);
+      const own = f.commit(t.work!.dir, 'own.txt');
+      f.git(f.author.dir, 'reset', '--hard', f.head);
+      f.push(true);
+      const again = await resolve(f);
+      assert.equal(again.headSha, own);
+      assert.deepEqual((await local(again)).local.unpushed, [own, dropped]);
+    });
+  });
+
   describe('when GitHub moves on and the working copy has an uncommitted change, ', () => {
     it('then its commit and files stay as they were and local reports behind.', async () => {
       const t = await resolve(f);

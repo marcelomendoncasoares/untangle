@@ -97,7 +97,7 @@ export class StackChanges {
       const github = await fetchTip(t.repo, remote, `refs/pull/${p.number}/head`, `refs/untangle/pull/${p.number}`);
       if (leg.work && p.state === 'OPEN') {
         const tip = await fetchTip(t.repo, leg.work.remote, `refs/heads/${p.headRefName}`, leg.work.ref).catch(() => null);
-        if (tip && !this.stopped) await followGitHub(leg.work.dir, tip).catch(() => {});
+        if (tip && !this.stopped) await followGitHub(leg.work, tip, p).catch(() => {});
       }
       legs.push({ ...this.value.legs[i], number: p.number, title: p.title, url: p.url, state: p.state, draft: !!p.isDraft, github });
     }
