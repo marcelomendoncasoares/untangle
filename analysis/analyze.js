@@ -24,6 +24,7 @@ import { readingUnits, testCall } from './units.js';
 import { testOutline } from './outline.js';
 import { assembleIntroducedChains } from './chains.js';
 import { commitFamilies, subjectParts } from './commits.js';
+import { markdownOpenings } from './markdown.js';
 import { MODEL_FILE, modelOpenings, readModels } from './models.js';
 import { readPubspecs } from './pubspecs.js';
 import { CALLABLE_KINDS, TYPE_KINDS, declarationAt, indexOf, memberAt as resolvedMemberAt, memberName } from './structure.js';
@@ -1641,11 +1642,12 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       return ranges.length ? [r.type, r.text, r.o, r.n, ranges] : [r.type, r.text, r.o, r.n];
     };
     // Where a hunk starts inside something an earlier line opened, on either side (in Dart, a
-    // string or a comment over several lines; in a Serverpod model, a block such as fields:): what
-    // opens it (so, sn). The page highlights a hunk's lines alone, as if after it.
+    // string or a comment over several lines; in a Serverpod model, a block such as fields:; in
+    // Markdown, a fenced code block): what opens it (so, sn). The page highlights a hunk's lines
+    // alone, as if after it.
     const openings = (dir, p, of) => { try { return of(fs.readFileSync(dir + p, 'utf8')); } catch { return null; } };
     const startsIn = (f) => {
-      const of = /\.dart$/.test(f.p) ? dartOpenings : MODEL_FILE.test(f.p) ? modelOpenings : null;
+      const of = /\.dart$/.test(f.p) ? dartOpenings : MODEL_FILE.test(f.p) ? modelOpenings : C.langOf(f.p) === 'md' ? markdownOpenings : null;
       const was = of && OLD[name] ? openings(OLD[name].dir, f.p, of) : null, is = of ? openings(HEAD, f.p, of) : null;
       return (h) => { const so = was && h.o > 0 && was[h.o - 1], sn = is && h.n > 0 && is[h.n - 1]; return { ...(so ? { so } : {}), ...(sn ? { sn } : {}) }; };
     };

@@ -20,6 +20,8 @@ const darkPlus = {
   control: '#C586C0',
   variable: '#9CDCFE',
   type: '#4EC9B0',
+  heading: '#569CD6',
+  comment: '#6A9955',
 };
 
 function rgb(hex: string): string {
@@ -218,6 +220,68 @@ describe('Given a served review of a model retyped far below its fields: line, '
 
     it('then the hunk reads its lines as fields, with type colors on both sides, and the index after it as an index.', () => {
       assert.equal(colors, ['  shippedAt: DateTime?', rgb(darkPlus.type), rgb(darkPlus.type), rgb(darkPlus.type), rgb(darkPlus.string)].join('\n'));
+    });
+  });
+});
+
+// A Markdown file whose code block changes far enough below its fence that the hunk starts inside
+// it, and runs on into a section added after it, with a code block of its own.
+const admin = (call: string, added: string[]) => ['# Admin', '', '```dart', '// Clean up', 'await admin.deleteA(session);', 'await admin.deleteB(session);', 'await admin.deleteC(session);', call, '```', '', ...added, '## After', '', 'Done.', ''].join('\n');
+
+describe('Given a served review of a Markdown code block changed far below its fence, and a section added after it, ', { skip, timeout: 180_000 }, () => {
+  const file = 'docs/admin.md';
+  let repo: TempRepo | undefined;
+  let run: UntangleRun | undefined;
+  let page: Browser | undefined;
+  let cache = '';
+
+  before(async () => {
+    const author = ada('2020-09-01T15:00:00Z');
+    repo = TempRepo.create();
+    repo.write('pubspec.yaml', pubspec);
+    repo.write(file, admin('await admin.deleteD(session);', []));
+    repo.commit({ subject: 'Start', author, committer: author });
+    repo.branch('feature');
+    repo.write(file, admin('await admin.deleteD(session, all: true);', ['## One-time codes', '', '```dart', '// Delete expired codes', 'await admin.deleteExpiredCodes(session);', '```', '']));
+    repo.commit({ subject: 'Clean up codes', author, committer: author });
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    run = await startUntangle(repo.dir, { base: 'main', cacheDir: cache });
+    await waitForReview(reviewClient(run.url));
+    page = await launchBrowser();
+    await page.goto(run.url);
+    await page.until(`!!document.querySelector('.t-head')`, 30_000);
+    await page.click('[data-tab="files"]');
+    await page.click(`[data-open="${file}"]`);
+    await page.until(`[...document.querySelectorAll('.code[data-p="${file}"] .tx span')].some((s) => [...s.classList].some((c) => /^k\\d+$/.test(c)))`);
+  });
+
+  after(async () => {
+    await page?.close();
+    await run?.stop();
+    repo?.remove();
+    if (cache) fs.rmSync(cache, { recursive: true, force: true });
+  });
+
+  describe('when highlighting has loaded, ', () => {
+    let colors: string;
+
+    before(async () => {
+      colors = await read(page!, `(() => {
+        const rows = [...document.querySelectorAll('.code[data-p="${file}"] .ln')];
+        const word = (line, w) => { const row = rows.find((r) => r.querySelector('.tx')?.textContent === line); const el = row && [...row.querySelectorAll('.tx span')].find((s) => !s.children.length && s.textContent === w); return el ? getComputedStyle(el).color : 'missing'; };
+        return [
+          rows.find((r) => r.querySelector('.tx'))?.querySelector('.tx').textContent,
+          word('await admin.deleteD(session);', 'await'),
+          word('await admin.deleteD(session, all: true);', 'await'),
+          word('## One-time codes', 'codes'),
+          word('// Delete expired codes', 'expired'),
+          word('await admin.deleteExpiredCodes(session);', 'await'),
+        ].join('\\n');
+      })()`);
+    });
+
+    it('then the hunk reads its first lines as the block’s Dart on both sides, and the section after it as a heading and a block of its own.', () => {
+      assert.equal(colors, ['await admin.deleteA(session);', rgb(darkPlus.control), rgb(darkPlus.control), rgb(darkPlus.heading), rgb(darkPlus.comment), rgb(darkPlus.control)].join('\n'));
     });
   });
 });

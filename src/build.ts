@@ -53,7 +53,7 @@ const stageVersions = () => {
   }
   return versions;
 };
-const MODEL_STAGE = ['analysis/analyze.js', 'analysis/dart.js', 'analysis/models.js', 'analysis/pubspecs.js', 'analysis/units.js', 'analysis/structure.js', 'analysis/chains.js', 'analysis/commits.js', 'analysis/outline.js', 'dist/provenance.js'];
+const MODEL_STAGE = ['analysis/analyze.js', 'analysis/dart.js', 'analysis/markdown.js', 'analysis/models.js', 'analysis/pubspecs.js', 'analysis/units.js', 'analysis/structure.js', 'analysis/chains.js', 'analysis/commits.js', 'analysis/outline.js', 'dist/provenance.js'];
 
 /** What chains follow: the commits that started each change, or the code's structure alone. */
 export type ChainsBy = 'history' | 'structure';
