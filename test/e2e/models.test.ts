@@ -33,6 +33,7 @@ describe('Given a review that changes a model and its migration, adds a long one
     repo.write('migrations/20240101000000/migration.json', JSON.stringify({ actions: [{ type: 'createTable', createTable: { name: 'invoices' } }], warnings: [] }));
     repo.write('test/sample_test_server/pubspec.yaml', 'name: sample_test_server\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n');
     repo.write(thing, 'class: Thing\nfields:\n  name: String\n');
+    repo.write('lib/src/greeting.dart', "String greet() => 'hi';\n");
     repo.commit({ subject: 'Start', author, committer: author });
     repo.branch('feature');
     repo.write(invoice, 'class: Invoice\ntable: invoices\nfields:\n  amount: int\n  currency: String\n');
@@ -43,6 +44,7 @@ describe('Given a review that changes a model and its migration, adds a long one
     repo.write('migrations/20240201000000/migration.json', JSON.stringify({ actions: [{ type: 'alterTable', alterTable: { name: 'invoices' } }], warnings: [] }));
     repo.write('migrations/20240201000000/migration.sql', 'BEGIN;\n\n--\n-- ACTION ALTER TABLE\n--\nALTER TABLE "invoices" ADD COLUMN "currency" text NOT NULL;\n\n--\n-- MIGRATION VERSION FOR sample\n--\nINSERT INTO "serverpod_migrations" VALUES (1);\n\nCOMMIT;\n');
     repo.write(thing, 'class: Thing\nfields:\n  name: String\n  scopeId: int\n');
+    repo.write('lib/src/greeting.dart', "String greet() => 'hello';\n");
     repo.commit({ subject: 'Add a currency and a ledger', author, committer: author });
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     run = await startUntangle(repo.dir, { base: 'main', cacheDir: cache });
@@ -183,6 +185,28 @@ describe('Given a review that changes a model and its migration, adds a long one
     it('then it shows its diff with no warning.', async () => {
       assert.equal(await read(page, `document.querySelectorAll('${card(thing)} .md-w').length`), '0');
       assert.equal(await read(page, `document.querySelectorAll('${card(thing)} .code .ln.add').length`), '1');
+    });
+  });
+
+  describe('when the Files tab is shown with Models open, ', () => {
+    let rows = '';
+
+    before(async () => {
+      await page.click('[data-tab="files"]');
+      await page.until(`!!document.querySelector('.sb-row.tr[data-open]')`);
+      rows = await read(page, `[...document.querySelectorAll('.sb-row.tr')].map((r) => (r.dataset.open || r.dataset.dir + '/') + (r.classList.contains('chain-out') ? ' (faded)' : '')).join('\\n')`);
+    });
+
+    it('then only the models, and the folders that hold them, stand out: the other files fade.', () => {
+      assert.equal(rows, [
+        'lib/src/',
+        'lib/src/models/',
+        `${invoice}`,
+        `${ledger}`,
+        'lib/src/greeting.dart (faded)',
+        'test/sample_test_server/lib/src/models/',
+        `${thing}`,
+      ].join('\n'));
     });
   });
 });

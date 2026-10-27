@@ -6261,11 +6261,12 @@
     } else {
       const on = (f) => (v.kind === 'file' && v.path === f.p ? ' aria-current="true"' : '');
       // A chain open: the files it has no changes in fade, as its commits do in the Commits tab.
+      // Models open: the files that aren't models fade.
       const chainOn = v.kind === 'chain' && m.chains[v.id];
-      const mine = chainOn ? new Set(chainOn.blocks.map((id) => m.blockById.get(id).file.p)) : null;
+      const mine = chainOn ? new Set(chainOn.blocks.map((id) => m.blockById.get(id).file.p)) : v.kind === 'models' ? new Set(modelsAll().map((md) => m.files[md.f].p)) : null;
       const out = (files) => !!mine && !files.some((f) => mine.has(f.p));
       const outCls = (files) => (out(files) ? ' chain-out' : '');
-      const outWords = (f) => (out([f]) ? '. None of its changes are in the open chain' : '');
+      const outWords = (f) => (out([f]) ? (chainOn ? '. None of its changes are in the open chain' : '. Not a model') : '');
       // A file the changes add, or delete, says so in its color, as in a diff.
       const status = (f) => ' s-' + f.s.toLowerCase();
       const statusWords = (f) => (f.s === 'A' ? 'added, ' : f.s === 'D' ? 'deleted, ' : '');
