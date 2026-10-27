@@ -1375,7 +1375,8 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
 .cm-who:hover { text-decoration: underline; text-underline-offset: 3px; }
 .cm-tag { font: 500 11px/1.5 var(--ui); color: var(--text-2); background: var(--hover); border-radius: 4px; padding: 0 6px; }
 .cm-tag.pending { color: var(--accent-ink); background: var(--accent-soft); }
-.cm-t { position: absolute; right: 14px; top: 6px; font-size: 11.5px; color: var(--text-3); transition: opacity var(--fast) var(--ease); }
+/* A comment after another of its author's has no header: its time takes a column of its own, beside the text. */
+.cm-t { grid-column: 3; grid-row: 1; margin-top: 2px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; transition: opacity var(--fast) var(--ease); }
 .cm.first .cm-t { display: none; }
 .cm-tools { position: absolute; right: 8px; top: 3px; display: inline-flex; gap: 1px; padding: 2px; border-radius: 8px; background: var(--raised); box-shadow: 0 0 0 1px var(--hair); opacity: 0; transition: opacity var(--fast) var(--ease); }
 .cm.first .cm-tools { top: 9px; }
@@ -1647,7 +1648,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
   .vw:not(.ol-all) .ol-row:not(.open) :is(.ol-go, .ol-go-sp, .ol-df, .ol-xp, .ol-chip.ol-hov) { display: none; }
   .cm-tools { display: none; }
   .cm-more { display: grid; }
-  .cm-t { right: 44px; }
+  .cm-t { margin-right: 30px; }
   .ln .tick:not(.on), .sl .tick:not(.on) { box-shadow: inset 0 0 0 1.5px var(--accent); }
 }
 @media (pointer: coarse) {

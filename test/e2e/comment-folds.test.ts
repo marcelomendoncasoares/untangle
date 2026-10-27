@@ -225,4 +225,22 @@ describe('Given a served review with a note on its change and one on a line outs
       assert.equal(opening, `it eases from ${shut}px to ${open}px; th-hunk, th fade in`);
     });
   });
+
+  describe('when two replies of yours follow your note, the last longer than a line, ', () => {
+    let apart: string;
+
+    before(async () => {
+      await client.call('notes', { method: 'POST', head, body: { action: 'add', path: 'lib/app.dart', side: 'RIGHT', line: 2, body: 'And the greeting?' } });
+      await client.call('notes', { method: 'POST', head, body: { action: 'reply', n: 3, body: 'It greets everyone.' } });
+      await client.call('notes', { method: 'POST', head, body: { action: 'reply', n: 3, body: 'It runs on every start, so this line of words goes on past the width of the thread, where the time of a reply shows.' } });
+      await openApp();
+      const last = `[...document.querySelectorAll('.th.note[data-note="3"] > .cm')].pop()`;
+      await page!.until(`!!${last}?.matches(':not(.first)')`);
+      apart = await read(page!, `(() => { const cm = ${last}, t = cm.querySelector('.cm-t').getBoundingClientRect(), b = cm.querySelector('.cm-body').getBoundingClientRect(); return t.left >= b.right ? 'beside it' : 'over it'; })()`);
+    });
+
+    it('then the last one’s time stands beside its text, not over it.', () => {
+      assert.equal(apart, 'beside it');
+    });
+  });
 });
