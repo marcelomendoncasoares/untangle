@@ -1705,6 +1705,8 @@
     if (v.kind === 'chain') {
       const c = m.chains[v.id];
       if (!c) return items;
+      const st = stats(blocksOf(c.blocks));
+      if (!st.open && !outOfLens(st)) items.push({ label: 'Mark the whole chain unreviewed', icon: ICON.check, data: { act: 'mark-chain', 'chain-id': c.id } }, { sep: true });
       showing();
       const usedBy = m.usedBy.get(c.id);
       if (usedBy.length) items.push({ head: 'Used by' }, ...usedBy.map((o) => chainItem(m.chains[o])));
@@ -1833,11 +1835,11 @@
       .filter((it, i, all) => !it.sep || (i > 0 && i < all.length - 1 && !all[i - 1].sep));
     items.push({ sep: true }, { head: 'Code' }, { label: 'Wrap long lines', checked: wrapOn(), data: { act: 'wrap' }, title: 'Long lines wrap under their own indent, instead of running off the side' },
       { note: `<span class="mi-size">Code size<span class="sp"></span><button type="button" class="ib" data-act="code-size" data-step="-1" aria-label="Smaller code"${codeSize() <= 10 ? ' disabled' : ''}>A−</button><b>${codeSize()}</b><button type="button" class="ib" data-act="code-size" data-step="1" aria-label="Larger code"${codeSize() >= 16 ? ' disabled' : ''}>A+</button></span>` });
-    // A chain's own action, from the header that scrolled away.
+    // A chain's own action, from the header that scrolled away (a reviewed chain's is in the view's items).
     const ch = state.view.kind === 'chain' && M().chains[state.view.id];
     if (ch) {
       const st = stats(blocksOf(ch.blocks));
-      if (!outOfLens(st)) view.unshift({ label: st.open ? 'Mark the whole chain reviewed' : 'Mark the whole chain unreviewed', icon: ICON.check, data: { act: 'mark-chain', 'chain-id': ch.id } });
+      if (st.open && !outOfLens(st)) view.unshift({ label: 'Mark the whole chain reviewed', icon: ICON.check, data: { act: 'mark-chain', 'chain-id': ch.id } });
     }
     if (state.view.kind === 'tests') {
       const mode = UI.testsMode === 'sentences' ? 'sentences' : 'nested';
@@ -4722,7 +4724,10 @@
       // from here anywhere else.
       lead: '<span class="fv-here"></span>',
       tools: iconBtn(ICON.graph, 'The chain’s graph: hover for a look, click to keep it open (g)', 'data-act="graph" aria-haspopup="dialog" aria-expanded="false"', { label: 'Graph', on: true }),
-      action: outOfLens(s) ? '' : `<button type="button" class="btn${s.open ? ' primary' : ''}" data-act="mark-chain" data-chain-id="${c.id}">${s.open ? 'Mark chain reviewed' : 'Mark chain unreviewed'}</button>`,
+      // Once it's all reviewed, the next chain to review takes its place (marking it unreviewed again
+      // is in its menu).
+      action: outOfLens(s) ? '' : s.open ? `<button type="button" class="btn primary" data-act="mark-chain" data-chain-id="${c.id}">Mark chain reviewed</button>`
+        : nextUnreviewed() ? '<button type="button" class="btn primary" data-act="next-open" title="The next chain with changes to review (n)">Next chain</button>' : '<span class="facts">All reviewed</span>',
       // By commit, the commits that wrote the chain stay under the header.
       pinned: m.byCommit ? writersHtml(c, fam) : '',
       below: fam && fam.commit ? commitNoteHtml(fam) + (state.card === fam.commit.sha && hxOn() && HX.index.has(state.card) ? detailHtml(HX.index.get(state.card), '') : '') : '',

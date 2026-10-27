@@ -508,6 +508,56 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
     });
   });
 
+  describe('when the greeting chain is marked reviewed from its header, then its button is clicked again, ', () => {
+    let button: string;
+    let opened: string;
+
+    before(async () => {
+      await rest(page!);
+      await chain(page!, 'greet(name)');
+      await page!.click('.fv-head [data-act="mark-chain"]');
+      await page!.until(`!!document.querySelector('.fv-head [data-act="next-open"]')`);
+      button = await read(page!, `document.querySelector('.fv-head [data-act="next-open"]').textContent`);
+      await page!.click('.fv-head [data-act="next-open"]');
+      await page!.until(`(${crumbs}).includes('wave')`);
+      opened = await read(page!, `[${crumbs}, document.querySelector('.fv-head [data-act="mark-chain"]')?.textContent ?? ''].join('\\n')`);
+    });
+
+    after(async () => {
+      await clearMarks();
+    });
+
+    it('then the button reads Next chain, and opens the wave’s chain, whose button marks it reviewed.', () => {
+      assert.equal(`${button}\n${opened.split('\n')[1]}`, 'Next chain\nMark chain reviewed');
+    });
+  });
+
+  describe('when the reviewed greeting chain is marked unreviewed from its menu, ', () => {
+    let item: string;
+    let button: string;
+
+    before(async () => {
+      await rest(page!);
+      await chain(page!, 'greet(name)');
+      await page!.click('.fv-head [data-act="mark-chain"]');
+      await page!.until(`!!document.querySelector('.fv-head [data-act="next-open"]')`);
+      await page!.click('.fv-head [data-menu="view"]');
+      await page!.until(`!!document.querySelector('.menu:not([hidden]) [data-act="mark-chain"]')`);
+      item = await read(page!, `document.querySelector('.menu:not([hidden]) [data-act="mark-chain"]').textContent.trim()`);
+      await page!.click('.menu:not([hidden]) [data-act="mark-chain"]');
+      await page!.until(`!!document.querySelector('.fv-head [data-act="mark-chain"]')`);
+      button = await read(page!, `document.querySelector('.fv-head [data-act="mark-chain"]').textContent`);
+    });
+
+    after(async () => {
+      await clearMarks();
+    });
+
+    it('then the menu offers it, and the header’s button marks the chain reviewed again.', () => {
+      assert.equal(`${item}\n${button}`, 'Mark the whole chain unreviewed\nMark chain reviewed');
+    });
+  });
+
   describe('when a member of the greeting graph is shift-clicked, ', () => {
     let beforeScroll: string;
     let shown: string;
