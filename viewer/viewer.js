@@ -3157,6 +3157,8 @@
     }
     return out;
   }
+  // Whether a file has notes or GitHub threads: it opens on them once the review no longer has it.
+  const threadsOn = (p) => NT.files.has(p) || (GH.on && GH.files.has(p));
   const openThreadsHtml = (p) => {
     const e = GH.on && GH.files.get(p), f = NT.files.get(p);
     // A note in a GitHub thread counts with the thread.
@@ -3206,8 +3208,7 @@
     if (!t) return;
     if (t.resolved) GH.opened.add(t.id);
     state.peek = null;
-    const inModel = M().files.some((f) => f.p === t.path) || M().generated.some((f) => f.p === t.path);
-    state.view = inModel ? { kind: 'file', path: t.path } : { kind: 'conversation' };
+    state.view = { kind: 'file', path: t.path };
     if (t.at != null) {
       const r = rowAt(t.path, t.side, t.at);
       if (r) { const k = 'file|' + t.path + '#' + r.hi + ':0'; state.collapsed.delete(k); state.expanded.add(k); }
@@ -4072,7 +4073,7 @@
     const v = st.view, m = M();
     if (!v || !v.kind) return null;
     if (v.kind === 'chain') { const c = m.chains[v.id] && m.chains[v.id].name === st.name ? m.chains[v.id] : m.chains.find((x) => x.name === st.name); return c ? { kind: 'chain', id: c.id } : null; }
-    if (v.kind === 'file') return m.files.some((f) => f.p === v.path) || m.generated.some((f) => f.p === v.path) ? v : null;
+    if (v.kind === 'file') return m.files.some((f) => f.p === v.path) || m.generated.some((f) => f.p === v.path) || threadsOn(v.path) ? v : null;
     if (v.kind === 'group') return m.groupById.has(Number(v.id)) ? v : null;
     if (v.kind === 'map') return v.family == null || m.families.some((f) => f.id === v.family) ? v : { kind: 'map', family: null };
     if (v.kind === 'history') return HX ? v : null;
@@ -5502,7 +5503,11 @@
     const f = m.files.find((x) => x.p === path);
     if (!f) {
       const g = m.generated.find((x) => x.p === path);
-      return g ? renderGenerated(path) : `<div class="empty">${esc(path)} has no changes in this comparison.</div>`;
+      if (g) return renderGenerated(path);
+      // Out of the review (its changes undone, or taken off by a force push), what was said on it
+      // stays, above the code it was said on.
+      if (threadsOn(path)) return headerHtml({ crumbs: fileCrumbs(path), facts: `Not in this review${openThreadsHtml(path)}` }) + fileThreadsHtml({ p: path });
+      return `<div class="empty">${esc(path)} has no changes in this comparison.</div>`;
     }
     const s = stats(f.blocks);
     const chains = [...new Set(f.blocks.flatMap((b) => m.chainsOf.get(b.id) || []))];
@@ -8212,7 +8217,6 @@
     // On the review: in the review's own thread. In a GitHub thread: there, pulsing.
     if (note.review) { state.view = { kind: 'conversation' }; NT.reveal = n; return render({ top: true }); }
     if (inThread(note)) return openThread(noteThread(note));
-    if (!M().files.some((f) => f.p === note.path) && !M().generated.some((f) => f.p === note.path)) return toast(`${note.path} isn’t in this review`);
     state.view = { kind: 'file', path: note.path };
     const r = !note.file && note.line != null ? rowAt(note.path, note.side, note.line) : null;
     if (r) { const k = 'file|' + note.path + '#' + r.hi + ':0'; state.collapsed.delete(k); state.expanded.add(k); } else NT.folded.delete(note.path);

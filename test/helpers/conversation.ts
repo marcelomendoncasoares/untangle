@@ -15,6 +15,8 @@ export interface ThreadSpec {
   /** A second comment, after the first. */
   reply?: string;
   pending?: boolean;
+  /** On code the pull request no longer has: GitHub gives it no line now. */
+  outdated?: boolean;
 }
 
 export interface ReviewSpec {
@@ -76,10 +78,10 @@ export function pullRequest(spec: ConversationSpec) {
       nodes: (spec.threads ?? []).map((thread) => ({
         id: thread.id,
         isResolved: !!thread.resolved,
-        isOutdated: false,
+        isOutdated: !!thread.outdated,
         isCollapsed: false,
         path: thread.path,
-        line: thread.line,
+        line: thread.outdated ? null : thread.line,
         originalLine: thread.line,
         startLine: thread.startLine ?? null,
         originalStartLine: thread.startLine ?? null,
