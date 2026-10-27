@@ -5950,8 +5950,10 @@
     const chips = top.map(([id, n]) => { const ch = m.chains[id], nm = splitName(ch.name); return `<button type="button" class="hs-chip" data-act="lens-chain" data-sha="${c.sha}" data-chain-id="${id}" title="${esc(ch.name)}: open it, through this commit"><i class="${stats(blocksOf(ch.blocks)).open ? '' : 'ok'}"></i>${esc(trunc(nm.name, 26))}<em>${n}</em></button>`; }).join('');
     const facts = HX.live && HX.live.github;
     const ck = facts && facts.checks[c.sha] && CHECK[facts.checks[c.sha]];
+    // The newest first, so the last word on it shows when they don't all fit.
     const reviews = new Map();
-    (facts ? facts.reviews : []).forEach((r) => { if (r.sha !== c.sha) return; const k = r.author.login + ' ' + r.state; if (!reviews.has(k)) reviews.set(k, { ...r, n: 0 }); reviews.get(k).n++; });
+    (facts ? facts.reviews : []).filter((r) => r.sha === c.sha).reverse().sort((x, y) => (Date.parse(y.at) || 0) - (Date.parse(x.at) || 0))
+      .forEach((r) => { const k = r.author.login + ' ' + r.state; if (!reviews.has(k)) reviews.set(k, { ...r, n: 0 }); reviews.get(k).n++; });
     const rv = [...reviews.values()].map((r) => `<a class="hs-rev ${r.state === 'APPROVED' ? 'ok' : r.state === 'CHANGES_REQUESTED' ? 'bad' : ''}" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" title="${esc(r.author.login)} ${REVIEW_WORD[r.state] || r.state.toLowerCase()} on this commit${r.n > 1 ? `, ${r.n} times` : ''}">${r.author.avatar ? `<img src="${esc(r.author.avatar)}&s=32" alt="" width="16" height="16">` : ''}<span>${esc(`${r.author.login} ${REVIEW_WORD[r.state] || ''}${r.n > 1 ? ` ×${r.n}` : ''}`.trim())}</span></a>`).join('');
     const what = c.brought ? `brings ${plural(c.brought, 'commit')} from ${esc(baseName())}` : st.total ? `${plural(st.total, 'change')} ${perChain.size ? 'in ' + plural(perChain.size, 'chain') : 'outside chains'}` : 'nothing of it left at the head';
     const meta = `<code>${shortSha(c.sha)}</code>${LOCAL.np.has(c.sha) ? ' <span class="np-tag">Not pushed</span>' : ''} · ${esc(c.author)} · ${dayOf(c.at)} · ${what}`;

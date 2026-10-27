@@ -96,3 +96,61 @@ describe('Given a served review whose last commit writes in the chains of the tw
     await page!.eval(`document.querySelector('.hist').style.width = ''`);
   });
 });
+
+describe('Given a served review whose head commit has three reviews on GitHub: changes requested, a comment begun before them and posted after, then an approval, ', { skip, timeout: 300_000 }, () => {
+  let repo: TempRepo | undefined;
+  let origin: TempRepo | undefined;
+  let gh: GhStub | undefined;
+  let run: UntangleRun | undefined;
+  let page: Browser | undefined;
+  let cache: string | undefined;
+
+  before(async () => {
+    repo = TempRepo.create();
+    origin = TempRepo.bare();
+    repo.write('pubspec.yaml', pubspec);
+    repo.write('lib/aliases.dart', "bool accept(String email) => email.contains('@');\n");
+    const base = repo.commit({ subject: 'Start the package', author: ada('2020-01-04T15:00:00Z'), committer: ada('2020-01-04T15:00:00Z') });
+    repo.branch('feature');
+    repo.write('lib/aliases.dart', "bool accept(String email) => email.contains('+') || email.contains('@');\n");
+    const head = repo.commit({ subject: 'feat: Accept email aliases', author: ada('2020-01-05T15:00:00Z'), committer: ada('2020-01-05T15:00:00Z') });
+    repo.remoteAdd('origin', origin.dir);
+    repo.push('origin', 'main');
+    repo.push('origin', 'feature');
+    // As GitHub lists them: by when each began.
+    gh = pullRequestGh({
+      number: 7, title: 'Accept email aliases', url: 'https://github.com/acme/sample/pull/7',
+      base: 'main', baseSha: base, head: 'feature', headSha: head,
+      reviews: [
+        { login: 'grace-hopper', state: 'COMMENTED', sha: head, at: '2020-01-06T12:00:00Z' },
+        { login: 'ada-lovelace', state: 'CHANGES_REQUESTED', sha: head, at: '2020-01-06T10:00:00Z' },
+        { login: 'ada-lovelace', state: 'APPROVED', sha: head, at: '2020-01-07T09:00:00Z' },
+      ],
+    });
+    cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
+    run = await startUntangle(repo.dir, { cacheDir: cache, gh, args: ['-chains', 'history'] });
+    await waitForReview(reviewClient(run.url));
+    page = await launchBrowser();
+    await page.reducedMotion(true);
+    await page.goto(run.url);
+    await page.until(`!!document.querySelector('.t-head')`, 30_000);
+    await rest(page);
+    await page.click('[data-act="history-open"]');
+    await page.until(`!!document.querySelector('.hs-row .hs-rev')`, 30_000);
+  });
+
+  after(async () => {
+    await page?.close();
+    await run?.stop();
+    repo?.remove();
+    origin?.remove();
+    gh?.remove();
+    if (cache) fs.rmSync(cache, { recursive: true, force: true });
+  });
+
+  it('when History shows the commit, then its reviews are the newest posted first, the approval whole.', async () => {
+    const said = await page!.eval(`[...document.querySelectorAll('.hs-row .hs-rev')].map((r) => r.textContent)`);
+    assert.deepEqual(said, ['ada-lovelace approved', 'grace-hopper commented', 'ada-lovelace requested changes']);
+    assert.equal(((await page!.eval(tagsOf)) as string[])[0], 'hs-rev whole');
+  });
+});
