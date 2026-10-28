@@ -58,7 +58,7 @@ describe('Given a served review of a greeting with a return, ', { skip, timeout:
     repo.write('lib/a.dart', "void greet() {\n  print('hi');\n}\n");
     repo.commit({ subject: 'Start', author, committer: author });
     repo.branch('feature');
-    repo.write('lib/a.dart', "void greet(String name) {\n  if (name.isEmpty) return;\n  print('hi');\n}\n");
+    repo.write('lib/a.dart', "void greet(String name) {\n  if (name.length > 9) return;\n  print('hi');\n}\n");
     repo.commit({ subject: 'Return early', author, committer: author });
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     run = await startUntangle(repo.dir, { base: 'main', cacheDir: cache });
@@ -99,6 +99,23 @@ describe('Given a served review of a greeting with a return, ', { skip, timeout:
         synKw === darkPlus.control.toLowerCase() ? 'syn-kw' : synKw,
         synId === darkPlus.variable.toLowerCase() ? 'syn-id' : synId,
       ].join('\n'), 'string\nfunction\ncontrol\nvariable\nsyn-str\nsyn-fn\nsyn-kw\nsyn-id');
+    });
+  });
+
+  describe('when a number in the code is read, ', () => {
+    let number: string;
+
+    before(async () => {
+      number = await read(page!, `(() => {
+        const n = [...document.querySelectorAll('.code .t-num')].find((el) => el.textContent === '9');
+        if (!n) return 'missing';
+        const s = getComputedStyle(n), line = getComputedStyle(n.closest('.tx'));
+        return [s.marginRight, s.font === line.font ? 'the line’s font' : s.font + ' in ' + line.font].join(' · ');
+      })()`);
+    });
+
+    it('then it sits in its line as the code around it, with no gap after it.', () => {
+      assert.equal(number, '0px · the line’s font');
     });
   });
 });
