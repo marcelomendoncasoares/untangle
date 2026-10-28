@@ -6283,7 +6283,8 @@
       // What the review covers, in lines: the generated files and migrations below aren't in it.
       // Hidden files are left out of the count, which says so.
       const files = shown(m.files);
-      const filter = iconBtn(ICON.filter, UI.filesHide ? 'Hiding the files that would fade, outside the open chain or not models: click to fade them instead' : 'Hide the files that would fade, outside the open chain or not models, instead of fading them', 'data-act="files-hide"', { label: 'Hide what fades', on: !!UI.filesHide });
+      const only = 'Show only the files of the selected view';
+      const filter = iconBtn(ICON.filter, only, 'data-act="files-hide"', { label: only, on: !!UI.filesHide });
       if (m.files.length) h += `<div class="sb-group fs" title="The lines the review’s files add and remove. Generated files and migrations, below, aren’t reviewed or counted."><span>In the review</span><span>${files.length < m.files.length ? `${files.length} of ${plural(m.files.length, 'file')}` : plural(m.files.length, 'file')} · ${plusMinus(sumOf(files, 'a'), sumOf(files, 'd'))}</span>${filter}</div>`;
       h += treeHtml(fileTree(files), 0, {
         prefix: '',

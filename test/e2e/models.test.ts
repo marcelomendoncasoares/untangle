@@ -216,17 +216,23 @@ describe('Given a review that changes a model and its migration, adds a long one
   describe('when the filter is turned on, with Models open, ', () => {
     let rows = '';
     let count = '';
+    let says = '';
 
     before(async () => {
       await page.click('[data-act="files-hide"]');
       await page.until(`document.querySelector('[data-act="files-hide"]').getAttribute('aria-pressed') === 'true'`);
       rows = await read(page, fileRows);
       count = await read(page, filesCount);
+      says = await read(page, `document.querySelector('[data-act="files-hide"]').title`);
     });
 
     it('then the files that faded are hidden, and the count says how many show.', () => {
       assert.equal(rows, ['lib/src/models/', `${invoice} (reviewed)`, ledger, 'test/sample_test_server/lib/src/models/', thing].join('\n'));
       assert.equal(count, '3 of 4 files · +64 −0');
+    });
+
+    it('then the filter says, under the pointer, that it shows only the files of the selected view.', () => {
+      assert.equal(says, 'Show only the files of the selected view');
     });
   });
 });
