@@ -366,4 +366,53 @@ describe('Given a review that changes a model and its migration, adds a long one
       assert.equal(room, '22');
     });
   });
+
+  describe('when the reviewed model’s line is clicked off its name, ', () => {
+    let cls = '';
+
+    before(async () => {
+      await page.click(`${card(invoice)} .md-h > .sp`);
+      await page.until(`!document.querySelector('${card(invoice)}').classList.contains('fold')`);
+      cls = await read(page, `document.querySelector('${card(invoice)}').className`);
+    });
+
+    it('then it opens, as a click on its name does.', () => {
+      assert.equal(cls, 'md-card done');
+    });
+  });
+
+  describe('when its hunk’s divider is clicked off its buttons, then again, ', () => {
+    const chevron = `document.querySelector('${card(invoice)} .hh .chev').getAttribute('aria-expanded')`;
+    const rows = `String(document.querySelectorAll('${card(invoice)} .code .ln').length)`;
+    let opened = '';
+    let folded = '';
+
+    before(async () => {
+      await page.click(`${card(invoice)} .hh > .sp`);
+      await page.until(`${chevron} === 'true'`);
+      opened = await read(page, rows);
+      await page.click(`${card(invoice)} .hh > .sp`);
+      await page.until(`${chevron} === 'false'`);
+      folded = await read(page, rows);
+    });
+
+    it('then the hunk unfolds, then folds again, as its chevron does.', () => {
+      assert.ok(Number(opened) > 0, `${opened} rows unfolded`);
+      assert.equal(folded, '0');
+    });
+  });
+
+  describe('when the model’s line is clicked again, off its name, ', () => {
+    let cls = '';
+
+    before(async () => {
+      await page.click(`${card(invoice)} .md-h > .sp`);
+      await page.until(`document.querySelector('${card(invoice)}').classList.contains('fold')`);
+      cls = await read(page, `document.querySelector('${card(invoice)}').className`);
+    });
+
+    it('then it folds back to its line.', () => {
+      assert.equal(cls, 'md-card fold done');
+    });
+  });
 });

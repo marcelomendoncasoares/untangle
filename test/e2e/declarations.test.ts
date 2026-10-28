@@ -118,17 +118,16 @@ void main() {
       await browser.click('.sec [data-act="toggle-hunk"]');
       pill = await read(browser, `document.querySelector('.pill-n').textContent`);
       await browser.click('.hh[data-nav] .hh-at');
-      clicked = await read(browser, `document.querySelector('#vw-main .empty')?.textContent || document.querySelectorAll('.sec[id^="sec-"]').length + ' sections'`);
+      clicked = await read(browser, `(document.querySelector('#vw-main .empty')?.textContent || document.querySelectorAll('.sec[id^="sec-"]').length + ' sections') + ', ' + (document.querySelector('.sec [data-act="toggle-hunk"]').getAttribute('aria-expanded') === 'true' ? 'unfolded' : 'folded')`);
       await browser.click(`[data-chain="${invoice}"]`);
-      await browser.click('.sec [data-act="toggle-hunk"]');
     });
 
     it('then the folded class still counts as one task.', () => {
       assert.equal(pill, '1 of 2');
     });
 
-    it('then a click on its divider, beside its buttons, leaves the chain where it is.', () => {
-      assert.equal(clicked, '2 sections');
+    it('then a click on its divider, beside its buttons, unfolds it, leaving the chain where it is.', () => {
+      assert.equal(clicked, '2 sections, unfolded');
     });
   });
 

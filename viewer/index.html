@@ -1004,7 +1004,9 @@ button.sp-leg:hover, button.sp-leg:focus-visible { background: var(--hover); out
 .md-fp { font: 500 11.5px/1.3 var(--code); color: var(--text-3); }
 .md-sum { font: 400 12px/1.3 var(--ui); color: var(--text-3); }
 .md-open { appearance: none; display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
-.md-open:hover .md-nm { text-decoration: underline; text-decoration-color: var(--text-3); text-underline-offset: 3px; }
+/* A card that folds folds and opens from anywhere on its line. */
+.md-h[data-act] { cursor: pointer; }
+.md-open:hover .md-nm, .md-h[data-act]:hover .md-nm { text-decoration: underline; text-decoration-color: var(--text-3); text-underline-offset: 3px; }
 .md-card.done .md-nm { color: var(--text-2); font-weight: 600; }
 .md-h:hover .tick:not(.on), .md-h:hover .tick.part { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .md-h:hover .tick.on::after { border-color: var(--done); }
@@ -1209,7 +1211,7 @@ div.empty { position: sticky; left: 0; max-width: 700px; padding: 28px 22px; col
    marking it reviewed show under the pointer. */
 .hh { position: relative; display: flex; align-items: center; height: 30px; margin-top: 6px; background: var(--sheet); color: var(--text-3); font-size: 12px; transition: background-color var(--fast) var(--ease); }
 .hh.joined { margin-top: 0; }
-.hh.more { cursor: pointer; }
+.hh.more, .hh.tog { cursor: pointer; }
 .hh:hover { background: var(--hover-soft); }
 .hh-g { position: sticky; left: 0; z-index: 1; display: flex; justify-content: center; width: var(--gut); flex: none; background: inherit; }
 .hh-at { width: var(--num); flex: none; padding-right: 10px; text-align: right; font: 500 11.5px/1 var(--ui); color: var(--text-3); font-variant-numeric: tabular-nums; }

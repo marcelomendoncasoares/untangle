@@ -1091,7 +1091,10 @@
     // Where the section starts, while it's folded: open, its first row says it.
     const at = x.collapsed ? `<span class="hh-at" title="@@ −${o != null ? o : hk.o} +${n != null ? n : hk.n} @@">${n != null ? n : hk.n}</span>` : '<span class="hh-at"></span>';
     const tip = click ? (click[1] === 'above' ? `Show ${linesWord(click[2])} more above` : `Show ${linesWord(click[2])} more below the code above`) + (hidden > click[2] ? ` (${fmt(hidden)} hidden)` : '') : '';
-    let out = `<div class="hh${x.allDone ? ' done' : ''}${P && !hidden ? ' joined' : ''}${click ? ' more' : ''}" data-sec="${esc(S.key)}"${x.collapsed ? foldStop(x.blocks) : ''}${click ? ` ${moreAttrs(...click)} title="${esc(tip)}"` : ''}>`
+    // A click anywhere on it folds or unfolds it, as its chevron does; one that doesn't fold shows
+    // the lines it hides.
+    const fold = x.folds ? ' data-act="line-fold"' : click ? ` ${moreAttrs(...click)} title="${esc(tip)}"` : '';
+    let out = `<div class="hh${x.allDone ? ' done' : ''}${P && !hidden ? ' joined' : ''}${x.folds ? ' tog' : click ? ' more' : ''}" data-sec="${esc(S.key)}"${x.collapsed ? foldStop(x.blocks) : ''}${fold}>`
       + `<span class="hh-g">${x.folds ? `<button type="button" class="chev" data-act="toggle-hunk" data-key="${esc(S.key)}" aria-expanded="${!x.collapsed}" title="${x.collapsed ? 'Unfold' : 'Fold'}">${x.collapsed ? ICON.chevronRight : ICON.chevronDown}</button>` : ''}</span>`
       + `${at}<span class="hh-tx">${esc(head)}</span>`;
     if (x.collapsed) {
@@ -5235,12 +5238,13 @@
     const tick = st.total ? `<button type="button" class="tick md-tick${done ? ' on' : st.open < st.total ? ' part' : ''}" data-act="mark-file" data-file="${f.idx}" title="${done ? 'Reviewed: mark the model unreviewed' : 'Mark the whole model reviewed'}" aria-label="${done ? 'Mark the model unreviewed' : 'Mark the model reviewed'}" aria-pressed="${done}"></button>` : '';
     const label = `<span class="md-nm">${esc(md.name)}</span><span class="md-fp">${esc(md.rel)}</span>`;
     const name = foldable ? `<button type="button" class="md-open" data-act="model-open" data-model="${esc(f.p)}" aria-expanded="${open}" title="${open ? 'Fold it' : 'Open it'}">${label}${open ? '' : `<span class="md-sum">${esc(md.sum)}</span>`}</button>` : label;
-    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}<span class="sp"></span>${warned}${legs}${tick}</div></section>`;
+    const line = foldable ? ' data-act="line-fold"' : '';
+    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}<span class="sp"></span>${warned}${legs}${tick}</div></section>`;
     const chips = (md.st === 'A' ? '<span class="md-chip new">new</span>' : md.st === 'D' ? '<span class="md-chip gone">removed</span>' : '')
       + (md.en ? `<span class="md-chip">enum, ${md.en === 'byName' ? 'by name' : 'by index'}</span>` : '')
       + (md.table ? `<span class="md-chip">table ${codeIn(md.table)}</span>` : '')
       + (md.ext ? `<span class="md-chip">extends ${codeIn(md.ext)}</span>` : '');
-    let h = `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}${chips}<span class="sp"></span>${warned}${legs}${tick}</div>`;
+    let h = `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}${chips}<span class="sp"></span>${warned}${legs}${tick}</div>`;
     const top = md.warns.filter((w) => w.line == null);
     if (top.length) h += `<div class="md-ws">${top.map(warnHtml).join('')}</div>`;
     h += modelLinksHtml(md, f);
@@ -5433,12 +5437,13 @@
     const label = `<span class="md-nm">${esc(c.name)}</span><span class="md-fp">${esc(f.p)}</span>`;
     const name = foldable ? `<button type="button" class="md-open" data-act="model-open" data-model="${esc(f.p)}" aria-expanded="${open}" title="${open ? 'Fold it' : 'Open it'}">${label}${open ? '' : `<span class="md-sum">${esc(c.sum)}</span>`}</button>` : label;
     const legs = legChipsHtml(f);
-    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}<span class="sp"></span>${legs}${tick}</div></section>`;
+    const line = foldable ? ' data-act="line-fold"' : '';
+    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}<span class="sp"></span>${legs}${tick}</div></section>`;
     const chips = (c.st === 'A' ? '<span class="md-chip new">new</span>' : c.st === 'D' ? '<span class="md-chip gone">removed</span>' : '')
       + (c.version ? `<span class="md-chip">${esc(c.version[0] ?? 'no version')} → ${esc(c.version[1] ?? 'no version')}</span>` : '')
       + (c.root ? '<span class="md-chip">the workspace</span>' : c.outside ? '<span class="md-chip">outside the workspace</span>' : '');
     const ctx = { key: 'deps' };
-    return `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h">${name}${chips}<span class="sp"></span>${legs}${tick}</div>`
+    return `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}${chips}<span class="sp"></span>${legs}${tick}</div>`
       + `<div class="md-diff"><div class="code" data-p="${esc(f.p)}">${sectionsHtml(f, f.hunks.map((hk, hi) => sectionOf(f, hi, 0, hk.rows.length, ctx)), ctx)}</div></div></section>`;
   }
   // What the test packages' pubspecs all change, when it's one constraint, as their folded line says.
@@ -8620,6 +8625,13 @@
     if (act === 'md-goto') return modelsGoto(d.model);
     if (act === 'models-tests') { hint({ modelsTests: d.pkg }); toggleIn(state.modelsTests, d.pkg); return render(); }
     if (act === 'model-open') { hint({ model: d.model }); toggleIn(state.modelsOpen, d.model); return render(); }
+    // A card's line or a hunk's divider, clicked off its buttons, does what its fold button does,
+    // unless the click ended a selection of its text.
+    if (act === 'line-fold') {
+      const b = getSelection().isCollapsed && t.querySelector(':scope > .md-open, :scope > .hh-g > .chev');
+      if (b) b.click();
+      return;
+    }
     if (act === 'model-peek') {
       const same = state.peek && state.peek.model === d.model && state.peek.path === d.path;
       state.peek = same ? null : { model: d.model, kind: d.kind, path: d.path };
