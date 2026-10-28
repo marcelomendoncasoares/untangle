@@ -8,7 +8,8 @@
 // a Given rewords every test under it, and a test that reads the same in a new group is regrouped,
 // not new. Each call carries the change blocks in its range, in its own lines (a group's setup,
 // without its calls) and in its title, so the viewer can scope all of it to a chain. A test counts
-// its expect calls, and a group says whether it sets anything up (setUp or setUpAll).
+// its expect calls, and a group says whether it sets anything up: setUp, setUpAll, or a variable
+// with a value in its own body, which the calls under it share.
 
 const CLAUSE = /^\s*(given|when|then)\b/i;
 const TESTS = new Set(['test', 'testWidgets']);
@@ -38,7 +39,12 @@ function callOf(node) {
   // A title split into adjacent strings reads with a space where they meet, which the first so
   // often forgets ('… 4 times,' 'then …').
   const title = strings.length ? strings.map((x) => x[2].replace(/\\(['"\\])/g, '$1')).reduce((a, b) => (/\S$/.test(a) && /^\S/.test(b) ? a + ' ' + b : a + b)) : arg.text;
-  return { kind, title, s: node.startPosition.row + 1, e: node.endPosition.row + 1, te: arg.endPosition.row + 1 };
+  // A group that declares a variable with a value in its own body (not in a setUp's or a test's)
+  // shares it with the calls under it, which sets their scenario up as setUp would.
+  const block = kind !== 't' && args.namedChildren.map((a) => a.namedChild(0)).find((x) => x?.type === 'function_expression')
+    ?.namedChildren.find((x) => x.type === 'function_expression_body')?.namedChildren.find((x) => x.type === 'block');
+  const su = !!block && block.namedChildren.some((x) => x.type === 'local_variable_declaration' && x.descendantsOfType('=').length > 0);
+  return { kind, title, s: node.startPosition.row + 1, e: node.endPosition.row + 1, te: arg.endPosition.row + 1, su };
 }
 
 // The calls of a tree, nested, a test with its expect calls and a group with whether it sets up.

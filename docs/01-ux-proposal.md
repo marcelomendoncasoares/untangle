@@ -392,11 +392,12 @@ and reviewing a test starts there: the code is there to confirm it.
 8. **Pinned groups.** Over a test file's code, in any view, and over an outline, the groups of
    the line at the top of the view whose own lines have scrolled away stay pinned under the
    header, with the test's title when the line is in its body.
-9. **What a row says besides its sentence.** A Given or a when that calls neither `setUp` nor
-   `setUpAll` itself has a red dot. Hovering a row shows, beside the commit that wrote it, a
-   test's expect calls (`expect` and `expectLater` called by name, not in comments), muted, and
-   the diff's lines in the call (+X −Y; in a chain, the chain's). Their room is kept, so nothing
-   moves under the pointer. ↗ is drawn with strokes that stay whole at any zoom.
+9. **What a row says besides its sentence.** A Given or a when that sets nothing up itself (no
+   `setUp`, `setUpAll` or variable with a value that its calls share) has a red dot. Hovering a
+   row shows, beside the commit that wrote it, a test's expect calls (`expect` and `expectLater`
+   called by name, not in comments), muted, and the diff's lines in the call (+X −Y; in a chain,
+   the chain's). Their room is kept, so nothing moves under the pointer. ↗ is drawn with strokes
+   that stay whole at any zoom.
 10. **What's reviewed folds away,** in the Tests view, as reviewed hunks do. A test marked
     reviewed settles, then folds into a line, "✓ 3 tests reviewed", that holds the reviewed rows
     next to it and shows them again on a click. A group folds only once everything under it is

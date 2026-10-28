@@ -413,7 +413,7 @@ describe('Given a served review by commit: a discount with its tests, more tests
       notes = await read(page!, `[...document.querySelectorAll('#vw-main .ol-row')].map((row) => {
         const title = row.querySelector('.ol-tt'), words = title.cloneNode(true);
         words.querySelectorAll('del').forEach((el) => el.remove());
-        return [words.textContent.trim(), row.querySelector('.ol-nosu') ? 'no setUp' : '', row.querySelector('.ol-xp')?.textContent ?? '', row.querySelector('.ol-df')?.textContent ?? ''].filter(Boolean).join(' · ');
+        return [words.textContent.trim(), row.querySelector('.ol-nosu') ? 'red dot' : '', row.querySelector('.ol-xp')?.textContent ?? '', row.querySelector('.ol-df')?.textContent ?? ''].filter(Boolean).join(' · ');
       }).join('\\n')`);
     });
 
@@ -438,13 +438,13 @@ describe('Given a served review by commit: a discount with its tests, more tests
 
     // The lines are the diff's: git pairs the file's closing brackets as it likes (the last test's
     // with the old when's, so the two Givens' new lines run on under the first one).
-    it('then the Given without setUp has a dot, each test counts its expect calls, and each row knows the diff\'s lines in it.', () => {
+    it('then the Given that shares its prices has no red dot, as the one with setUp, each test counts its expect calls, and each row knows the diff\'s lines in it.', () => {
       assert.equal(notes, [
         'Given a cart holding two items, · +7 −1',
         'when the total is taken, · +5',
         'then it adds the prices. · 1 expect',
         'then it is positive. · 1 expect · +3',
-        'Given a cart with a discount of one, · no setUp · +9',
+        'Given a cart with a discount of one, · +9',
         'when the total is taken, then the discount comes off. · 1 expect · +3',
         'when nothing is bought, then nothing comes off. · 1 expect · +2',
       ].join('\n'));

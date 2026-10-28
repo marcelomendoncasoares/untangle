@@ -14,14 +14,14 @@ interface Model { compares: { base: { files: Array<{ p: string; outline?: Outlin
 
 const KIND: Record<string, string> = { g: 'group', t: 'test', w: 'wrapper' };
 
-/** A file's outline, one call per line, nested: kind, title, status, a test's expect calls or a group's setUp, and what changed in its own lines. */
+/** A file's outline, one call per line, nested: kind, title, status, a test's expect calls or whether a group sets up, and what changed in its own lines. */
 function outlineOf(review: BuiltReview, file: string): string {
   const outline = (review.data.model as Model).compares.base.files.find((f) => f.p === file)?.outline;
   if (!outline) return 'no outline';
   const depth = (call: Call): number => (call.p == null ? 0 : depth(outline.nodes[call.p]) + 1);
   const lines = outline.nodes.map((call) => {
     const own = (call.own || []).reduce((sum, [, adds, dels]) => [sum[0] + adds, sum[1] + dels], [0, 0]);
-    const asserts = call.k === 't' ? `${call.x} expect${call.x === 1 ? '' : 's'}` : call.su ? 'setUp' : '';
+    const asserts = call.k === 't' ? `${call.x} expect${call.x === 1 ? '' : 's'}` : call.su ? 'sets up' : '';
     const notes = [call.l ? 'label' : '', call.st || '', asserts, call.ot ? `was “${call.ot}”` : '', call.was ? `read “${call.was}”` : '', own[0] || own[1] ? `own +${own[0]} −${own[1]}` : ''].filter(Boolean);
     return `${'  '.repeat(depth(call))}${KIND[call.k]} ${call.t} · ${notes.join(' · ')}`;
   });
@@ -327,7 +327,7 @@ void main() {
     it('then the setup change is the when\'s own, the when sets up, and the test\'s own lines hold only its expectation.', () => {
       assert.equal(outlineOf(review!, 'test/cart_test.dart'), [
         'group Given a cart, · same',
-        '  group when an item is added, · same · setUp · own +1 −1',
+        '  group when an item is added, · same · sets up · own +1 −1',
         '    test then the count grows. · same · 1 expect · own +1 −1',
       ].join('\n'));
     });
@@ -432,10 +432,53 @@ ${when}  });
 
     it('then the Given sets up, the new when doesn\'t, and the then counts its two expect calls but not the commented one.', () => {
       assert.equal(outlineOf(review!, 'test/ledger_test.dart'), [
-        'group Given a ledger, · same · setUp',
+        'group Given a ledger, · same · sets up',
         '  test then it has no rows. · same · 1 expect',
         '  group when nothing is added, · new',
         '    test then it stays empty and sums to zero. · new · 2 expects · own +3 −0',
+      ].join('\n'));
+    });
+  });
+});
+
+describe('Given a new Given that shares the project it makes, over a when that only declares what it holds, ', { skip: skipDart }, () => {
+  const file = `void main() {
+  group('Given a new project,', () {
+    final project = createProject(
+      postgres: true,
+    );
+
+    group('when its config is loaded,', () {
+      late Map<String, int> config;
+
+      test('then it asks for a free port.', () {
+        final port = project.port;
+        expect(port, 0);
+      });
+    });
+  });
+}
+`;
+  const project = 'class Project {\n  int port = 0;\n}\n';
+  const files = {
+    base: { 'lib/project.dart': project },
+    head: { 'lib/project.dart': project, 'test/project_test.dart': file },
+  };
+
+  describe('when the review is built, ', () => {
+    let review: BuiltReview | undefined;
+
+    before(async () => {
+      review = await buildDartReview(files);
+    });
+
+    after(() => review?.remove());
+
+    it('then the Given sets up with its shared project, and the when, whose variable has no value yet, doesn\'t, nor does the test\'s variable count for it.', () => {
+      assert.equal(outlineOf(review!, 'test/project_test.dart'), [
+        'group Given a new project, · new · sets up · own +2 −0',
+        '  group when its config is loaded, · new · own +1 −0',
+        '    test then it asks for a free port. · new · 1 expect · own +2 −0',
       ].join('\n'));
     });
   });

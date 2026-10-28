@@ -4271,10 +4271,11 @@
   const OL_MARK = { new: '+', rew: '~', reg: '↳' };
   // A test's expect calls, muted, shown with its lines while the row is hovered.
   const olExpects = (n) => (n.k === 't' && n.x != null ? `<span class="ol-xp" title="${n.x ? `${plural(n.x, 'expect call')} in this test` : 'No expect call in this test'}">${n.x ? plural(n.x, 'expect') : 'no expect'}</span>` : '');
-  // A Given or a when without setUp or setUpAll: a red dot after its title.
+  // A Given or a when that sets nothing up (no setUp, setUpAll or variable its calls share): a red
+  // dot after its title.
   const olNoSetup = (n) => {
     const w = n.k !== 't' && !n.l && !n.su && /^\s*(given|when)\b/i.exec(n.t);
-    return w ? `<i class="ol-nosu" title="No setUp or setUpAll in this ${/^g/i.test(w[1]) ? 'Given' : 'when'}"></i>` : '';
+    return w ? `<i class="ol-nosu" title="No setUp, setUpAll or shared variable in this ${/^g/i.test(w[1]) ? 'Given' : 'when'}"></i>` : '';
   };
   // The diff's lines in a call's whole range, on both sides (in a chain, the chain's), shown while
   // the row is hovered.
