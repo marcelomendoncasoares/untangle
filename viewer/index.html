@@ -173,8 +173,12 @@ a.t-pr:hover { text-decoration: underline; text-decoration-color: var(--text-3);
 .t-unsaved { display: none; font: 500 11.5px/1 var(--ui); color: var(--del-ink); white-space: nowrap; }
 .vw.unsaved .t-unsaved { display: inline; }
 /* What isn't on GitHub yet, by the commit reviewed: commits not pushed (their lens, clicked) and
-   changes not committed. They give way as the title does: one that doesn't fit wraps out of sight. */
+   changes not committed. The title gives way before them (its share of what the bar lacks is so
+   much the larger that theirs rounds to nothing), then one that doesn't fit whole wraps out of
+   sight, the first too, past the empty item before it. */
+.vw-title .t-pr { flex-shrink: 1000000; }
 .t-local { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 8px; min-width: 0; height: 22px; overflow: hidden; }
+.t-local::before { content: ""; height: 100%; margin-right: -8px; }
 .t-np, .t-unc { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 22px; padding: 0 9px 0 8px; border-radius: 999px; font: 600 11.5px/1 var(--ui); white-space: nowrap; }
 .t-np::before, .t-unc::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .t-np { appearance: none; border: 0; background: var(--accent-soft); color: var(--accent-ink); cursor: pointer; }

@@ -12,6 +12,20 @@ const skip = e2eSkip();
 // The lines whose number is marked: written by a commit GitHub doesn't have.
 const marked = `[...document.querySelectorAll('.vw-main .ln[data-w], .vw-main .half[data-w]')].filter((r) => getComputedStyle(r.querySelector('.no')).boxShadow !== 'none').map((r) => r.querySelector('.tx').textContent.trim())`;
 const commitShown = (sha: string) => `(document.querySelector('#vw-title .t-commit') || {}).textContent?.includes('${sha.slice(0, 7)}')`;
+// The top bar at each width from 1400 px down to 961, where the narrow layout begins: the count of
+// commits not pushed whole, cut or out of sight, and whether any of the title shows when it isn't whole.
+const squeezed = `(() => {
+  const bar = document.querySelector('.vw-bar'), seen = [];
+  for (let w = 1400; w >= 961; w--) {
+    bar.style.width = w + 'px';
+    const local = document.querySelector('#vw-title .t-local').getBoundingClientRect(), count = document.querySelector('#vw-title .t-np').getBoundingClientRect();
+    const s = count.top >= local.bottom ? 'the count out of sight' : count.left > local.left - 0.1 && count.right < local.right + 0.1 ? 'the count whole' : 'the count cut';
+    const t = s !== 'the count whole' && document.querySelector('#vw-title .t-pr').clientWidth > 0 ? s + ', some of the title shown' : s;
+    if (t !== seen[seen.length - 1]) seen.push(t);
+  }
+  bar.style.width = '';
+  return seen;
+})()`;
 
 describe('Given a pull request opened from its link, which an agent holds, with its page open, ', { skip, timeout: 300_000 }, () => {
   let f: ReturnType<typeof workingFixture>;
@@ -136,6 +150,15 @@ describe('Given a pull request opened from its link, which an agent holds, with 
       await page.until(`(document.querySelector('#vw-fresh .fr-t') || {}).textContent === '1 new commit on GitHub'`, 45_000);
       assert.equal(await page.eval(`document.querySelector('#vw-fresh').title`), 'The pull request has 1 commit the working copy doesn’t: your agent brings it in when you ask.');
       assert.equal(f.git(work, 'rev-parse', 'HEAD'), own);
+    },
+  );
+
+  it(
+    'when the window narrows while the pill and the count of the commit not pushed share the top bar, '
+    + 'then the title gives way first, and the count goes whole once none of the title is left, never cut.',
+    async () => {
+      await page.until(`(document.querySelector('#vw-title .t-np') || {}).textContent === '1 not pushed'`, 30_000);
+      assert.deepEqual(await page.eval(squeezed), ['the count whole', 'the count out of sight']);
     },
   );
 });
