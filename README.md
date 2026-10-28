@@ -185,7 +185,8 @@ Comments go to the pull request through `gh`, and its threads show under their l
 replies, reactions and suggestions. Comment on a line, a range or a file, resolve threads, and
 submit your review. The review has a thread of its own, first in the Threads tab: the description,
 the conversation's comments and reviews, your notes on the review, and your pending review's
-summary. Each card folds, and *Fold all* folds them to a line each.
+summary. Each card folds, and *Fold all* folds them to a line each. Its notes and its conversation
+are also rows of the tab's Notes and GitHub, as those on lines are.
 
 ![A resolved thread from #96 under the lines it was written on, in crdt_sync.dart](docs/images/comments.png)
 

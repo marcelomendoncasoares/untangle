@@ -66,6 +66,9 @@ function posted(gh: GhStub, mutation: string): string {
   return JSON.stringify((JSON.parse(call.stdin) as { variables: { input: unknown } }).variables.input);
 }
 
+// The Threads tab as read: its sections' heads, and each row's place and counts.
+const sidebarRead = `[...document.querySelectorAll('#vw-side .sb-rv, #vw-side .sb-sec, #vw-side .sb-row.thr, #vw-side .sb-gh')].map((el) => el.matches('.sb-sec') ? '# ' + el.querySelector('.nm').textContent : el.matches('.sb-gh') ? '  ' + el.textContent.trim() : ('  ' + el.querySelector('.nm').firstChild.textContent.trim() + ' ' + [...el.querySelectorAll('.cnt .n')].map((n) => (n.matches('.nt') ? 'notes ' : '') + n.textContent).join(' ')).trimEnd()).join('\\n')`;
+
 describe('Given a served review of pull request 7, kept as notes, and Claude’s commands, ', { skip, timeout: 300_000 }, () => {
   let repo: TempRepo | undefined;
   let gh: GhStub | undefined;
@@ -211,11 +214,11 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
     before(async () => {
       await page!.click('[data-tab="comments"]');
       await page!.until(`!!document.querySelector('#vw-side .sb-rv') && !!document.querySelector('#vw-side [data-thread="THREAD_D"]')`);
-      rows = await read(page!, `[...document.querySelectorAll('#vw-side .sb-rv, #vw-side .sb-sec, #vw-side .sb-row.thr, #vw-side .sb-gh')].map((el) => el.matches('.sb-sec') ? '# ' + el.querySelector('.nm').textContent : el.matches('.sb-gh') ? '  ' + el.textContent.trim() : '  ' + el.querySelector('.nm').firstChild.textContent.trim() + ' ' + [...el.querySelectorAll('.cnt .n')].map((n) => (n.matches('.nt') ? 'notes ' : '') + n.textContent).join(' ')).join('\\n')`);
+      rows = await read(page!, sidebarRead);
     });
 
-    it('then the review’s own row leads, the note is counted in its GitHub thread, and nothing is grouped under the sections.', () => {
-      assert.equal(rows, ['  The review 1', '# Notes', '  None open: the + on a line writes one.', '# GitHub', '  From GitHub, just now', '  app.dart:6 1 notes 3'].join('\n'));
+    it('then the review’s own row leads, the conversation is a row of GitHub’s, the note is counted in its GitHub thread, and nothing is grouped under the sections.', () => {
+      assert.equal(rows, ['  The review', '# Notes', '  None open: the + on a line writes one.', '# GitHub', '  From GitHub, just now', '  Conversation 1', '  app.dart:6 1 notes 3'].join('\n'));
     });
   });
 
@@ -286,6 +289,20 @@ describe('Given a served review of pull request 7, kept as notes, and Claude’s
         `{"pullRequestReviewId":"REVIEW_P","body":"${summary}"}`,
         `Your review | Pending | Draft | ${summary} | Edit | Finish review`,
       ]);
+    });
+  });
+
+  describe('when the Threads tab is opened again, ', () => {
+    let rows: string;
+
+    before(async () => {
+      await page!.click('[data-tab="comments"]');
+      await page!.until(`!!document.querySelector('#vw-side .sb-row[data-n="3"]')`);
+      rows = await read(page!, sidebarRead);
+    });
+
+    it('then the notes on the review are rows of the Notes, as notes on lines are, the one Claude answered first, waiting for you.', () => {
+      assert.equal(rows, ['  The review', '# Notes', '  N3 · The review', '  N2 · The review', '# GitHub', '  From GitHub, just now', '  Conversation 1', '  app.dart:6 1 notes 3'].join('\n'));
     });
   });
 });

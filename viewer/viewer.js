@@ -3298,14 +3298,14 @@
     const body = editing ? composerHtml('summary', { placeholder: 'Your review’s summary', buttons: [['Update summary', 'data-act="gh-summary"', true]], cancel: 'summary-cancel' }) : `<div class="cm-body">${noteMd(p.body)}</div>`;
     return `<div class="cm first pending cv-sum${drafted ? ' drafted' : ''}">${avatar(d.viewer || {})}<div class="cm-main"><div class="cm-h"><b class="cm-who">Your review</b><span class="cm-tag pending">Pending</span>${drafted ? `<span class="cm-tag draft" title="${esc(x.by)} drafted it, and it reads as it drafted it: make it yours before you send your review">Draft</span>` : ''}<span class="muted">${p.comments ? `${p.comments} comment${p.comments === 1 ? '' : 's'} with it · ` : ''}only you see it until you send it</span></div>${body}${editing ? '' : '<div class="cv-sum-f"><button type="button" class="btn sm" data-act="summary-edit">Edit</button><button type="button" class="btn sm primary" data-act="review-toggle">Finish review</button></div>'}</div></div>`;
   }
-  // The notes in the Threads tab: those of lines and files that aren't in a GitHub thread, open ones
-  // by whose turn it is (each group in the files' order), then the resolved ones. With no agent yet,
-  // the open ones are one list. Notes on the review are in its own row.
+  // The notes in the Threads tab: those on the review, then those of lines and files that aren't in
+  // a GitHub thread, open ones by whose turn it is (each group in that order), then the resolved
+  // ones. With no agent yet, the open ones are one list.
   function notesTabHtml() {
     const d = NT.data;
     if (!d) return `<div class="sb-gh">${NT.error ? `<span class="d">${esc(NT.error)}</span>` : 'Loading the notes…'}</div>`;
     const order = new Map(M().files.map((f, i) => [f.p, i]));
-    const sorted = d.notes.filter((n) => !n.review && !inThread(n)).sort((x, y) => (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.line || 0) - (y.line || 0));
+    const sorted = d.notes.filter((n) => !inThread(n)).sort((x, y) => (x.review ? 0 : 1) - (y.review ? 0 : 1) || (order.has(x.path) ? order.get(x.path) : 1e9) - (order.has(y.path) ? order.get(y.path) : 1e9) || (x.path < y.path ? -1 : x.path > y.path ? 1 : 0) || (x.line || 0) - (y.line || 0));
     const names = ntNames();
     const row = (n) => {
       const s = ntStand(n, names);
@@ -3314,8 +3314,8 @@
       const where = n.file ? 'file' : n.startLine != null ? `${n.startLine}–${n.line}` : n.line;
       // Its group says whose the last word is: an agent's keeps its name where the group doesn't say it.
       const who = last.by && (names.length > 1 || names[0] !== last.by) ? `${last.by}: ` : '';
-      const title = `N${n.n} · ${n.path}:${where}${s.words ? ` · ${s.words}` : ''}${n.changed && !n.gone ? ' · changed since you wrote it' : n.gone ? ' · its lines are gone' : ''} · ${who}${trunc(text, 200)}`;
-      const inner = `<span class="nm">N${n.n} · ${esc(fileName(n.path))}:${where}<span class="sn">${esc(trunc(who + text, 90))}</span></span><span class="cnt">${n.comments.length > 1 ? n.comments.length : ''}</span>`;
+      const title = `N${n.n} · ${n.review ? 'on the review' : `${n.path}:${where}`}${s.words ? ` · ${s.words}` : ''}${n.changed && !n.gone ? ' · changed since you wrote it' : n.gone ? ' · its lines are gone' : ''} · ${who}${trunc(text, 200)}`;
+      const inner = `<span class="nm">N${n.n} · ${n.review ? 'The review' : `${esc(fileName(n.path))}:${where}`}<span class="sn">${esc(trunc(who + text, 90))}</span></span><span class="cnt">${n.comments.length > 1 ? n.comments.length : ''}</span>`;
       const attrs = `class="sb-row thr${n.resolved ? ' done' : ''}${n.new ? ' new' : ''}" data-act="nt-open" data-n="${n.n}" data-grp="${s.grp}" title="${esc(title)}"`;
       if (s.grp !== 'you') return `<button type="button" ${attrs}>${s.mark}${inner}</button>`;
       // Waiting for you, its dot marks it unread, or seen. A row that holds it is a div, as a button
@@ -3337,21 +3337,12 @@
     return h;
   }
   // The review's own row, first in the Threads tab: its thread holds the description, the
-  // conversation, the notes on the review and your pending review's summary.
+  // conversation, the notes on the review and your pending review's summary. The notes and the
+  // conversation are rows of the sections under it.
   function reviewRowHtml(v) {
     const d = GH.on ? GH.data : null;
-    const notes = NT.on ? NT.review : [];
-    const open = notes.filter((n) => !n.resolved).length;
-    // Its latest word: your pending summary, a note on the review, or the conversation's last comment.
-    const latest = [];
-    if (d) d.comments.forEach((c) => latest.push({ at: c.created, text: `${c.author.login}: ${flat(c.body)}` }));
-    notes.forEach((n) => { const c = n.comments[n.comments.length - 1]; latest.push({ at: c.at, text: `${c.by || 'You'}: ${c.draft && !c.body ? 'Asked for a draft comment' : flat(c.body)}` }); });
-    latest.sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
-    const sn = d && d.pending && d.pending.body ? `Your pending review: ${flat(d.pending.body)}` : latest.length ? latest[latest.length - 1].text : d ? flat(d.pr.title) : 'Notes about the whole review, for your agent';
-    const k = d ? d.comments.length : 0;
-    const turn = open ? talkWords(notes) : '';
-    const counts = (k ? `<span class="n gh" title="${k} comment${k === 1 ? '' : 's'} on the conversation">${k}</span>` : '') + (open ? `<span class="n nt${talkCls(notes)}" title="${open} open note${open === 1 ? '' : 's'} on the review">${open}</span>` : '');
-    return `<button type="button" class="sb-row sb-rv" data-act="conversation"${v.kind === 'conversation' ? ' aria-current="true"' : ''} title="The review’s own thread: ${d ? 'the description, the conversation, ' : ''}the notes on the review${d ? ' and your pending review' : ''}${turn ? ` · ${esc(turn)}` : ''}"><span class="tw">${ICON.discussion}</span><span class="nm ui">The review<span class="sn">${esc(trunc(sn, 90))}</span></span><span class="cnt">${counts}</span></button>`;
+    const sn = d && d.pending && d.pending.body ? `Your pending review: ${flat(d.pending.body)}` : d ? flat(d.pr.title) : 'Notes about the whole review, for your agent';
+    return `<button type="button" class="sb-row sb-rv" data-act="conversation"${v.kind === 'conversation' ? ' aria-current="true"' : ''} title="The review’s own thread: ${d ? 'the description, the conversation, ' : ''}the notes on the review${d ? ' and your pending review' : ''}"><span class="tw">${ICON.discussion}</span><span class="nm ui">The review<span class="sn">${esc(trunc(sn, 90))}</span></span><span class="cnt"></span></button>`;
   }
   // A section of the Threads tab, open or folded (kept in this browser): Notes, or From GitHub.
   const sectionOpen = (key) => !(Array.isArray(UI.foldedThreads) && UI.foldedThreads.includes(key));
@@ -3368,9 +3359,9 @@
     const top = GH.on || NT.on ? reviewRowHtml(v) : '';
     const gh = GH.on ? githubTabHtml(v) : `<div class="sb-gh">${esc((CONFIG.github && CONFIG.github.off) || 'This review has no pull request: comments stay here, as notes.')}</div>`;
     if (!NT.on || !(localMode() || (NT.data && (NT.data.notes.length || NT.data.agents.length)))) return top + gh;
-    const notes = NT.data ? NT.data.notes.filter((n) => !n.resolved && !n.review && !inThread(n)).length : '';
+    const notes = NT.data ? NT.data.notes.filter((n) => !n.resolved && !inThread(n)).length : '';
     const threads = GH.data ? GH.data.threads.filter((t) => !t.resolved).length : '';
-    const fresh = NT.data ? NT.data.notes.filter((n) => n.new && !n.review) : [];
+    const fresh = NT.data ? NT.data.notes.filter((n) => n.new) : [];
     return top + threadsSectionHtml('notes', 'Notes', 'Kept on this machine, for your agent', notes, notesTabHtml(), fresh.some((n) => !inThread(n)))
       + threadsSectionHtml('github', 'GitHub', GH.on ? 'The pull request’s threads on GitHub, with your notes in them' : 'This review has no pull request', threads, gh, fresh.some(inThread));
   }
@@ -3396,6 +3387,9 @@
       const leg = STACK && t.pr != null && t.pr !== topLeg() ? `<b class="lgp">#${t.pr}</b>` : '';
       return `<button type="button" class="sb-row thr${t.resolved ? ' done' : ''}" data-act="thread-open" data-thread="${esc(t.id)}" title="${leg ? `On #${t.pr}: ` : ''}${esc(t.path)}:${where}${c ? ` · ${esc(c.author.login)}: ${esc(trunc(text, 200))}` : ''}${drafted ? ' · a draft of your agent’s, pending' : ''}${turn ? ` · ${esc(turn)}` : ''}">${mk}<span class="nm">${leg}${esc(fileName(t.path))}:${where}<span class="sn">${esc(trunc(text, 90))}</span></span><span class="cnt">${counts}</span></button>`;
     };
+    // The comments on the review as a whole, one row as a thread is: its last word, and how many.
+    const last = d.comments[d.comments.length - 1];
+    if (last) h += `<button type="button" class="sb-row thr cv" data-act="conversation" title="The conversation: ${plural(d.comments.length, 'comment')} on the review as a whole · ${esc(last.author.login)}: ${esc(trunc(flat(last.body), 200))}"><i class="mk gh"></i><span class="nm">Conversation<span class="sn">${esc(trunc(`${last.author.login}: ${flat(last.body)}`, 90))}</span></span><span class="cnt"><span class="n gh">${d.comments.length}</span></span></button>`;
     const open = sorted.filter((t) => !t.resolved), done = sorted.filter((t) => t.resolved);
     h += open.length ? open.map(row).join('') : '<div class="sb-gh">None open.</div>';
     if (done.length) {
@@ -6403,7 +6397,7 @@
   document.addEventListener('pointerdown', (e) => { pointerAt = [e.clientX, e.clientY]; }, { passive: true, capture: true });
   const under = (el) => { if (!pointerAt) return false; const r = el.getBoundingClientRect(); return pointerAt[0] >= r.left && pointerAt[0] < r.right && pointerAt[1] >= r.top && pointerAt[1] < r.bottom; };
   // The sidebar's rows by what they open, for the motion between two drawings of it.
-  const sideKey = (r) => { const d = r.dataset; return d.chain != null ? 'c' + d.chain : d.open != null ? 'f' + d.open : d.standalone ? 's' : d.thread ? 't' + d.thread : d.map != null ? 'map' : d.dir != null ? 'd' + d.dir : d.act === 'nt-open' ? 'n' + d.n : d.act || ''; };
+  const sideKey = (r) => { const d = r.dataset; return d.chain != null ? 'c' + d.chain : d.open != null ? 'f' + d.open : d.standalone ? 's' : d.thread ? 't' + d.thread : d.map != null ? 'map' : d.dir != null ? 'd' + d.dir : d.act === 'nt-open' ? 'n' + d.n : r.matches('.cv') ? 'cv' : d.act || ''; };
   // A note's mark, as it looks.
   const markLook = (r) => { const mk = r.querySelector('.mk'); if (!mk) return null; const cs = getComputedStyle(mk); return { cls: mk.className, bg: cs.backgroundColor, sh: cs.boxShadow }; };
   function sideRows() {
