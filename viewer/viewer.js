@@ -5263,6 +5263,53 @@
     return [n('A') ? `${n('A')} new` : '', n('M') ? `${n('M')} changed` : '', n('D') ? `${n('D')} removed` : ''].filter(Boolean).join(', ');
   }
   const pkgName = (pkg) => (pkg ? codeIn(pkg) : 'The repository’s package');
+  // The outline, in the margin beside the cards: the models the page shows, by package and in its
+  // order, each a click from its card. The one at the top of the view is lit (spyModels).
+  function modelsOutlineHtml(now, filter, pkgs) {
+    const row = (md) => {
+      const f = modelFile(md), st = stats(f.blocks), warned = md.test ? 0 : md.warns.length;
+      const cls = (md.st === 'A' ? ' s-a' : md.st === 'D' ? ' s-d' : '') + (st.total && !st.open ? ' done' : '');
+      const title = `${md.name}, ${md.st === 'A' ? 'new' : md.st === 'D' ? 'removed' : 'changed'}: ${leftWords(st)}${warned ? `, with ${warned > 1 ? 'warnings' : 'a warning'}` : ''}`;
+      return `<button type="button" class="sb-row${cls}" data-act="md-goto" data-model="${esc(f.p)}" title="${esc(title)}">${markHtml(st)}<span class="nm">${esc(md.name)}</span><span class="cnt">${warned ? ICON.warn : ''}</span></button>`;
+    };
+    const group = (pkg, list, test) => (list.length ? `<div class="md-ol-p">${pkg ? codeIn(pkg) : '<span>The repository’s package</span>'}${test ? '<span>test package</span>' : ''}</div>${list.map(row).join('')}` : '');
+    let h = pkgs.map((pkg) => group(pkg, now.main.filter((md) => md.pkg === pkg && MODEL_KINDS[filter](md)), false)).join('');
+    if (filter === 'all') [...new Set(now.tests.map((md) => md.pkg))].forEach((pkg) => { h += group(pkg, now.tests.filter((md) => md.pkg === pkg), true); });
+    return h ? `<div class="md-olw"><nav class="md-ol" aria-label="The models on this page">${h}</nav></div>` : '';
+  }
+  // A model picked in the outline stays lit while it's on screen, though the page may end before
+  // its card reaches the top, until the page is scrolled by hand.
+  let olPick = null;
+  ['wheel', 'touchstart', 'pointerdown'].forEach((t) => main.addEventListener(t, () => { olPick = null; }, { passive: true }));
+  function modelsGoto(p) {
+    const md = modelsAll().find((x) => modelFile(x).p === p);
+    if (!md) return;
+    const st = stats(modelFile(md).blocks);
+    if ((st.total > 0 && !st.open) || md.test) state.modelsOpen.add(p);
+    if (md.test) state.modelsTests.add(md.pkg);
+    render();
+    olPick = p;
+    const card = [...main.querySelectorAll('.md-card[data-model]')].find((x) => x.dataset.model === p);
+    if (card) glideTo(card, headH() + 10, 0, spyModels);
+    spyModels();
+  }
+  // The outline lights the model at the top of the view, and keeps its row in sight.
+  function spyModels() {
+    const ol = main.querySelector('.md-ol');
+    if (!ol || state.view.kind !== 'models' || !ol.offsetParent) return;
+    const box = main.getBoundingClientRect(), top = box.top + headH() + 12;
+    const cards = [...main.querySelectorAll('.md-card[data-model]')];
+    const picked = olPick && cards.find((c) => c.dataset.model === olPick), pr = picked && picked.getBoundingClientRect();
+    const card = pr && pr.bottom > top && pr.top < box.bottom ? picked : cards.find((c) => c.getBoundingClientRect().bottom > top);
+    ol.querySelectorAll('.sb-row').forEach((r) => {
+      const on = !!card && r.dataset.model === card.dataset.model;
+      if (on === (r.getAttribute('aria-current') === 'true')) return;
+      if (!on) return r.removeAttribute('aria-current');
+      r.setAttribute('aria-current', 'true');
+      const a = r.getBoundingClientRect(), b = ol.getBoundingClientRect();
+      if (a.top < b.top || a.bottom > b.bottom) ol.scrollTop += a.top - b.top - (b.height - a.height) / 2;
+    });
+  }
   function renderModels() {
     const now = modelsNow(), filter = MODEL_KINDS[state.modelsFilter] ? state.modelsFilter : 'all';
     const n = (k) => now.main.filter(MODEL_KINDS[k]).length;
@@ -5279,6 +5326,7 @@
       pinned: now.main.length ? `<div class="ol-bar md-bar"><span class="mini-seg" role="group" aria-label="Which models">${b('all', 'All', 'Every model the review changes, outside test packages', now.main.length)}${b('new', 'New', 'The models it adds', n('new'))}${b('changed', 'Changed', 'The models it changes', n('changed'))}${b('removed', 'Removed', 'The models it removes', n('removed'))}${b('warn', 'Warnings', 'The models with a warning: what the change can break', warned)}</span></div>` : '',
     });
     if (!now.main.length && !now.tests.length) return h + `<div class="empty">${modelsAll().length ? 'No model changes in the lens.' : 'No Serverpod model changed in this comparison.'}</div>`;
+    h += modelsOutlineHtml(now, filter, pkgs);
     const shown = now.main.filter(MODEL_KINDS[filter]);
     pkgs.forEach((pkg) => {
       const list = shown.filter((md) => md.pkg === pkg), total = now.main.filter((md) => md.pkg === pkg).length;
@@ -7126,6 +7174,7 @@
     roomToFold();
     foldGraph();
     spyHere();
+    spyModels();
     if (state.gdrop) gdRestore(gdAt);
     const cur = side.querySelector('[aria-current="true"]');
     if (cur && opts.top && !cur.closest('.sb-top')) {
@@ -7498,7 +7547,7 @@
   main.addEventListener('scroll', () => {
     if (scrollRaf) return;
     if (state.gdrop) gdClose();
-    scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; main.classList.toggle('scrolled', main.scrollTop > 2); main.classList.toggle('aside', main.scrollLeft > 0); renderPill(); spyHere(); foldGraph(); mini.scrolled(); olPin(); });
+    scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; main.classList.toggle('scrolled', main.scrollTop > 2); main.classList.toggle('aside', main.scrollLeft > 0); renderPill(); spyHere(); spyModels(); foldGraph(); mini.scrolled(); olPin(); });
     clearTimeout(NAV.saveT);
     NAV.saveT = setTimeout(() => { const cur = NAV.stack[NAV.at]; if (cur) { cur.top = main.scrollTop; navSave(cur); } }, 400);
   }, { passive: true });
@@ -8568,6 +8617,7 @@
     if (act === 'deps-row') { toggleIn(state.depsOpen, d.k); return render(); }
     if (act === 'deps-goto') return depsGoto(Number(d.file), d.line ? Number(d.line) : null, d.side);
     if (act === 'models-filter') { state.modelsFilter = d.v; return render({ top: true }); }
+    if (act === 'md-goto') return modelsGoto(d.model);
     if (act === 'models-tests') { hint({ modelsTests: d.pkg }); toggleIn(state.modelsTests, d.pkg); return render(); }
     if (act === 'model-open') { hint({ model: d.model }); toggleIn(state.modelsOpen, d.model); return render(); }
     if (act === 'model-peek') {

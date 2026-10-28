@@ -363,11 +363,11 @@ button.sb-group:hover { color: var(--text-2); }
 .sb-row.chain-out > :not(.ig) { opacity: .38; }
 .sb-row.chain-out:hover > :not(.ig), .sb-row.chain-out:focus-visible > :not(.ig) { opacity: .8; }
 /* A file the changes add is green, one they delete red and struck through, as in a diff; dimmer
-   once reviewed. */
-.vw-side .sb-row.s-a .nm { color: var(--add-ink); }
-.vw-side .sb-row.s-a.done .nm { color: var(--add-no); }
-.vw-side .sb-row.s-d .nm { color: var(--del-ink); text-decoration: line-through; text-decoration-color: var(--text-4); }
-.vw-side .sb-row.s-d.done .nm { color: var(--del-no); }
+   once reviewed. So is a model in the Models view's outline. */
+.vw-side .sb-row.s-a .nm, .md-ol .sb-row.s-a .nm { color: var(--add-ink); }
+.vw-side .sb-row.s-a.done .nm, .md-ol .sb-row.s-a.done .nm { color: var(--add-no); }
+.vw-side .sb-row.s-d .nm, .md-ol .sb-row.s-d .nm { color: var(--del-ink); text-decoration: line-through; text-decoration-color: var(--text-4); }
+.vw-side .sb-row.s-d.done .nm, .md-ol .sb-row.s-d.done .nm { color: var(--del-no); }
 .sb-row .tw { display: grid; place-items: center; width: 12px; height: 16px; color: var(--text-3); }
 .sb-row .tw svg { width: 14px; height: 14px; flex: none; }
 /* A row's mark: amber while it has changes to review, a check once they're all reviewed. */
@@ -1046,6 +1046,23 @@ button.sp-leg:hover, button.sp-leg:focus-visible { background: var(--hover); out
    them goes and comes with them. */
 .md-cards > .ghost { margin-top: -10px; }
 .md-cards > .grow { display: grid; gap: 10px; margin-top: -10px; padding-top: 10px; }
+/* The Models view's outline, in the margin at the right of the cards, under the view's header: the
+   models the page shows, by package, each a click from its card, the one at the top of the view
+   lit. Where the view has no room for it, it isn't there, and the cards keep their width. */
+.md-olw { position: sticky; top: var(--hh, 52px); left: 0; z-index: 2; height: 0; }
+.md-ol { display: none; }
+@container (min-width: 1040px) {
+  .md-ol { position: absolute; top: 14px; right: 16px; display: block; width: 220px; max-height: calc(100vh - 74px - var(--hh, 52px)); overflow: hidden auto; scrollbar-width: thin; scrollbar-color: var(--hair-2) transparent; }
+  .md-olw ~ .md-pkg, .md-olw ~ .md-cards { width: min(1100px, calc(100cqw - 274px)); }
+  .md-olw ~ .md-cards .code .md-w { width: min(720px, calc(min(1100px, 100cqw - 274px) - var(--text-x) - 40px)); }
+}
+.md-ol-p { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 14px 8px 5px; font-size: 11.5px; color: var(--text-3); }
+.md-ol-p:first-child { padding-top: 2px; }
+.md-ol-p > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-ol-p > :not(:first-child) { flex: none; white-space: nowrap; }
+.md-ol-p code { font: 500 11.5px/1.4 var(--code); color: var(--text-2); }
+.md-ol .sb-row { height: 26px; }
+.md-ol .sb-row .cnt svg { width: 12px; height: 12px; color: var(--warn-ink); }
 /* The Dependencies view's block, above its cards: each change once, by dependency, in groups (the
    packages' versions, dependencies, dev dependencies...), in one grid, so names, changes and counts
    line up from row to row. A group's head is at the block's edge and its rows are a step in: the

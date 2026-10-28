@@ -8,7 +8,7 @@ import { reviewClient, waitForReview } from '../helpers/http.ts';
 import { pubspec } from '../helpers/review.ts';
 import { TempRepo } from '../helpers/repo.ts';
 import { startUntangle, type UntangleRun } from '../helpers/run.ts';
-import { read } from './page.ts';
+import { read, rest } from './page.ts';
 
 const skip = e2eSkip();
 const author = { name: 'Ada Review', email: 'ada@example.com', date: '2020-09-01T15:00:00Z' };
@@ -20,6 +20,11 @@ const card = (file: string) => `.md-card[data-model="${file}"]`;
 // The Files tab's rows, folders ending in a slash, each saying whether it's faded or reviewed.
 const fileRows = `[...document.querySelectorAll('.sb-row.tr')].map((r) => (r.dataset.open || r.dataset.dir + '/') + (r.classList.contains('chain-out') ? ' (faded)' : '') + (r.classList.contains('done') ? ' (reviewed)' : '')).join('\\n')`;
 const filesCount = `document.querySelector('.sb-group.fs > span + span').textContent`;
+// The Models view's outline: its packages (#), and its models, the lit one first (>).
+const outline = `[...document.querySelectorAll('.md-ol > *')].map((e) => e.matches('.md-ol-p') ? '# ' + [...e.children].map((c) => c.textContent).join(' ')
+  : (e.getAttribute('aria-current') === 'true' ? '> ' : '') + e.querySelector('.nm').textContent + (e.classList.contains('s-a') ? ' (new)' : e.classList.contains('s-d') ? ' (removed)' : '')
+    + (e.classList.contains('done') ? ' (reviewed)' : '') + (e.querySelector('.cnt svg') ? ' (warning)' : '')).join('\\n')`;
+const lit = `[...document.querySelectorAll('.md-ol [aria-current="true"]')].map((r) => r.textContent).join(', ')`;
 
 describe('Given a review that changes a model and its migration, adds a long one and changes a test package’s, ', { skip, timeout: 180_000 }, () => {
   let repo: TempRepo;
@@ -255,6 +260,110 @@ describe('Given a review that changes a model and its migration, adds a long one
 
     it('then the filter says, under the pointer, that it shows only the files of the selected view.', () => {
       assert.equal(says, 'Show only the files of the selected view');
+    });
+  });
+
+  describe('when the page is opened again, on Models, ', () => {
+    let rows = '';
+
+    before(async () => {
+      await rest(page);
+      await page.goto(run.url);
+      await page.until(`!!document.querySelector('.t-head')`, 30_000);
+      await page.click('[data-tab="chains"]');
+      await page.click('[data-act="models-open"]');
+      await page.until(`!!document.querySelector('.md-ol [aria-current="true"]')`);
+      rows = await read(page, outline);
+    });
+
+    it('then an outline beside the cards lists the models the page shows, by package, the first one lit.', () => {
+      assert.equal(rows, ['# The repository’s package', '> Invoice (reviewed) (warning)', 'Ledger (new)', '# test/sample_test_server test package', 'Thing'].join('\n'));
+    });
+  });
+
+  describe('when the long model is clicked in the outline, ', () => {
+    let gap = 0;
+    let on = '';
+
+    before(async () => {
+      await page.click(`.md-ol [data-model="${ledger}"]`);
+      await page.until(`document.querySelector('.md-ol [data-model="${ledger}"]').getAttribute('aria-current') === 'true'`);
+      // Landed: the card is set in its place again over the next frames.
+      await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r)))))');
+      gap = Number(await page.eval(`Math.round(document.querySelector('${card(ledger)}').getBoundingClientRect().top - document.querySelector('.fv-head').getBoundingClientRect().bottom)`));
+      on = await read(page, lit);
+    });
+
+    it('then its card comes up under the view’s header, and its row alone is lit.', () => {
+      assert.ok(Math.abs(gap - 10) <= 1, `the card is ${gap}px under the header`);
+      assert.equal(on, 'Ledger');
+    });
+  });
+
+  describe('when the page is scrolled back to its top by hand, ', () => {
+    let on = '';
+
+    before(async () => {
+      await page.eval(`(() => { const main = document.querySelector('#vw-main'); main.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })); main.scrollTop = 0; })()`);
+      await page.until(`document.querySelector('.md-ol [data-model="${invoice}"]').getAttribute('aria-current') === 'true'`);
+      on = await read(page, lit);
+    });
+
+    it('then the model at the top is lit instead.', () => {
+      assert.equal(on, 'Invoice');
+    });
+  });
+
+  describe('when the test package’s model is clicked in the outline, ', () => {
+    let seen = '';
+
+    before(async () => {
+      await page.click(`.md-ol [data-model="${thing}"]`);
+      await page.until(`!!document.querySelector('${card(thing)} .md-diff')`);
+      seen = await read(page, `(() => {
+        const r = document.querySelector('${card(thing)}').getBoundingClientRect(), m = document.querySelector('#vw-main').getBoundingClientRect();
+        return (r.top >= m.top && r.bottom <= m.bottom ? 'in view' : 'out of view') + ', lit: ' + ${lit};
+      })()`);
+    });
+
+    it('then its package opens on it, in view, and its row stays lit though the page ends before its card reaches the top.', () => {
+      assert.equal(seen, 'in view, lit: Thing');
+    });
+  });
+
+  describe('when New is chosen above the cards, ', () => {
+    let rows = '';
+
+    before(async () => {
+      await page.click('[data-act="models-filter"][data-v="new"]');
+      await page.until(`document.querySelectorAll('.md-ol .sb-row').length === 1`);
+      rows = await read(page, outline);
+    });
+
+    after(async () => {
+      await page.click('[data-act="models-filter"][data-v="all"]');
+    });
+
+    it('then the outline lists only the new model, as the page shows it.', () => {
+      assert.equal(rows, ['# The repository’s package', '> Ledger (new)'].join('\n'));
+    });
+  });
+
+  describe('when the window is too narrow for the outline, ', () => {
+    let room = '';
+
+    before(async () => {
+      await page.setViewport(1000, 900);
+      await page.until(`getComputedStyle(document.querySelector('.md-ol')).display === 'none'`);
+      room = await read(page, `String(Math.round(document.querySelector('#vw-main').clientWidth - 22 - document.querySelector('.md-cards').getBoundingClientRect().width))`);
+    });
+
+    after(async () => {
+      await page.setViewport(1400, 900);
+    });
+
+    it('then it isn’t there, and the cards take its room.', () => {
+      assert.equal(room, '22');
     });
   });
 });
