@@ -420,6 +420,31 @@ describe('Given a served review of a moved function, a deletion, a repeated edit
     });
   });
 
+  describe('when the generated file is shown side by side, ', () => {
+    let rows: string;
+
+    before(async () => {
+      await rest(page!);
+      await page!.click('[data-act="menu"][data-menu="view"]');
+      await page!.until(`!!document.querySelector('[data-act="layout"]')`);
+      await page!.click('[data-act="layout"]');
+      await page!.until(`!!document.querySelector('.code[data-p="lib/app.g.dart"] > .sl')`);
+      rows = await read(page!, `[...document.querySelectorAll('.code[data-p="lib/app.g.dart"] > .ln, .code[data-p="lib/app.g.dart"] > .sl')].map((row) => row.matches('.ln') ? 'unified: ' + row.textContent : [...row.querySelectorAll('.half')].map((half) => [half.querySelector('.sg')?.textContent ?? '', half.querySelector('.no')?.textContent ?? '', half.querySelector('.tx')?.textContent ?? ''].join(' ')).join(' | ')).join('\\n')`);
+    });
+
+    after(async () => {
+      await rest(page!);
+      await page!.click('[data-act="menu"][data-menu="view"]');
+      await page!.until(`!!document.querySelector('[data-act="layout"]')`);
+      await page!.click('[data-act="layout"]');
+      await page!.until(`!document.querySelector('.code > .sl')`);
+    });
+
+    it('then its removed line is on the left, beside the line that replaced it.', () => {
+      assert.equal(rows, '− 1 const generated = 1; | + 1 const generated = 2;');
+    });
+  });
+
   describe('when the chain scrolls past its graph and the graph\'s button is clicked, ', () => {
     let shown: string;
 

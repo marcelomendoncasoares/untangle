@@ -5591,6 +5591,25 @@
     for (let i = s; i < e; i++) h += uRow(f, meta[i], hk.rows[i][1], null, { cls: (meta[i].t === '+' ? 'add' : meta[i].t === '-' ? 'del' : 'ctx') + ' gen', refs: false, colors: rowColors(hk.rows, f.p, i), c: true });
     return h;
   }
+  // Side by side: each run of changed lines pairs its removed lines, on the left, with its added
+  // ones, on the right.
+  function genSplitRowsHtml(f, hi, s, e) {
+    const hk = f.hunks[hi], meta = hunkMeta(hk);
+    const cell = (i, side, cls) => (i == null ? sCell(f, null, '', null, side, {}) : sCell(f, meta[i], hk.rows[i][1], null, side, { cls, refs: false, colors: rowColors(hk.rows, f.p, i), c: true }));
+    const row = (l, r, ctx) => {
+      const lm = l != null ? meta[l] : null, am = r != null ? meta[r] : null;
+      return `<div class="sl gen" data-n="${am ? am.n : ''}"><span class="g"></span>${cell(l, 'l', ctx ? 'ctx' : 'del')}${cell(r, 'r', ctx ? 'ctx' : 'add')}</div>`
+        + (am ? peekAfter(f, am.n) : '') + (lm ? threadsAt(f, 'LEFT', lm.o) : '') + (am ? threadsAt(f, 'RIGHT', am.n) : '');
+    };
+    let h = '';
+    for (let i = s; i < e; ) {
+      if (meta[i].t === ' ') { h += row(i, i, true); i++; continue; }
+      const dels = [], adds = [];
+      for (; i < e && meta[i].t !== ' '; i++) (meta[i].t === '-' ? dels : adds).push(i);
+      for (let k = 0; k < Math.max(dels.length, adds.length); k++) h += row(dels[k], adds[k], false);
+    }
+    return h;
+  }
   function renderGenerated(path) {
     const f = M().generated.find((x) => x.p === path);
     f.lang = f.lang || C.langOf(f.p);
@@ -5613,7 +5632,7 @@
       }
       return h + `<div class="empty">Loading ${fmt(f.a + f.d)} changed lines…</div>`;
     }
-    const ctx = { key: 'gen', rows: genRowsHtml, noRefs: true, unified: true };
+    const ctx = { key: 'gen', rows: sideBySide() ? genSplitRowsHtml : genRowsHtml, noRefs: true };
     h += fileThreadsHtml(f) + `<div class="code" data-p="${esc(f.p)}">` + (CONFIG.served && state.whole.has(f.p) ? wholeHtml(f, ctx) : sectionsHtml(f, f.hunks.map((hk, hi) => sectionOf(f, hi, 0, hk.rows.length, ctx)), ctx));
     return h + '</div>';
   }
