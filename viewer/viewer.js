@@ -1088,10 +1088,12 @@
     }
     const { o, n } = numbersFrom(f, x.collapsed ? S.a : to, S.b);
     const head = S.s0 === 0 && to === S.a && hk.h ? hk.h : '';
+    // Where the section starts, while it's folded: open, its first row says it.
+    const at = x.collapsed ? `<span class="hh-at" title="@@ −${o != null ? o : hk.o} +${n != null ? n : hk.n} @@">${n != null ? n : hk.n}</span>` : '<span class="hh-at"></span>';
     const tip = click ? (click[1] === 'above' ? `Show ${linesWord(click[2])} more above` : `Show ${linesWord(click[2])} more below the code above`) + (hidden > click[2] ? ` (${fmt(hidden)} hidden)` : '') : '';
     let out = `<div class="hh${x.allDone ? ' done' : ''}${P && !hidden ? ' joined' : ''}${click ? ' more' : ''}" data-sec="${esc(S.key)}"${x.collapsed ? foldStop(x.blocks) : ''}${click ? ` ${moreAttrs(...click)} title="${esc(tip)}"` : ''}>`
       + `<span class="hh-g">${x.folds ? `<button type="button" class="chev" data-act="toggle-hunk" data-key="${esc(S.key)}" aria-expanded="${!x.collapsed}" title="${x.collapsed ? 'Unfold' : 'Fold'}">${x.collapsed ? ICON.chevronRight : ICON.chevronDown}</button>` : ''}</span>`
-      + `<span class="hh-at" title="@@ −${o != null ? o : hk.o} +${n != null ? n : hk.n} @@">${n != null ? n : hk.n}</span><span class="hh-tx">${esc(head)}</span>`;
+      + `${at}<span class="hh-tx">${esc(head)}</span>`;
     if (x.collapsed) {
       const lines = linesWord(S.e0 - S.s0);
       const count = (n, cls, title) => (n ? `<span class="cm-cnt${cls}" title="${title}">${ICON.comment}${n}</span>` : '');

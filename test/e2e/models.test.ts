@@ -93,6 +93,28 @@ describe('Given a review that changes a model and its migration, adds a long one
     });
   });
 
+  describe('when the long model’s hunk is folded, then opened again, ', () => {
+    const at = `document.querySelector('${card(ledger)} .hh .hh-at').textContent`;
+    const fold = `${card(ledger)} .hh [data-act="toggle-hunk"]`;
+    let open = '';
+    let first = '';
+    let folded = '';
+
+    before(async () => {
+      open = await read(page, at);
+      first = await read(page, `document.querySelector('${card(ledger)} .ln .no').textContent`);
+      await page.click(fold);
+      await page.until(`document.querySelector('${fold}').getAttribute('aria-expanded') === 'false'`);
+      folded = await read(page, at);
+      await page.click(fold);
+      await page.until(`document.querySelector('${fold}').getAttribute('aria-expanded') === 'true'`);
+    });
+
+    it('then its divider says the line it starts at only while it’s folded: open, its first row says it.', () => {
+      assert.deepEqual({ open, first, folded }, { open: '', first: '1', folded: '1' });
+    });
+  });
+
   describe('when the migration is opened, ', () => {
     before(async () => {
       await page.click(`${card(invoice)} [data-kind="mig"]`);

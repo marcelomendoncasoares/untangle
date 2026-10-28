@@ -93,12 +93,12 @@ describe('Given a served review with motion left on, ', { skip, timeout: 180_000
       await page!.until(`!!document.querySelector('.t-head')`, 30_000);
       await openFile('lib/end.dart');
       await page!.until(`!!document.querySelector('[data-act="more"]')`);
-      const beforeMore = await read(page!, `document.querySelector('[data-act="more"]')?.textContent ?? ''`);
+      const rows = `document.querySelectorAll('.code .ln').length`;
+      const beforeMore = Number(await read(page!, rows));
       await page!.click('[data-act="more"]');
       during = await read(page!, `document.getAnimations().length || document.querySelector('.grow') ? 'moving' : 'still'`);
-      await page!.until(`(document.querySelector('[data-act="more"]')?.textContent || '') !== ${JSON.stringify(beforeMore)}`);
-      const afterMore = await read(page!, `document.querySelector('[data-act="more"]')?.textContent ?? ''`);
-      shown = afterMore !== beforeMore ? 'open' : 'closed';
+      await page!.until(`!document.querySelector('.grow') && ${rows} > ${beforeMore}`);
+      shown = Number(await read(page!, rows)) > beforeMore ? 'open' : 'closed';
     });
 
     it('then the lines animate open and stay open.', () => {
