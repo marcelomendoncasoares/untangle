@@ -169,6 +169,25 @@ async function fetchBranch(repo: string, remote: string, branch: string): Promis
   }
 }
 
+/**
+ * Our clone takes git's own upkeep. It's bare, so a repack of everything writes a bitmap, which a
+ * clone with blobs on demand can't complete: the repack fails, leaving its new pack behind, and the
+ * next fetch's upkeep tries again. Repacks here make no bitmap, and what failed ones left a day ago
+ * goes.
+ */
+export async function tidyClone(repo: string): Promise<void> {
+  if ((await gitAsync(repo, ['config', '--get', 'repack.writeBitmaps']).catch(() => '')).trim() !== 'false') await gitAsync(repo, ['config', 'repack.writeBitmaps', 'false']);
+  const dir = path.join(repo, 'objects', 'pack'), old = Date.now() - 86_400_000;
+  for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+    if (!/^(\.tmp-\d+-pack-|tmp_(pack|idx|rev)_)/.test(name)) continue;
+    try {
+      if (fs.statSync(path.join(dir, name)).mtimeMs < old) fs.rmSync(path.join(dir, name));
+    } catch {
+      // Gone already.
+    }
+  }
+}
+
 export async function resolveUrl(url: string, say: (line: string) => void, baseOverride: string | null = null): Promise<Target> {
   const [, owner, name, num] = PR_URL.exec(url)!;
   say(`looking up ${owner}/${name}#${num}`);
@@ -180,6 +199,7 @@ export async function resolveUrl(url: string, say: (line: string) => void, baseO
     fs.mkdirSync(path.dirname(repo), { recursive: true });
     await runAsync('git', ['clone', '--quiet', '--bare', '--filter=blob:none', `https://github.com/${owner}/${name}.git`, repo]);
   }
+  await tidyClone(repo);
   say(`fetching #${pr.number}`);
   await gitAsync(repo, ['fetch', '--quiet', '--no-tags', 'origin', `+refs/pull/${pr.number}/head:refs/untangle/pull/${pr.number}`]);
   let headSha = (await gitAsync(repo, ['rev-parse', `refs/untangle/pull/${pr.number}`])).trim();
