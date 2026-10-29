@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { e2eSkip, launchBrowser, type Browser } from '../helpers/browser.ts';
-import { reviewClient, waitForReview } from '../helpers/http.ts';
+import { reviewClient, waitForReview, type ReviewClient } from '../helpers/http.ts';
 import { pubspec } from '../helpers/review.ts';
 import { TempRepo } from '../helpers/repo.ts';
 import { startUntangle, type UntangleRun } from '../helpers/run.ts';
@@ -23,14 +23,16 @@ const filesCount = `document.querySelector('.sb-group.fs > span + span').textCon
 // The Models view's outline: its packages (#), and its models, the lit one first (>).
 const outline = `[...document.querySelectorAll('.md-ol > *')].map((e) => e.matches('.md-ol-p') ? '# ' + [...e.children].map((c) => c.textContent).join(' ')
   : (e.getAttribute('aria-current') === 'true' ? '> ' : '') + e.querySelector('.nm').textContent + (e.classList.contains('s-a') ? ' (new)' : e.classList.contains('s-d') ? ' (removed)' : '')
-    + (e.classList.contains('done') ? ' (reviewed)' : '') + (e.querySelector('.cnt svg') ? ' (warning)' : '')).join('\\n')`;
+    + (e.classList.contains('done') ? ' (reviewed)' : '') + (e.querySelector('.cnt > svg') ? ' (warning)' : '')).join('\\n')`;
 const lit = `[...document.querySelectorAll('.md-ol [aria-current="true"]')].map((r) => r.textContent).join(', ')`;
 
 describe('Given a review that changes a model and its migration, adds a long one and changes a test package’s, ', { skip, timeout: 180_000 }, () => {
   let repo: TempRepo;
   let run: UntangleRun;
+  let client: ReviewClient;
   let page: Browser;
   let cache: string;
+  let head: string;
 
   before(async () => {
     repo = TempRepo.create();
@@ -53,10 +55,11 @@ describe('Given a review that changes a model and its migration, adds a long one
     repo.write('migrations/20240201000000/migration.sql', 'BEGIN;\n\n--\n-- ACTION ALTER TABLE\n--\nALTER TABLE "invoices" ADD COLUMN "currency" text NOT NULL;\n\n--\n-- MIGRATION VERSION FOR sample\n--\nINSERT INTO "serverpod_migrations" VALUES (1);\n\nCOMMIT;\n');
     repo.write(thing, 'class: Thing\nfields:\n  name: String\n  scopeId: int\n');
     repo.write('lib/src/greeting.dart', "String greet() => 'hello';\n");
-    repo.commit({ subject: 'Add a currency and a ledger', author, committer: author });
+    head = repo.commit({ subject: 'Add a currency and a ledger', author, committer: author });
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     run = await startUntangle(repo.dir, { base: 'main', cacheDir: cache });
-    await waitForReview(reviewClient(run.url));
+    client = reviewClient(run.url);
+    await waitForReview(client);
     page = await launchBrowser();
     await page.reducedMotion(true);
     await page.goto(run.url);
@@ -413,6 +416,23 @@ describe('Given a review that changes a model and its migration, adds a long one
 
     it('then it folds back to its line.', () => {
       assert.equal(cls, 'md-card fold done');
+    });
+  });
+
+  describe('when a note is written on the folded model’s line, ', () => {
+    let line = '';
+    let row = '';
+
+    before(async () => {
+      await client.call('notes', { method: 'POST', head, body: { action: 'add', path: invoice, side: 'RIGHT', line: 5, body: 'Which currencies?' } });
+      await page.until(`!!document.querySelector('${card(invoice)} .md-h .cm-cnt')`);
+      line = await read(page, `[...document.querySelectorAll('${card(invoice)} .md-h > .sp ~ *')].map((c) => c.title + (c.textContent ? ' ' + c.textContent : '')).join(', ')`);
+      row = await read(page, `[...document.querySelectorAll('.md-ol [data-model="${invoice}"] .cnt .cm-cnt')].map((c) => c.title + ' ' + c.textContent).join(', ')`);
+    });
+
+    it('then its line counts the open note, before its warning and its mark, and so does its row in the outline.', () => {
+      assert.equal(line, 'Open notes 1, 1 warning: what can break 1, Reviewed: mark the model unreviewed');
+      assert.equal(row, 'Open notes 1');
     });
   });
 });

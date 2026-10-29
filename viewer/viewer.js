@@ -5223,23 +5223,24 @@
       + (body ? `<div class="pk-code" tabindex="0" aria-label="${esc(p.path)}" data-peek-code="model:${esc(p.path)}">${body}</div>` : '<div class="pk-foot">Nothing in it to show.</div>')
       + `<div class="pk-foot"><button type="button" class="linkish" data-open="${esc(g.p)}"${want ? ` data-line="${want[0]}"` : ''}>Go to it in this review</button></div>`;
   }
-  // A model's card: its line, which stays on top while its diff scrolls by, then the warnings about
-  // the whole model, its links, and its diff with the other warnings under their lines.
+  // A model's card: its line, which counts the open threads and notes on the model as the Files tab
+  // does and stays on top while its diff scrolls by, then the warnings about the whole model, its
+  // links, and its diff with the other warnings under their lines.
   function modelCardHtml(md) {
     const f = modelFile(md), st = stats(f.blocks), done = st.total > 0 && !st.open;
     const foldable = done || md.test, open = !foldable || state.modelsOpen.has(f.p);
-    const legs = legChipsHtml(f);
+    const legs = legChipsHtml(f), threads = openThreadsHtml(f.p);
     const warned = md.warns.length ? `<span class="md-chip warn" title="${esc(plural(md.warns.length, 'warning'))}: what can break">${ICON.warn}${md.warns.length}</span>` : '';
     const tick = st.total ? `<button type="button" class="tick md-tick${done ? ' on' : st.open < st.total ? ' part' : ''}" data-act="mark-file" data-file="${f.idx}" title="${done ? 'Reviewed: mark the model unreviewed' : 'Mark the whole model reviewed'}" aria-label="${done ? 'Mark the model unreviewed' : 'Mark the model reviewed'}" aria-pressed="${done}"></button>` : '';
     const label = `<span class="md-nm">${esc(md.name)}</span><span class="md-fp">${esc(md.rel)}</span>`;
     const name = foldable ? `<button type="button" class="md-open" data-act="model-open" data-model="${esc(f.p)}" aria-expanded="${open}" title="${open ? 'Fold it' : 'Open it'}">${label}${open ? '' : `<span class="md-sum">${esc(md.sum)}</span>`}</button>` : label;
     const line = foldable ? ' data-act="line-fold"' : '';
-    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}<span class="sp"></span>${warned}${legs}${tick}</div></section>`;
+    if (!open) return `<section class="md-card fold${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}<span class="sp"></span>${threads}${warned}${legs}${tick}</div></section>`;
     const chips = (md.st === 'A' ? '<span class="md-chip new">new</span>' : md.st === 'D' ? '<span class="md-chip gone">removed</span>' : '')
       + (md.en ? `<span class="md-chip">enum, ${md.en === 'byName' ? 'by name' : 'by index'}</span>` : '')
       + (md.table ? `<span class="md-chip">table ${codeIn(md.table)}</span>` : '')
       + (md.ext ? `<span class="md-chip">extends ${codeIn(md.ext)}</span>` : '');
-    let h = `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}${chips}<span class="sp"></span>${warned}${legs}${tick}</div>`;
+    let h = `<section class="md-card${done ? ' done' : ''}" data-model="${esc(f.p)}"><div class="md-h"${line}>${name}${chips}<span class="sp"></span>${threads}${warned}${legs}${tick}</div>`;
     const top = md.warns.filter((w) => w.line == null);
     if (top.length) h += `<div class="md-ws">${top.map(warnHtml).join('')}</div>`;
     h += modelLinksHtml(md, f);
@@ -5263,13 +5264,14 @@
   }
   const pkgName = (pkg) => (pkg ? codeIn(pkg) : 'The repository’s package');
   // The outline, in the margin beside the cards: the models the page shows, by package and in its
-  // order, each a click from its card. The one at the top of the view is lit (spyModels).
+  // order, each a click from its card, with its open threads and notes counted as on its line. The
+  // one at the top of the view is lit (spyModels).
   function modelsOutlineHtml(now, filter, pkgs) {
     const row = (md) => {
       const f = modelFile(md), st = stats(f.blocks), warned = md.test ? 0 : md.warns.length;
       const cls = (md.st === 'A' ? ' s-a' : md.st === 'D' ? ' s-d' : '') + (st.total && !st.open ? ' done' : '');
       const title = `${md.name}, ${md.st === 'A' ? 'new' : md.st === 'D' ? 'removed' : 'changed'}: ${leftWords(st)}${warned ? `, with ${warned > 1 ? 'warnings' : 'a warning'}` : ''}`;
-      return `<button type="button" class="sb-row${cls}" data-act="md-goto" data-model="${esc(f.p)}" title="${esc(title)}">${markHtml(st)}<span class="nm">${esc(md.name)}</span><span class="cnt">${warned ? ICON.warn : ''}</span></button>`;
+      return `<button type="button" class="sb-row${cls}" data-act="md-goto" data-model="${esc(f.p)}" title="${esc(title)}">${markHtml(st)}<span class="nm">${esc(md.name)}</span><span class="cnt">${openThreadsHtml(f.p)}${warned ? ICON.warn : ''}</span></button>`;
     };
     const group = (pkg, list, test) => (list.length ? `<div class="md-ol-p">${pkg ? codeIn(pkg) : '<span>The repository’s package</span>'}${test ? '<span>test package</span>' : ''}</div>${list.map(row).join('')}` : '');
     let h = pkgs.map((pkg) => group(pkg, now.main.filter((md) => md.pkg === pkg && MODEL_KINDS[filter](md)), false)).join('');
