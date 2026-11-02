@@ -161,13 +161,17 @@ describe('Given a paused review whose pull request merged on GitHub, and a close
   let gh: GhStub;
   let cache = '', cwd = '';
   let manager: ReviewClient;
+  // You closed #13 three days ago and GitHub merged it yesterday: its space is kept fourteen days
+  // from then, whatever day the test runs.
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const closed13 = daysAgo(3), merged13 = daysAgo(1);
 
   before(async () => {
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cwd-'));
     gh = stubGh([
       { match: ['pr', 'view', '12', '--repo', 'acme/app'], stdout: { state: 'MERGED', mergedAt: '2026-10-14T12:00:00Z', closedAt: '2026-10-14T12:00:00Z' } },
-      { match: ['pr', 'view', '13', '--repo', 'acme/app'], stdout: { state: 'MERGED', mergedAt: '2026-10-15T12:00:00Z', closedAt: '2026-10-15T12:00:00Z' } },
+      { match: ['pr', 'view', '13', '--repo', 'acme/app'], stdout: { state: 'MERGED', mergedAt: merged13, closedAt: merged13 } },
     ]);
     // Its record, as a review that paused left it: its process gone.
     const gone = spawnSync(process.execPath, ['-e', '0']).pid!;
@@ -181,7 +185,7 @@ describe('Given a paused review whose pull request merged on GitHub, and a close
       stopped: { at: '2026-10-10T12:00:00.000Z', why: 'paused' }, closed: null, checkouts: [], analyses: [], ...o,
     }));
     write(12, {});
-    write(13, { stopped: { at: '2026-10-11T12:00:00.000Z', why: 'stop' }, closed: '2026-10-11T12:00:00.000Z' });
+    write(13, { stopped: { at: closed13, why: 'stop' }, closed: closed13 });
     const started = await untangleCommand(['reviews', '-no-open', '-port', '0'], { cacheDir: cache, gh, cwd, env: {} });
     assert.equal(started.code, 0, started.err);
     manager = reviewClient(/http:\/\/\S+/.exec(started.out)![0]);
@@ -202,7 +206,7 @@ describe('Given a paused review whose pull request merged on GitHub, and a close
       const rows = await until('both merged', async () => { const x = ((await manager.call('reviews')).data as { reviews: Array<Row & { closed: string }> }).reviews; return x.every((r) => r.github) ? x : null; });
       const by = (n: number) => rows.find((x) => x.id === `github.com/acme/app/pr-${n}`)!;
       assert.deepEqual([by(12).status, by(12).github, by(12).closed], ['closed', { state: 'merged', at: '2026-10-14T12:00:00Z' }, '2026-10-14T12:00:00Z']);
-      assert.deepEqual([by(13).status, by(13).github, by(13).closed], ['closed', { state: 'merged', at: '2026-10-15T12:00:00Z' }, '2026-10-11T12:00:00.000Z']);
+      assert.deepEqual([by(13).status, by(13).github, by(13).closed], ['closed', { state: 'merged', at: merged13 }, closed13]);
       // Closed now, the paused one's space is freed; the one closed before keeps its own until then.
       const freed = await until('the space freed', async () => ((await manager.call('reviews')).data as { reviews: Array<Row & { freed: string | null }> }).reviews.find((x) => x.id === 'github.com/acme/app/pr-12' && x.freed));
       assert.equal(((await manager.call('reviews')).data as { reviews: Array<Row & { freed: string | null }> }).reviews.find((x) => x.id === 'github.com/acme/app/pr-13')!.freed, null);
