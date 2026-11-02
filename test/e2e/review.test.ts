@@ -275,6 +275,7 @@ describe('Given a served review of a greeting and a wave, a 45-line notes file a
         'Shift Space: Mark the hunk, or the member in a chain',
         'n p: Next and previous chain with changes to review',
         'g: The chain’s graph, over the code, and back',
+        'o: The chain’s outline, kept open as a column, and let go',
         'Ctrl K: Jump to a chain, file, symbol or thread',
         'c: Comment on the line you’re on',
         'Alt ←: Back to where you were',

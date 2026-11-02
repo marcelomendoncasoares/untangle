@@ -273,15 +273,47 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .vw-sheet { position: relative; min-width: 0; min-height: 0; background: var(--sheet); border-radius: 12px 0 0 0; overflow: hidden; }
 .vw.side-off .vw-sheet { border-radius: 0; }
 /* The scrollbar's room is kept while nothing scrolls: what opens never narrows the page. */
-.vw-main { position: absolute; inset: 0; overflow: auto; scrollbar-gutter: stable; container-type: inline-size; background: var(--sheet); scrollbar-width: thin; scrollbar-color: #2C2C34 transparent; }
-.vw.mini-on .vw-main { right: 64px; }
-.vw.mini-on .vw-pill { margin-left: -32px; }
+.vw-main { position: absolute; inset: 0; right: calc(var(--mini-w) + var(--rail-w) + var(--col-w)); overflow: auto; scrollbar-gutter: stable; container-type: inline-size; background: var(--sheet); scrollbar-width: thin; scrollbar-color: #2C2C34 transparent; }
+/* What sits at the page's right, which narrows for it: the minimap, the chain outline's rail on its
+   edge, and the outline itself, kept open as a column. */
+.vw { --mini-w: 0px; --rail-w: 0px; --col-w: 0px; }
+.vw.mini-on { --mini-w: 64px; }
+.vw.co-rail { --rail-w: 12px; }
+.vw.co-pin { --col-w: 300px; }
+.vw-pill { margin-left: calc((var(--mini-w) + var(--rail-w) + var(--col-w)) / -2); }
 /* Room under the last line for the review pill. */
 .vw-main::after { content: ""; display: block; height: 88px; }
 /* The minimap: the view's rows drawn small, at the right of the code. */
 /* A canvas sizes itself from its pixels unless told: it takes the sheet's height. */
-.vw-mini { position: absolute; top: 0; right: 0; width: 64px; height: 100%; display: block; cursor: pointer; touch-action: none; }
+.vw-mini { position: absolute; top: 0; right: calc(var(--rail-w) + var(--col-w)); width: 64px; height: 100%; display: block; cursor: pointer; touch-action: none; }
 .vw-mini[hidden] { display: none; }
+/* The chain's outline. At rest, a rail on the minimap's edge: a dash at each part's place in the
+   minimap, amber with changes to review, green reviewed, white for the part being read. Hovered,
+   the outline slides in from the right over the minimap and the code, under the header, the page
+   still; kept open, it's a column at the page's right, and the page narrows for it. */
+.vw-rail { position: absolute; top: 0; right: var(--col-w); z-index: 3; width: 12px; height: 100%; overflow: hidden; cursor: pointer; }
+.vw-rail[hidden] { display: none; }
+.vw-rail > div { position: absolute; top: 0; left: 0; right: 0; }
+.vw-rail i { position: absolute; top: -8px; right: 2px; width: 7px; height: 3px; border-radius: 2px; background: var(--accent); opacity: .75; transition: width var(--fast) var(--ease), opacity var(--fast) var(--ease); }
+.vw-rail i.ok { background: var(--done); }
+.vw-rail i.at { width: 10px; background: var(--text); opacity: 1; }
+.vw-rail:hover i, .vw.co-open .vw-rail i { opacity: 1; }
+.vw-ol { position: absolute; z-index: 9; top: var(--co-top, 0px); right: 0; bottom: 0; width: 300px; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--raised); box-shadow: -1px 0 0 var(--hair-2), -24px 0 48px rgba(0, 0, 0, .5); visibility: hidden; transform: translateX(104%); transition: transform var(--med) var(--ease), visibility 0s linear var(--med); }
+.vw-ol[hidden] { display: none; }
+.vw.co-open .vw-ol { visibility: visible; transform: none; transition: transform var(--med) var(--ease); }
+.vw.co-pin .vw-ol { top: 0; z-index: 4; visibility: visible; transform: none; background: var(--sheet); box-shadow: -1px 0 0 var(--hair); transition: none; }
+.co-h { display: flex; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--hair); font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.co-h b { font-size: 13px; font-weight: 600; color: var(--text); }
+.co-h .co-keep { margin-left: auto; }
+.co-keep[aria-pressed="true"] { background: var(--hover); color: var(--text); }
+.co-b { overflow: hidden auto; padding: 0 8px 24px; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--hair-2) transparent; }
+.co-g { display: flex; justify-content: space-between; gap: 8px; padding: 14px 8px 5px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.co-g > :first-child { font-weight: 600; color: var(--text-2); }
+.co-r .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vw-ol .co-r:hover { background: var(--hover); }
+.vw-ol .co-r[aria-current="true"] { background: var(--hover); box-shadow: inset 2px 0 0 var(--text-2); }
+.vw.co-pin .vw-ol .co-r:hover { background: var(--hover-soft); }
+.vw.co-pin .vw-ol .co-r[aria-current="true"] { background: var(--raised); }
 
 /* ---- The review pill: where you are among the changes to review, and the action that does the most. */
 .vw-pill { position: absolute; left: 50%; bottom: 18px; z-index: 8; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px; border-radius: 999px; background: var(--raised); box-shadow: var(--float); font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
@@ -576,6 +608,9 @@ button.sb-group:hover { color: var(--text-2); }
 .fv-here { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 320px; margin-right: 8px; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; }
 .fv-here b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 600 12.5px/1.3 var(--code); color: var(--text); }
 .fv-here:empty { display: none; }
+/* On a chain, Reading opens the chain's outline. */
+button.fv-here { appearance: none; border: 0; background: none; margin: -3px 2px -3px -6px; padding: 3px 6px; border-radius: 6px; font: inherit; cursor: pointer; }
+button.fv-here:hover, button.fv-here:focus-visible { background: var(--hover-soft); }
 .fv-row [data-act="graph"].took { animation: gdtook 600ms var(--ease) 1; }
 @keyframes gdtook { 0% { box-shadow: 0 0 0 0 rgba(233, 180, 76, .6); background: var(--accent-soft); } 100% { box-shadow: 0 0 0 9px rgba(233, 180, 76, 0); } }
 .gd-w { position: sticky; top: var(--hh, 52px); left: 0; z-index: 6; height: 0; }
@@ -1749,6 +1784,14 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
   /* The view: the whole pane, its header scrolling away with it; the review bar docked under it. */
   .vw-sheet, .vw.side-off .vw-sheet { border-radius: 0; }
   .vw-main, .vw.mini-on .vw-main { right: 0; }
+  .vw, .vw.mini-on, .vw.co-rail, .vw.co-pin { --mini-w: 0px; --rail-w: 0px; --col-w: 0px; }
+  /* The chain's outline: a sheet from the right, over a shade, from the header's Reading. */
+  .vw-ol { position: fixed; z-index: 50; top: 0; width: min(86vw, 340px); padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); background: var(--ground); }
+  .vw.co-pin .vw-ol { visibility: hidden; transform: translateX(104%); }
+  .vw.co-open .vw-ol { visibility: visible; transform: none; }
+  .vw.co-open .vw-shade { opacity: 1; pointer-events: auto; }
+  .fv-row button.fv-here { display: inline-flex; flex-basis: 100%; max-width: none; margin: 0 0 0 -6px; }
+  .fv-row button.fv-here:empty { display: none; }
   .vw-sheet:has(> .vw-pill:not([hidden])) .vw-main { bottom: calc(56px + env(safe-area-inset-bottom)); }
   .vw-main::after { height: 24px; }
   .fv-head { position: relative; }
@@ -1757,7 +1800,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
   .fv-row .crumbs:has(.fv-back:only-child), .fv-row .sp { display: none; }
   .facts { flex-basis: 100%; order: -1; white-space: normal; }
   .vw-pill { left: 0; right: 0; bottom: 0; transform: none; height: calc(56px + env(safe-area-inset-bottom)); gap: 2px; padding: 0 max(8px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left)); border-radius: 0; box-shadow: 0 -1px 0 var(--hair); }
-  .vw.mini-on .vw-pill { margin-left: 0; }
+  .vw.mini-on .vw-pill, .vw-pill { margin-left: 0; }
   .vw-pill .ib { width: 44px; height: 44px; }
   .vw-pill .ib svg { width: 18px; height: 18px; }
   .pill-sep { display: none; }
@@ -1945,6 +1988,8 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
     <div class="vw-sheet">
       <div class="vw-main" id="vw-main"><div class="empty">Loading the review…</div></div>
       <canvas class="vw-mini" id="vw-mini" hidden></canvas>
+      <div class="vw-rail" id="vw-rail" data-act="co-toggle" aria-label="The chain’s outline: hover to look at it, click to keep it open" hidden><div></div></div>
+      <nav class="vw-ol" id="vw-ol" aria-label="The chain’s outline" hidden></nav>
       <div class="vw-pill" id="vw-pill" role="toolbar" aria-label="Review" hidden></div>
     </div>
   </div>

@@ -35,6 +35,8 @@
     // Into the file: drawn with 1.5-pixel strokes, which stay whole at any zoom (Go to File's thin
     // loop breaks up below 100%).
     intoFile: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.75 2.25h4l3 3v7.25a1.25 1.25 0 0 1-1.25 1.25h-5.75"/><path d="M9.75 2.25v3h3"/><path d="M2 9.25h5.5"/><path d="M5.25 7l2.25 2.25-2.25 2.25"/></svg>',
+    // A pin, for what stays open: drawn with strokes, as Into the file is.
+    pin: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 1.8l4.4 4.4M11.6 3.2 8.5 6.3l-3.4-.4-1 1 5 5 1-1-.4-3.4 3.1-3.1M6.6 9.4 2 14"/></svg>',
     // The whole file: lines unfolding from a fold, drawn with strokes too.
     wholeFile: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.75v4M5.75 4L8 1.75 10.25 4M8 14.25v-4M5.75 12L8 14.25 10.25 12M2 8h1.5M5.5 8h1.5M9 8h1.5M12.5 8h1.5"/></svg>',
     down: path1('M3.147 9l5 5h.707l5-5-.707-.707L9 12.439V2H8v10.44L3.854 8.292 3.147 9z'),
@@ -205,7 +207,7 @@
   // as a tree or a list, whether the Files tab hides the files it would fade, and the Threads tab's
   // folded sections.
   const UI_KEY = 'untangle:ui';
-  const UI = { side: 272, sideOff: false, minimap: true, filesList: false, filesHide: false, foldedThreads: [] };
+  const UI = { side: 272, sideOff: false, minimap: true, filesList: false, filesHide: false, foldedThreads: [], outline: false };
   // Contents, open over the view in a narrow window, and the view it was opened on.
   const SIDE = { open: false, at: '' };
   try { Object.assign(UI, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch (e) { /* storage unavailable */ }
@@ -4725,13 +4727,20 @@
     // Its test files read as outlines, after its code; a chain of tests alone is only them.
     const tests = chainTests(c);
     const testOnly = tests.files.length > 0 && c.graph.nodes.every((n) => tests.nodes.has(n));
+    // Its parts, as the page draws them, for its outline: each section, then each test file.
+    CO.parts = [];
+    const testsHtml = (files) => files.map((f) => {
+      const sc = olScope(f, c);
+      CO.parts.push({ key: 'olf:' + f.p, title: fileName(f.p), where: f.p.slice(0, f.p.length - fileName(f.p).length), kind: 'tests', blocks: olFileMarks(sc), paths: [f.p], said: olSaid(olCounts(sc)) || 'no sentence changes' });
+      return olFileHtml(sc, { secs: tests.secs.get(f) });
+    }).join('');
     let h = headerHtml({
       crumbs: `<button type="button" data-map="${c.family}" title="Open the chain map">Map</button>${SEP}<b${proseName(c) ? ' class="ui"' : ''} title="${esc(c.name + ' · ' + kind)}">${esc(c.name)}</b>`,
       facts: `${kind !== 'changed member' ? cap(kind) + ' · ' : ''}${leftWords(s)} · ${c.files} file${c.files > 1 ? 's' : ''} · ${plusMinus(c.adds, c.dels)}`,
       nav: true,
       // The member being read, and the chain's graph: open in the page at the top, and dropped
       // from here anywhere else.
-      lead: '<span class="fv-here"></span>',
+      lead: '<button type="button" class="fv-here" data-act="co-toggle" title="The chain’s outline: its docs, models, code and tests (o)"></button>',
       tools: iconBtn(ICON.graph, 'The chain’s graph: hover for a look, click to keep it open (g)', 'data-act="graph" aria-haspopup="dialog" aria-expanded="false"', { label: 'Graph', on: true }),
       // Once it's all reviewed, the next chain to review takes its place (marking it unreviewed again
       // is in its menu).
@@ -4742,7 +4751,7 @@
       below: fam && fam.commit ? commitNoteHtml(fam) + (state.card === fam.commit.sha && hxOn() && HX.index.has(state.card) ? detailHtml(HX.index.get(state.card), '') : '') : '',
     });
     h += `<div class="graph-box chain-graph"><div class="graph-scroll">${graphSvg(c)}</div>${graphLegendHtml(c)}</div>`;
-    if (testOnly) return h + extNoteHtml(c) + tests.files.map((f) => olFileHtml(olScope(f, c), { secs: tests.secs.get(f) })).join('') + '<div class="chain-end" aria-hidden="true"></div>';
+    if (testOnly) return h + extNoteHtml(c) + testsHtml(tests.files) + '<div class="chain-end" aria-hidden="true"></div>';
     const focused = state.focus && state.focus.chain === c.id ? c.graph.nodes[state.focus.node] : null;
     if (focused) {
       const { l2 } = nodeLabels(focused);
@@ -4778,6 +4787,8 @@
       const names = named.length ? named : [l2];
       const title = ns.length > 1 ? names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '') : l2;
       const where = ns.length > 1 ? l1 : owner ? owner + ' · ' + l1 : l1;
+      const paths = [...new Set(blocks.map((b) => b.file.p))], kinds = new Set(paths.map(coKind));
+      CO.parts.push({ key: 'sec-' + n.idx, node: n.idx, title, where: where === 'top level' ? '' : where, kind: kinds.size === 1 ? [...kinds][0] : 'code', blocks, paths });
       h += `<section class="sec${lensOn() && !blocks.some((b) => b.edits.length && blockIn(b)) ? ' lens-out' : ''}" id="sec-${n.idx}"${ns.length > 1 ? ` data-secs="${ns.map((x) => x.idx).join(' ')}"` : ''}><div class="sec-h"><b${ns.length > 1 ? ` title="${esc(names.join(', '))}"` : ''}>${esc(title)}</b><span>${esc(where)}</span>${keys.has(c.graph.root) ? '<span class="tag">root</span>' : ''}${rel ? `<span title="${esc(full)}">${esc(rel)}</span>` : ''}<span class="sp"></span>`
         + `<span class="hov"><span>${leftWords(ns2)} · ${plusMinus(sumOf(blocks, 'adds'), sumOf(blocks, 'dels'))}</span>${outOfLens(ns2) ? '' : `<button type="button" class="btn xs" data-act="mark-blocks" data-blocks="${esc(ns.flatMap((x) => x.blocks).join(' '))}">${ns2.open ? 'Mark reviewed' : 'Mark unreviewed'}</button>`}</span></div>`
         + ns.map((x) => extNoteHtml(c, x)).join('');
@@ -4798,7 +4809,7 @@
       h += '</section>';
     });
     const testFiles = focused ? tests.files.filter((f) => tests.secs.get(f).includes(focused.idx)) : tests.files;
-    if (testFiles.length) h += `<div class="ol-sect">Tests${testFiles.length > 1 ? ` · ${testFiles.length} files` : ''}</div>` + testFiles.map((f) => olFileHtml(olScope(f, c), { secs: tests.secs.get(f) })).join('');
+    if (testFiles.length) h += `<div class="ol-sect">Tests${testFiles.length > 1 ? ` · ${testFiles.length} files` : ''}</div>` + testsHtml(testFiles);
     return h + '<div class="chain-end" aria-hidden="true"></div>';
   }
   // ---------- pinned groups: over a test file's code or outline, the groups of the line at the top
@@ -4910,6 +4921,160 @@
     const h = n ? `Reading <b>${esc(nodeLabels(n).l2)}</b> · ${GD.order.indexOf(i) + 1} of ${c.graph.nodes.length}` : '';
     if (el.innerHTML !== h) { el.innerHTML = h; renderWhere(); }
   }
+  // ---------- the chain's outline: its parts by kind (docs, models, dependencies, code, then tests),
+  // each a click from its place. At rest it's a rail on the minimap's edge, a dash at each part's
+  // place in the minimap: amber with changes to review, green reviewed, white for the part being
+  // read. Hovered, the outline slides in from the right over the minimap and the code; kept (o, a
+  // click on the rail, or the header's Reading), it's a column at the page's right, and the page
+  // narrows for it. On a phone, the header's Reading opens it as a sheet.
+  const CO = { parts: [], els: [], ys: [], at: null, went: null, open: false, openT: 0, closeT: 0, placed: false };
+  const CO_KINDS = [['doc', 'Docs'], ['model', 'Models'], ['deps', 'Dependencies'], ['code', 'Code'], ['tests', 'Tests']];
+  const coKind = (p) => (/\.(md|markdown)$/i.test(p) ? 'doc' : /\.spy\.ya?ml$/.test(p) ? 'model' : /(^|\/)pubspec\.yaml$/.test(p) ? 'deps' : 'code');
+  const coRail = $('#vw-rail'), coRailIn = coRail && coRail.firstElementChild, coPanel = $('#vw-ol');
+  const coOn = () => !!coPanel && state.view.kind === 'chain' && CO.parts.length > 1;
+  const coPinned = () => coOn() && !!UI.outline && !compact();
+  const coEl = (p) => (p.node != null ? main.querySelector(`#sec-${p.node}:not(.ol-sec)`) : main.querySelector(`.ol-sec[data-olf="${CSS.escape(p.key.slice(4))}"]`));
+  const coDone = (st) => st.total > 0 && !st.open;
+  function coRowHtml(p) {
+    const st = stats(p.blocks), sub = p.kind === 'tests' ? p.said : p.where;
+    const title = `${p.title}${p.paths.length === 1 && p.kind !== 'tests' ? ` · ${p.paths[0]}` : ''}: ${leftWords(st)}`;
+    return `<button type="button" class="sb-row co-r${coDone(st) ? ' done' : ''}" data-act="co-go" data-key="${esc(p.key)}"${CO.at === p.key ? ' aria-current="true"' : ''} title="${esc(title)}">${markHtml(st)}<span class="nm">${esc(p.title)}${sub ? `<span class="sn">${esc(sub)}</span>` : ''}</span><span class="cnt">${p.paths.length === 1 ? openThreadsHtml(p.paths[0]) : ''}${st.open ? `<span>${fmt(st.open)}</span>` : ''}</span></button>`;
+  }
+  function coPanelHtml() {
+    let h = '';
+    for (const [k, label] of CO_KINDS) {
+      const list = CO.parts.filter((p) => p.kind === k);
+      if (!list.length) continue;
+      const done = list.filter((p) => coDone(stats(p.blocks))).length;
+      h += `<div class="co-g"><span>${label}</span><span>${list.length}${done ? ` · ${done} reviewed` : ''}</span></div>` + list.map(coRowHtml).join('');
+    }
+    const pinned = coPinned();
+    return `<div class="co-h"><b>Outline</b><span>${plural(CO.parts.length, 'part')}</span><button type="button" class="ib co-keep" data-act="co-keep" aria-pressed="${pinned}" title="${pinned ? 'Let it go: the rail opens it again (o)' : 'Keep it open, as a column (o)'}" aria-label="Keep the outline open">${ICON.pin}</button></div><div class="co-b">${h}</div>`;
+  }
+  // Drawn again with the page: the parts' marks, and the panel when it shows.
+  function coRender() {
+    const on = coOn();
+    viewer.classList.toggle('co-on', on);
+    viewer.classList.toggle('co-pin', coPinned());
+    if (!on) {
+      CO.open = false;
+      viewer.classList.remove('co-open');
+      if (coPanel) { coPanel.hidden = true; coPanel.innerHTML = ''; }
+      if (coRailIn) coRailIn.innerHTML = '';
+      CO.els = [];
+      return;
+    }
+    CO.els = CO.parts.map(coEl);
+    coRailIn.innerHTML = CO.parts.map((p) => `<i class="${coDone(stats(p.blocks)) ? 'ok' : ''}"></i>`).join('');
+    CO.placed = false;
+    coPanel.hidden = false;
+    coPanel.innerHTML = coPinned() || CO.open ? coPanelHtml() : '';
+    CO.at = null;
+    coSpy();
+  }
+  // Where each part starts in the page, measured with the minimap's rows; then its dash's place
+  // in the minimap, a few pixels below the one before when they'd touch.
+  function coMeasure(top) { CO.ys = CO.els.map((el) => (el && el.isConnected ? el.getBoundingClientRect().top - top : null)); CO.placed = false; }
+  function coPlace(g, scale) {
+    if (!coRailIn) return;
+    if (!CO.placed) {
+      let prev = -Infinity;
+      [...coRailIn.children].forEach((d, k) => {
+        const y = CO.ys[k];
+        d.hidden = y == null;
+        if (y == null) return;
+        prev = Math.max(prev + 5, y * scale);
+        d.style.top = prev.toFixed(1) + 'px';
+      });
+      CO.placed = true;
+    }
+    coRailIn.style.transform = `translateY(${(-g.off).toFixed(1)}px)`;
+  }
+  // The part being read: the last one that starts above the reading line, or the one just gone to
+  // while the page hasn't moved since.
+  function coSpy() {
+    if (!coOn()) return;
+    let at = CO.parts[0].key;
+    if (CO.went && Math.abs(main.scrollTop - CO.went.top) < 2) at = CO.went.key;
+    else {
+      CO.went = null;
+      const ref = readY();
+      for (let k = 0; k < CO.parts.length; k++) {
+        const el = CO.els[k];
+        if (!el) continue;
+        if (el.getBoundingClientRect().top > ref) break;
+        at = CO.parts[k].key;
+      }
+    }
+    if (at === CO.at) return;
+    CO.at = at;
+    const k = CO.parts.findIndex((p) => p.key === at);
+    if (coRailIn) [...coRailIn.children].forEach((d, i) => d.classList.toggle('at', i === k));
+    coPanel.querySelectorAll('.co-r').forEach((r) => { if (r.dataset.key === at) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current'); });
+    const row = coPanel.querySelector('.co-r[aria-current="true"]'), box = coPanel.querySelector('.co-b');
+    if (row && box && (row.offsetTop < box.scrollTop || row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight)) box.scrollTop = row.offsetTop - box.clientHeight / 3;
+  }
+  // Hovered: open over the minimap and the code, under the header, the page still.
+  function coOpen(v) {
+    clearTimeout(CO.openT);
+    clearTimeout(CO.closeT);
+    if (v && !coOn()) return;
+    if (v === CO.open) return;
+    CO.open = v;
+    if (v) {
+      viewer.style.setProperty('--co-top', (compact() ? 0 : headH()) + 'px');
+      if (!coPinned()) coPanel.innerHTML = coPanelHtml();
+      CO.at = null;
+      coSpy();
+    }
+    viewer.classList.toggle('co-open', v);
+  }
+  function coLeave() {
+    clearTimeout(CO.openT);
+    clearTimeout(CO.closeT);
+    if (CO.open && !compact()) CO.closeT = setTimeout(() => coOpen(false), 300);
+  }
+  // Kept open as a column, or let go; on a phone, the sheet opens or closes. From the keyboard,
+  // the part being read takes the focus, for the arrows and Enter.
+  function coToggle(fromKey) {
+    if (!coOn()) return;
+    if (compact()) coOpen(!CO.open);
+    else {
+      UI.outline = !UI.outline;
+      saveUI();
+      CO.open = false;
+      viewer.classList.remove('co-open');
+      coRender();
+      mini.update();
+    }
+    const shown = CO.open || coPinned();
+    if (shown && fromKey) (coPanel.querySelector('.co-r[aria-current="true"]') || coPanel.querySelector('.co-r'))?.focus({ preventScroll: true });
+    if (!shown && coPanel.contains(document.activeElement)) document.activeElement.blur();
+  }
+  function coGo(key) {
+    const p = CO.parts.find((x) => x.key === key);
+    if (!p) return;
+    if (compact()) coOpen(false);
+    const there = () => { CO.went = { key, top: main.scrollTop }; CO.at = null; coSpy(); };
+    if (p.node != null) return goNode(p.node, there);
+    const el = coEl(p), row = el && el.querySelector('.ol-file');
+    if (el) glideTo(el, headH() + 8, 0, () => { if (row) { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); } there(); });
+  }
+  if (coRail) {
+    coRail.addEventListener('pointerenter', () => { clearTimeout(CO.closeT); if (!coPinned() && !CO.open) CO.openT = setTimeout(() => coOpen(true), 120); });
+    coRail.addEventListener('pointerleave', coLeave);
+    coPanel.addEventListener('pointerenter', () => clearTimeout(CO.closeT));
+    coPanel.addEventListener('pointerleave', coLeave);
+    // The arrows walk the rows; Enter goes, as a button does.
+    coPanel.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const rows = [...coPanel.querySelectorAll('.co-r')], i = rows.indexOf(document.activeElement);
+      if (i < 0) return;
+      e.preventDefault();
+      rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))].focus();
+    });
+  }
+
   // As the code scrolls the graph under the header, its last stretch shrinks toward the graph's
   // button, which takes it once it's gone (a pulse). Scrolling back up plays it back.
   function foldGraph() {
@@ -5065,7 +5230,7 @@
     return main.querySelector('#sec-' + i) || [...main.querySelectorAll('[data-secs]')].find((x) => x.dataset.secs.split(' ').includes(String(i))) || null;
   }
   // A member, from the graph: its code, and a pulse there.
-  function goNode(i) {
+  function goNode(i, after) {
     const c = M().chains[state.view.id], n = c && c.graph.nodes[i];
     if (!n) return;
     if (state.focus && state.focus.chain === c.id) { state.focus = { chain: c.id, node: i }; return render({ section: i }); }
@@ -5077,7 +5242,7 @@
     // A member read with the others of its file: the page goes to its own first change.
     const own = el.dataset.secs && !el.matches('.ol-sec') && Number(el.dataset.secs.split(' ')[0]) !== i ? [...el.querySelectorAll('.tick[data-block]')].find((t) => ids.has(t.dataset.block)) : null;
     GD.went = null;
-    glideTo(own ? own.closest('.ln') || own : el, headH() + 8, 0, () => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); GD.went = { chain: c.id, node: i, top: main.scrollTop }; spyHere(); });
+    glideTo(own ? own.closest('.ln') || own : el, headH() + 8, 0, () => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); GD.went = { chain: c.id, node: i, top: main.scrollTop }; spyHere(); if (after) after(); });
   }
 
   // ---------- the Tests view: every sentence the review's tests add, reword, regroup or remove, file
@@ -7241,6 +7406,7 @@
     seenWatch();
     if (MENU.open) renderMenu();
     renderPill();
+    coRender();
     mini.update();
   }
   // The top bar: the pull request (its number quiet), its state, the commit reviewed and a way to
@@ -7574,7 +7740,7 @@
   main.addEventListener('scroll', () => {
     if (scrollRaf) return;
     if (state.gdrop) gdClose();
-    scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; main.classList.toggle('scrolled', main.scrollTop > 2); main.classList.toggle('aside', main.scrollLeft > 0); renderPill(); spyHere(); spyModels(); foldGraph(); mini.scrolled(); olPin(); });
+    scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; main.classList.toggle('scrolled', main.scrollTop > 2); main.classList.toggle('aside', main.scrollLeft > 0); renderPill(); spyHere(); spyModels(); coSpy(); foldGraph(); mini.scrolled(); olPin(); });
     clearTimeout(NAV.saveT);
     NAV.saveT = setTimeout(() => { const cur = NAV.stack[NAV.at]; if (cur) { cur.top = main.scrollTop; navSave(cur); } }, 400);
   }, { passive: true });
@@ -7601,7 +7767,7 @@
       const k = (...keys) => keys.map((x) => `<kbd>${x}</kbd>`).join('');
       keysEl.innerHTML = '<h2>Keys</h2><dl>'
         + [[k('j', 'k'), 'Next and previous change to review'], [k('Space'), 'Mark the change reviewed and go to the next one'], [k('Shift', 'Space'), 'Mark the hunk, or the member in a chain'],
-          [k('n', 'p'), 'Next and previous chain with changes to review'], [k('g'), 'The chain’s graph, over the code, and back'], [k(MOD, 'K'), 'Jump to a chain, file, symbol or thread'],
+          [k('n', 'p'), 'Next and previous chain with changes to review'], [k('g'), 'The chain’s graph, over the code, and back'], [k('o'), 'The chain’s outline, kept open as a column, and let go'], [k(MOD, 'K'), 'Jump to a chain, file, symbol or thread'],
           [k('c'), 'Comment on the line you’re on'], [k(...BACK_KEY.split(' ')), 'Back to where you were'], [k(MOD, 'B'), 'Show or hide the sidebar'], [k('Esc'), 'Close the peek, the palette, a menu or a commit’s details; then show every change again (the lens off)'], [k('?'), 'These keys']]
           .map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('') + '</dl>';
       viewer.appendChild(keysEl);
@@ -8790,7 +8956,9 @@
     if (act === 'wrap') { UI.wrap = !wrapOn(); saveUI(); applyCode(); return render(); }
     if (act === 'test-details') { UI.testDetails = !testDetails(); saveUI(); applyCode(); return render(); }
     if (act === 'code-size') { UI.codeSize = Math.min(16, Math.max(10, Math.round(codeSize()) + Number(d.step))); saveUI(); applyCode(); MENU.html = ''; renderMenu(); return render(); }
-    if (act === 'shade') { if (SIDE.open) sideDrawer(false); return; }
+    if (act === 'shade') { if (SIDE.open) sideDrawer(false); if (CO.open) coOpen(false); return; }
+    if (act === 'co-go') return coGo(d.key);
+    if (act === 'co-toggle' || act === 'co-keep') return coToggle(false);
     if (act === 'threads-fold') {
       const folded = new Set(Array.isArray(UI.foldedThreads) ? UI.foldedThreads : []);
       folded.has(d.key) ? folded.delete(d.key) : folded.add(d.key);
@@ -8962,6 +9130,9 @@
       if (PAL.open) return palClose();
       if (MENU.open) return closeMenu();
       if (state.gdrop) return gdClose();
+      // The outline open over the page closes; kept open, it goes only from inside it.
+      if (CO.open) { coOpen(false); if (coPanel.contains(document.activeElement)) document.activeElement.blur(); return; }
+      if (coPinned() && coPanel.contains(document.activeElement)) return coToggle(false);
       if (GH.reviewOpen) { GH.reviewOpen = false; return render(); }
       if (NT.agentOpen) { NT.agentOpen = null; return renderAgent(); }
       if (state.peek) { state.peek = null; return render(); }
@@ -8985,6 +9156,7 @@
     else if (e.key === ' ') { if (e.shiftKey) markScope(); else markAndNext(); }
     else if (e.key === 'n' || e.key === 'p') goChain(e.key === 'n' ? 1 : -1);
     else if (e.key === 'g' && gdHas()) { if (state.gdrop) gdClose(); else gdOpen(true); }
+    else if (e.key === 'o' && coOn()) coToggle(true);
     else if (e.key === 'c') commentHere();
     else if (e.key === '?') toggleKeys();
     else if (e.key === '/') palOpen();
@@ -9161,6 +9333,7 @@
         else if (c.contains('peek')) row.k = 'peek';
         rows.push(row);
       });
+      coMeasure(top);
     }
     function geom() {
       const h = cv.clientHeight, S = main.scrollHeight, C = main.clientHeight;
@@ -9171,9 +9344,11 @@
     }
     function draw() {
       raf = 0;
-      const show = on();
+      const show = on(), rail = show && coOn();
       viewer.classList.toggle('mini-on', show);
+      viewer.classList.toggle('co-rail', rail);
       cv.hidden = !show;
+      if (coRail) coRail.hidden = !rail;
       if (!show) return;
       const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
       if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
@@ -9201,6 +9376,7 @@
       }
       x.fillStyle = drag || hover ? 'rgba(255,255,255,.10)' : 'rgba(255,255,255,.055)';
       x.fillRect(0, g.vy, w, g.vh);
+      if (rail) coPlace(g, SCALE);
     }
     const schedule = () => { if (!raf) raf = requestAnimationFrame(draw); };
     if (cv) {
