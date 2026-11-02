@@ -204,10 +204,10 @@
   }
   window.addEventListener('pagehide', () => flushSave(true));
   // This browser's layout: the sidebar's width and whether it shows, the minimap, a commit's files
-  // as a tree or a list, whether the Files tab hides the files it would fade, and the Threads tab's
-  // folded sections.
+  // as a tree or a list, whether the Files tab hides the files it would fade, the Threads tab's
+  // folded sections, and whether a chain's outline is kept open, and how wide.
   const UI_KEY = 'untangle:ui';
-  const UI = { side: 272, sideOff: false, minimap: true, filesList: false, filesHide: false, foldedThreads: [], outline: false };
+  const UI = { side: 272, sideOff: false, minimap: true, filesList: false, filesHide: false, foldedThreads: [], outline: false, outlineW: 300 };
   // Contents, open over the view in a narrow window, and the view it was opened on.
   const SIDE = { open: false, at: '' };
   try { Object.assign(UI, JSON.parse(localStorage.getItem(UI_KEY) || '{}')); } catch (e) { /* storage unavailable */ }
@@ -9288,6 +9288,58 @@
     if (e.target.name === 'nt-live') ntSettings({ live: e.target.checked });
   });
 
+  // ---------- the outline's width, kept open: its column resizes from its edge (drag it, or use ←
+  // and → on it), and a double-click there lets it go, as the sidebar's edge does. Hovered, it's
+  // as wide. At most half the page, so the code keeps its room.
+  const coSplit = $('#co-split');
+  const CO_MIN = 220;
+  const coMax = () => { const page = $('.vw-sheet').clientWidth; return page ? Math.max(CO_MIN, Math.min(640, Math.round(page / 2))) : 640; };
+  const clampCo = (w) => Math.min(coMax(), Math.max(CO_MIN, Math.round(w)));
+  function applyCo() {
+    const w = clampCo(UI.outlineW);
+    viewer.style.setProperty('--co-w', w + 'px');
+    coSplit.setAttribute('aria-valuemin', String(CO_MIN));
+    coSplit.setAttribute('aria-valuemax', String(coMax()));
+    coSplit.setAttribute('aria-valuenow', String(w));
+    coSplit.title = 'Drag to resize the outline; double-click to let it go';
+  }
+  let coSizing = null;
+  coSplit.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    coSettled();
+    coSplit.setPointerCapture(e.pointerId);
+    coSizing = { x: e.clientX, w: coPanel.getBoundingClientRect().width, raf: 0 };
+    coSplit.classList.add('dragging');
+    document.body.classList.add('resizing');
+  });
+  coSplit.addEventListener('pointermove', (e) => {
+    if (!coSizing) return;
+    UI.outlineW = clampCo(coSizing.w - (e.clientX - coSizing.x));
+    if (!coSizing.raf) coSizing.raf = requestAnimationFrame(() => { if (coSizing) coSizing.raf = 0; applyCo(); });
+  });
+  const coSized = () => {
+    if (!coSizing) return;
+    coSizing = null;
+    coSplit.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    applyCo();
+    saveUI();
+    mini.update();
+  };
+  coSplit.addEventListener('pointerup', coSized);
+  coSplit.addEventListener('pointercancel', coSized);
+  coSplit.addEventListener('dblclick', () => coToggle(false));
+  coSplit.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      UI.outlineW = clampCo(clampCo(UI.outlineW) + (e.key === 'ArrowLeft' ? 16 : -16));
+      applyCo();
+      saveUI();
+      mini.update();
+    } else if (e.key === 'Enter') coToggle(false);
+  });
+
   // ---------- panels: the sidebar's width (drag its edge, or use ← and → on it); a double-click
   // on the edge, or Ctrl B, hides the sidebar and brings it back. Kept in this browser.
   const split = $('#vw-split'), sideBtn = $('#vw-side-btn');
@@ -9303,6 +9355,8 @@
     split.setAttribute('aria-valuemax', String(sideMax()));
     split.setAttribute('aria-valuenow', String(UI.sideOff ? 0 : w));
     split.title = UI.sideOff ? 'Drag to show the sidebar' : 'Drag to resize the sidebar; double-click to hide it';
+    // The page's width changed: the outline's, at most half of it, with it.
+    applyCo();
   }
   function toggleSide() {
     if (compact()) return sideDrawer(!SIDE.open);

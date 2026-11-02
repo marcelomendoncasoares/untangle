@@ -281,7 +281,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .vw { --mini-w: 0px; --rail-w: 0px; --col-w: 0px; }
 .vw.mini-on { --mini-w: 64px; }
 .vw.co-rail { --rail-w: 12px; }
-.vw.co-pin { --col-w: 300px; }
+.vw.co-pin { --col-w: var(--co-w, 300px); }
 .vw.co-moving { transition: --col-w var(--med) var(--ease); }
 .vw-pill { margin-left: calc((var(--mini-w) + var(--rail-w) + var(--col-w)) / -2); }
 /* Room under the last line for the review pill. */
@@ -306,13 +306,19 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .vw-rail i.ok { background: var(--done); }
 .vw-rail i.at { width: 10px; background: var(--text); opacity: 1; }
 .vw-rail:hover i, .vw.co-open .vw-rail i { opacity: 1; }
-.vw-ol { position: absolute; z-index: 9; top: var(--co-top, 0px); right: 0; bottom: 0; width: 300px; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--raised); box-shadow: -1px 0 0 var(--hair-2), -24px 0 48px rgba(0, 0, 0, .5); visibility: hidden; transform: translateX(104%); transition: transform var(--med) var(--ease), visibility 0s linear var(--med); }
+.vw-ol { position: absolute; z-index: 9; top: var(--co-top, 0px); right: 0; bottom: 0; width: var(--co-w, 300px); display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--raised); box-shadow: -1px 0 0 var(--hair-2), -24px 0 48px rgba(0, 0, 0, .5); visibility: hidden; transform: translateX(104%); transition: transform var(--med) var(--ease), visibility 0s linear var(--med); }
 .vw-ol[hidden] { display: none; }
 .vw.co-open .vw-ol { visibility: visible; transform: none; transition: transform var(--med) var(--ease); }
 .vw.co-pin .vw-ol { top: 0; z-index: 4; visibility: visible; transform: none; background: var(--sheet); box-shadow: -1px 0 0 var(--hair); transition: none; }
 /* Kept, it slides in as the column, or the outline over the code grows up into it; let go, it
    slides back out. */
 .vw.co-moving .vw-ol { transition: transform var(--med) var(--ease), top var(--med) var(--ease), background-color var(--med) var(--ease), box-shadow var(--med) var(--ease), visibility var(--med); }
+/* Kept, the column resizes from its edge, as the sidebar does; the edge takes the pointer mostly
+   on the column's side, leaving the rail's dashes to it. */
+.co-split { position: absolute; top: 0; bottom: 0; right: calc(var(--col-w) - 6px); z-index: 5; width: 8px; display: none; cursor: col-resize; outline: none; }
+.vw.co-pin .co-split { display: block; }
+.co-split::after { content: ""; position: absolute; top: 14px; bottom: 14px; left: 1px; width: 2px; border-radius: 1px; background: transparent; transition: background-color var(--fast) var(--ease); }
+.co-split:hover::after, .co-split:focus-visible::after, .co-split.dragging::after { background: var(--text-3); transition-delay: 60ms; }
 .co-h { display: flex; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--hair); font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .co-h b { font-size: 13px; font-weight: 600; color: var(--text); }
 .co-h .co-keep { margin-left: auto; }
@@ -2001,6 +2007,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing; }
       <canvas class="vw-mini" id="vw-mini" hidden></canvas>
       <div class="vw-rail" id="vw-rail" data-act="co-toggle" aria-label="The chain’s outline: hover to look at it, click to keep it open" hidden><div></div></div>
       <nav class="vw-ol" id="vw-ol" aria-label="The chain’s outline" hidden></nav>
+      <div class="co-split" id="co-split" role="separator" aria-orientation="vertical" aria-label="Outline width" tabindex="0"></div>
       <div class="vw-pill" id="vw-pill" role="toolbar" aria-label="Review" hidden></div>
     </div>
   </div>

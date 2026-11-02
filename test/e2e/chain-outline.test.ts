@@ -452,6 +452,81 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     });
   });
 
+  describe('when the kept outline’s edge is dragged 100 px left, the page opened again, → pressed on the edge, the edge double-clicked, the rail hovered, and the edge dragged far each way, ', () => {
+    let dragged = '';
+    let again = '';
+    let keyed = '';
+    let letGo = '';
+    let hovered = '';
+    let far = '';
+
+    before(async () => {
+      await rest(page!);
+      await openChain();
+      await page!.key('o');
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-pin')`);
+      await page!.drag('#co-split', -100, 0);
+      await page!.until(`document.querySelector('#co-split').getAttribute('aria-valuenow') === '400'`);
+      dragged = await read(page!, rightRead);
+      await page!.goto(run!.url);
+      await page!.until(`!!document.querySelector('.t-head')`, 30_000);
+      await openChain();
+      again = await read(page!, `(document.querySelector('#viewer').classList.contains('co-pin') ? 'kept open' : 'not kept') + ' | ' + ${rightRead}`);
+      await page!.eval(`document.querySelector('#co-split').focus()`);
+      await page!.key('ArrowRight');
+      keyed = await read(page!, rightRead);
+      await page!.doubleClick('#co-split');
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-pin')`);
+      letGo = await read(page!, rightRead);
+      await page!.hover('#vw-rail', { scroll: false });
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-open')`);
+      hovered = await read(page!, rightRead);
+      await page!.hover('.fv-head .crumbs', { scroll: false });
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-open')`);
+      await page!.key('o');
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-pin')`);
+      await page!.drag('#co-split', -1000, 0);
+      await page!.until(`document.querySelector('#co-split').getAttribute('aria-valuenow') === document.querySelector('#co-split').getAttribute('aria-valuemax')`);
+      far = await read(page!, rightRead);
+      await page!.drag('#co-split', 1000, 0);
+      await page!.until(`document.querySelector('#co-split').getAttribute('aria-valuenow') === '220'`);
+      far += '\n' + await read(page!, rightRead);
+      await page!.key('o');
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-pin')`);
+      // Back to the outline's first width, for what follows.
+      await page!.eval(`localStorage.setItem('untangle:ui', JSON.stringify({ ...JSON.parse(localStorage.getItem('untangle:ui') || '{}'), outlineW: 300 }))`);
+      await page!.goto(run!.url);
+      await page!.until(`!!document.querySelector('.t-head')`, 30_000);
+    });
+
+    it('then the column is that much wider, and the code that much narrower.', () => {
+      assert.equal(dragged, 'code 652px, minimap 64px, rail 12px, outline 400px, to the page’s edge');
+    });
+
+    it('then it keeps that width once the page is opened again.', () => {
+      assert.equal(again, 'kept open | code 652px, minimap 64px, rail 12px, outline 400px, to the page’s edge');
+    });
+
+    it('then → narrows it a step.', () => {
+      assert.equal(keyed, 'code 668px, minimap 64px, rail 12px, outline 384px, to the page’s edge');
+    });
+
+    it('then a double-click on the edge lets it go.', () => {
+      assert.equal(letGo, 'code 1052px, minimap 64px, rail 12px, to the page’s edge');
+    });
+
+    it('then the outline over the code is as wide as the column was.', () => {
+      assert.equal(hovered, 'code 1052px, minimap 64px, rail 12px, outline 384px, to the page’s edge');
+    });
+
+    it('then dragged far, the column stops at half the page, and at its narrowest.', () => {
+      assert.equal(far, [
+        'code 488px, minimap 64px, rail 12px, outline 564px, to the page’s edge',
+        'code 832px, minimap 64px, rail 12px, outline 220px, to the page’s edge',
+      ].join('\n'));
+    });
+  });
+
   describe('when the page is a phone’s, and the header’s Reading is tapped, then the last test file’s row, ', () => {
     let sheet = '';
     let went = '';
