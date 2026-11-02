@@ -4718,6 +4718,7 @@
   function renderChain(id) {
     const m = M();
     const c = m.chains[id];
+    CO.parts = [];
     if (!c) return '<div class="empty">This chain doesn’t exist in this comparison.</div>';
     const all = blocksOf(c.blocks);
     const s = stats(all);
@@ -4728,10 +4729,9 @@
     const tests = chainTests(c);
     const testOnly = tests.files.length > 0 && c.graph.nodes.every((n) => tests.nodes.has(n));
     // Its parts, as the page draws them, for its outline: each section, then each test file.
-    CO.parts = [];
     const testsHtml = (files) => files.map((f) => {
       const sc = olScope(f, c);
-      CO.parts.push({ key: 'olf:' + f.p, title: fileName(f.p), where: f.p.slice(0, f.p.length - fileName(f.p).length), kind: 'tests', blocks: olFileMarks(sc), paths: [f.p], said: olSaid(olCounts(sc)) || 'no sentence changes' });
+      CO.parts.push(coTestPart(sc));
       return olFileHtml(sc, { secs: tests.secs.get(f) });
     }).join('');
     let h = headerHtml({
@@ -4751,7 +4751,7 @@
       below: fam && fam.commit ? commitNoteHtml(fam) + (state.card === fam.commit.sha && hxOn() && HX.index.has(state.card) ? detailHtml(HX.index.get(state.card), '') : '') : '',
     });
     h += `<div class="graph-box chain-graph"><div class="graph-scroll">${graphSvg(c)}</div>${graphLegendHtml(c)}</div>`;
-    if (testOnly) return h + extNoteHtml(c) + testsHtml(tests.files) + '<div class="chain-end" aria-hidden="true"></div>';
+    if (testOnly) { const body = testsHtml(tests.files); CO.groups = coKindGroups(); return h + extNoteHtml(c) + body + '<div class="chain-end" aria-hidden="true"></div>'; }
     const focused = state.focus && state.focus.chain === c.id ? c.graph.nodes[state.focus.node] : null;
     if (focused) {
       const { l2 } = nodeLabels(focused);
@@ -4788,7 +4788,7 @@
       const title = ns.length > 1 ? names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '') : l2;
       const where = ns.length > 1 ? l1 : owner ? owner + ' · ' + l1 : l1;
       const paths = [...new Set(blocks.map((b) => b.file.p))], kinds = new Set(paths.map(coKind));
-      CO.parts.push({ key: 'sec-' + n.idx, node: n.idx, title, where: where === 'top level' ? '' : where, kind: kinds.size === 1 ? [...kinds][0] : 'code', blocks, paths });
+      CO.parts.push({ key: 'sec-' + n.idx, node: n.idx, sel: `#sec-${n.idx}:not(.ol-sec)`, title, where: where === 'top level' ? '' : where, group: kinds.size === 1 ? [...kinds][0] : 'code', blocks, paths });
       h += `<section class="sec${lensOn() && !blocks.some((b) => b.edits.length && blockIn(b)) ? ' lens-out' : ''}" id="sec-${n.idx}"${ns.length > 1 ? ` data-secs="${ns.map((x) => x.idx).join(' ')}"` : ''}><div class="sec-h"><b${ns.length > 1 ? ` title="${esc(names.join(', '))}"` : ''}>${esc(title)}</b><span>${esc(where)}</span>${keys.has(c.graph.root) ? '<span class="tag">root</span>' : ''}${rel ? `<span title="${esc(full)}">${esc(rel)}</span>` : ''}<span class="sp"></span>`
         + `<span class="hov"><span>${leftWords(ns2)} · ${plusMinus(sumOf(blocks, 'adds'), sumOf(blocks, 'dels'))}</span>${outOfLens(ns2) ? '' : `<button type="button" class="btn xs" data-act="mark-blocks" data-blocks="${esc(ns.flatMap((x) => x.blocks).join(' '))}">${ns2.open ? 'Mark reviewed' : 'Mark unreviewed'}</button>`}</span></div>`
         + ns.map((x) => extNoteHtml(c, x)).join('');
@@ -4810,6 +4810,7 @@
     });
     const testFiles = focused ? tests.files.filter((f) => tests.secs.get(f).includes(focused.idx)) : tests.files;
     if (testFiles.length) h += `<div class="ol-sect">Tests${testFiles.length > 1 ? ` · ${testFiles.length} files` : ''}</div>` + testsHtml(testFiles);
+    CO.groups = coKindGroups();
     return h + '<div class="chain-end" aria-hidden="true"></div>';
   }
   // ---------- pinned groups: over a test file's code or outline, the groups of the line at the top
@@ -4930,23 +4931,33 @@
   const CO = { parts: [], els: [], ys: [], at: null, went: null, open: false, openT: 0, closeT: 0, placed: false };
   const CO_KINDS = [['doc', 'Docs'], ['model', 'Models'], ['deps', 'Dependencies'], ['code', 'Code'], ['tests', 'Tests']];
   const coKind = (p) => (/\.(md|markdown)$/i.test(p) ? 'doc' : /\.spy\.ya?ml$/.test(p) ? 'model' : /(^|\/)pubspec\.yaml$/.test(p) ? 'deps' : 'code');
+  // A chain's groups: its kinds, in their order.
+  const coKindGroups = () => CO_KINDS.filter(([k]) => CO.parts.some((p) => p.group === k)).map(([key, label]) => ({ key, label }));
+  // A test file as a part: in a chain, of the tests; in the Tests view, of its package (the folders
+  // above its test folder).
+  function coTestPart(sc, byPackage) {
+    const p = sc.f.p, dir = p.slice(0, p.length - fileName(p).length), folders = dir.split('/').slice(0, -1);
+    let k = folders.length - 1;
+    while (k >= 0 && !/^(test|test_[a-z0-9_]+|integration_test)$/.test(folders[k])) k--;
+    return { key: 'olf:' + p, sel: `.ol-sec[data-olf="${CSS.escape(p)}"]`, title: fileName(p), where: dir, group: byPackage ? folders.slice(0, Math.max(0, k)).join('/') : 'tests', blocks: olFileMarks(sc), paths: [p], said: olSaid(olCounts(sc)) || 'no sentence changes' };
+  }
   const coRail = $('#vw-rail'), coRailIn = coRail && coRail.firstElementChild, coPanel = $('#vw-ol');
-  const coOn = () => !!coPanel && state.view.kind === 'chain' && CO.parts.length > 1;
+  const coOn = () => !!coPanel && (state.view.kind === 'chain' || state.view.kind === 'tests') && CO.parts.length > 1;
   const coPinned = () => coOn() && !!UI.outline && !compact();
-  const coEl = (p) => (p.node != null ? main.querySelector(`#sec-${p.node}:not(.ol-sec)`) : main.querySelector(`.ol-sec[data-olf="${CSS.escape(p.key.slice(4))}"]`));
+  const coEl = (p) => main.querySelector(p.sel);
   const coDone = (st) => st.total > 0 && !st.open;
   function coRowHtml(p) {
-    const st = stats(p.blocks), sub = p.kind === 'tests' ? p.said : p.where;
-    const title = `${p.title}${p.paths.length === 1 && p.kind !== 'tests' ? ` · ${p.paths[0]}` : ''}: ${leftWords(st)}`;
+    const st = stats(p.blocks), sub = p.said || p.where;
+    const title = `${p.title}${p.paths.length === 1 && !p.said ? ` · ${p.paths[0]}` : ''}: ${leftWords(st)}`;
     return `<button type="button" class="sb-row co-r${coDone(st) ? ' done' : ''}" data-act="co-go" data-key="${esc(p.key)}"${CO.at === p.key ? ' aria-current="true"' : ''} title="${esc(title)}">${markHtml(st)}<span class="nm">${esc(p.title)}${sub ? `<span class="sn">${esc(sub)}</span>` : ''}</span><span class="cnt">${p.paths.length === 1 ? openThreadsHtml(p.paths[0]) : ''}${st.open ? `<span>${fmt(st.open)}</span>` : ''}</span></button>`;
   }
   function coPanelHtml() {
     let h = '';
-    for (const [k, label] of CO_KINDS) {
-      const list = CO.parts.filter((p) => p.kind === k);
+    for (const g of CO.groups) {
+      const list = CO.parts.filter((p) => p.group === g.key);
       if (!list.length) continue;
       const done = list.filter((p) => coDone(stats(p.blocks))).length;
-      h += `<div class="co-g"><span>${label}</span><span>${list.length}${done ? ` · ${done} reviewed` : ''}</span></div>` + list.map(coRowHtml).join('');
+      h += `<div class="co-g"><span>${g.label}</span><span>${list.length}${done ? ` · ${done} reviewed` : ''}</span></div>` + list.map(coRowHtml).join('');
     }
     const pinned = coPinned();
     return `<div class="co-h"><b>Outline</b><span>${plural(CO.parts.length, 'part')}</span><button type="button" class="ib co-keep" data-act="co-keep" aria-pressed="${pinned}" title="${pinned ? 'Let it go: the rail opens it again (o)' : 'Keep it open, as a column (o)'}" aria-label="Keep the outline open">${ICON.pin}</button></div><div class="co-b">${h}</div>`;
@@ -5006,6 +5017,12 @@
         at = CO.parts[k].key;
       }
     }
+    // The Tests view's header reads the test file being read, as a chain's reads its member.
+    if (state.view.kind === 'tests') {
+      const here = main.querySelector('.fv-head .fv-here'), p = CO.parts.find((x) => x.key === at), i = CO.parts.indexOf(p);
+      const h = p ? `Reading <b>${esc(p.title)}</b> · ${i + 1} of ${CO.parts.length}` : '';
+      if (here && here.innerHTML !== h) here.innerHTML = h;
+    }
     if (at === CO.at) return;
     CO.at = at;
     const k = CO.parts.findIndex((p) => p.key === at);
@@ -5057,7 +5074,7 @@
     if (compact()) coOpen(false);
     const there = () => { CO.went = { key, top: main.scrollTop }; CO.at = null; coSpy(); };
     if (p.node != null) return goNode(p.node, there);
-    const el = coEl(p), row = el && el.querySelector('.ol-file');
+    const el = coEl(p), row = el && (el.querySelector('.ol-file') || el);
     if (el) glideTo(el, headH() + 8, 0, () => { if (row) { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); } there(); });
   }
   if (coRail) {
@@ -5272,18 +5289,30 @@
       crumbs: '<b class="ui">Tests</b>',
       facts: t.all ? `${olSaid(t)} · ${plural(t.files, 'file')}` : 'No sentence changes',
       nav: true,
+      lead: '<button type="button" class="fv-here" data-act="co-toggle" title="The outline of the Tests view: its test files, by package (o)"></button>',
       pinned: `<div class="ol-bar"><span class="mini-seg" role="group" aria-label="Which sentences">${b('tests-filter', 'all', filter, 'All', 'Every sentence the tests add, reword, regroup or remove', t.all)}${b('tests-filter', 'new', filter, 'New', 'The new sentences', t.new)}${b('tests-filter', 'reworded', filter, 'Reworded', 'The sentences whose words changed', t.reworded)}${b('tests-filter', 'regrouped', filter, 'Regrouped', 'The same sentences, in new groups', t.regrouped)}${b('tests-filter', 'removed', filter, 'Removed', 'The sentences that are gone', t.removed)}</span><span class="sp"></span><span class="mini-seg" role="group" aria-label="Read as">${b('tests-mode', 'nested', mode, 'Nested', 'Each title once, nested as the groups nest')}${b('tests-mode', 'sentences', mode, 'Sentences', 'Each test as its whole sentence')}</span></div>`,
     });
+    CO.parts = [];
+    CO.groups = [];
     if (!scopes.length) return h + '<div class="empty">No test file changed in this comparison.</div>';
-    const body = said.map((sc) => olFileHtml(sc, { chips: true, sentences: mode === 'sentences', filter, settle: true })).join('');
+    // Its parts, for its outline: each test file shown, by package.
+    const body = said.map((sc) => {
+      const html = olFileHtml(sc, { chips: true, sentences: mode === 'sentences', filter, settle: true });
+      if (html) CO.parts.push(coTestPart(sc, true));
+      return html;
+    }).join('');
     h += body || `<div class="empty">No ${filter === 'all' ? 'sentence changes' : filter + ' sentences'} in this comparison.</div>`;
     if (filter === 'all' && code.length) {
       // Folded under the sentences; open when it's all there is (a click folds it).
       const key = said.length ? 'tests:code' : 'tests:code:shut', open = said.length ? state.olUnfold.has(key) : !state.olUnfold.has(key);
       const calls = code.reduce((x, sc) => x + sc.edited.length, 0);
-      h += `<div class="ol-sect">Code under sentences that stay</div><div class="ol-fold cf" data-act="ol-unfold" data-key="${key}"${open ? '' : foldStop(code.flatMap(olFileMarks))} role="button" tabindex="0" aria-expanded="${open}"><span class="car">${open ? ICON.chevronDown : ICON.chevronRight}</span>${plural(code.length, 'file')} change${code.length === 1 ? 's' : ''} no sentence${calls ? `: ${plural(calls, 'call')} with edited setup or bodies` : ''}</div>`;
+      const what = `${plural(code.length, 'file')} change${code.length === 1 ? 's' : ''} no sentence`;
+      h += `<div class="ol-sect" data-co="code">Code under sentences that stay</div><div class="ol-fold cf" data-act="ol-unfold" data-key="${key}"${open ? '' : foldStop(code.flatMap(olFileMarks))} role="button" tabindex="0" aria-expanded="${open}"><span class="car">${open ? ICON.chevronDown : ICON.chevronRight}</span>${what}${calls ? `: ${plural(calls, 'call')} with edited setup or bodies` : ''}</div>`;
+      CO.parts.push({ key: 'tests:code', sel: '.ol-sect[data-co="code"]', title: what, where: '', group: 'code', blocks: code.flatMap(olFileMarks), paths: [] });
       if (open) h += code.map((sc) => olFileHtml(sc, {})).join('');
     }
+    // Its groups: the packages, in the page's order, then the code under sentences that stay.
+    CO.groups = [...new Set(CO.parts.map((p) => p.group))].map((g) => ({ key: g, label: g === 'code' ? 'Code under sentences that stay' : g ? codeIn(g) : 'The repository’s package' }));
     return h;
   }
   // ---------- the Models view: the Serverpod models the review adds, changes or removes, by package.
@@ -7767,7 +7796,7 @@
       const k = (...keys) => keys.map((x) => `<kbd>${x}</kbd>`).join('');
       keysEl.innerHTML = '<h2>Keys</h2><dl>'
         + [[k('j', 'k'), 'Next and previous change to review'], [k('Space'), 'Mark the change reviewed and go to the next one'], [k('Shift', 'Space'), 'Mark the hunk, or the member in a chain'],
-          [k('n', 'p'), 'Next and previous chain with changes to review'], [k('g'), 'The chain’s graph, over the code, and back'], [k('o'), 'The chain’s outline, kept open as a column, and let go'], [k(MOD, 'K'), 'Jump to a chain, file, symbol or thread'],
+          [k('n', 'p'), 'Next and previous chain with changes to review'], [k('g'), 'The chain’s graph, over the code, and back'], [k('o'), 'The outline of a chain or of the Tests view, kept open as a column, and let go'], [k(MOD, 'K'), 'Jump to a chain, file, symbol or thread'],
           [k('c'), 'Comment on the line you’re on'], [k(...BACK_KEY.split(' ')), 'Back to where you were'], [k(MOD, 'B'), 'Show or hide the sidebar'], [k('Esc'), 'Close the peek, the palette, a menu or a commit’s details; then show every change again (the lens off)'], [k('?'), 'These keys']]
           .map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('') + '</dl>';
       viewer.appendChild(keysEl);
@@ -9305,16 +9334,16 @@
     const cv = $('#vw-mini');
     const SCALE = 2 / 20.625;
     let rows = [], stale = true, raf = 0, drag = null, hover = false, settle = 0, measured = 0;
-    // Not in the Tests view, nor for a test's code opened under its sentence in a chain: coming
-    // and going with it, the minimap would narrow the page and move the sentences.
-    const on = () => !!cv && UI.minimap && window.innerWidth > 960 && state.view.kind !== 'tests' && !!main.querySelector('.code:not(.ol-sec .code)');
+    // With code, or an outline of tests: drawn from the start, it never comes with a test's code
+    // opening under its sentence, which would narrow the page and move the sentences.
+    const on = () => !!cv && UI.minimap && window.innerWidth > 960 && !!main.querySelector('.code:not(.ol-sec .code), :scope > .ol-sec');
     // Where each row is in the pane, and what it is.
     function build() {
       stale = false;
       measured = main.scrollHeight;
       rows = [];
       const top = main.getBoundingClientRect().top - main.scrollTop;
-      main.querySelectorAll('.ln, .sl, .hh, .th, .peek, .sec-h, .sym-h, .sec-file, .inst-file, .strip, .graph-box, .focus-bar').forEach((el) => {
+      main.querySelectorAll('.ln, .sl, .hh, .th, .peek, .sec-h, .sym-h, .sec-file, .inst-file, .strip, .graph-box, .focus-bar, .ol-file, .ol-row, .ol-fold, .ol-sect').forEach((el) => {
         const r = el.getBoundingClientRect();
         if (!r.height) return;
         const row = { y: r.top - top, h: r.height, k: 'head' };
@@ -9328,7 +9357,16 @@
           const ind = text.length - text.trimStart().length;
           row.ind = Math.min(40, ind);
           row.len = Math.min(70, text.trim().length);
-        } else if (c.contains('hh')) { row.k = 'div'; row.todo = el.hasAttribute('data-nav'); }
+        } else if (c.contains('ol-row')) {
+          // A test's or a group's row: its title's words, a step in for each group above it.
+          row.k = c.contains('new') ? 'add' : c.contains('del') ? 'del' : 'ctx';
+          row.rv = c.contains('done');
+          row.todo = el.hasAttribute('data-nav');
+          const d = Number(el.style.getPropertyValue('--d') || 0), tt = el.querySelector('.ol-tt');
+          row.ind = Math.min(40, 4 + d * 4);
+          row.len = Math.min(70, tt ? tt.textContent.trim().length * 0.8 : 20);
+        } else if (c.contains('ol-fold')) row.k = 'div';
+        else if (c.contains('hh')) { row.k = 'div'; row.todo = el.hasAttribute('data-nav'); }
         else if (c.contains('th')) row.k = 'th';
         else if (c.contains('peek')) row.k = 'peek';
         rows.push(row);

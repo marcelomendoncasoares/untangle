@@ -501,7 +501,9 @@ in the group's body.
   last 120 px; another view fades in (from above, going back). With "reduce motion", all of it is
   instant.
 - **Panels:** the sidebar resizes from its edge and hides (Ctrl B); a minimap at the right of the
-  code shows the view small, with what's left to review in amber and threads in blue.
+  code shows the view small, with what's left to review in amber and threads in blue. It shows
+  where there's code or an outline of tests, the Tests view's included, drawing an outline's rows
+  too: there from the start, it never comes with a test's code and narrows the page.
 - **The chain's outline:** a chain's parts by kind (docs, models, dependencies, code, then the
   test files; kinds read from the paths), each a click from its place, the page keeping its
   graph's order. At rest it's a rail on the minimap's edge, a dash at each part's place in the
@@ -509,7 +511,9 @@ in the group's body.
   the rail slides the outline in from the right, over the minimap and the code, the page still;
   it goes when the pointer leaves. Kept open (o, a click on the rail, or the header's Reading),
   it's a column at the page's right, and the page narrows for it; Esc in it lets it go. On a
-  phone, Reading opens it as a sheet.
+  phone, Reading opens it as a sheet. The Tests view has one too: its test files by package (the
+  folders above their test folder), then the code under sentences that stay, its header reading
+  the test file you're in.
 - **The Files tab is a folder tree,** folders first, with a folder that holds only one folder
   shown with it (`lib/src/mcp`), as VS Code compacts them.
 - **The sidebar's tabs pin their views** at the top, over a line, while the list scrolls: the

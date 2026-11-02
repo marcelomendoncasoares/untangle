@@ -509,9 +509,9 @@ describe('Given a served review by commit: a discount with its tests, more tests
       shown = seen.join('\n');
     });
 
-    it('then no minimap comes with its code, and the page keeps its width.', () => {
+    it('then the minimap is there before its code opens, and the page keeps its width.', () => {
       const [width] = /\d+ px/.exec(shown) ?? [''];
-      assert.equal(shown, Array(4).fill(`no minimap, ${width} wide`).join('\n'));
+      assert.equal(shown, Array(4).fill(`a minimap, ${width} wide`).join('\n'));
     });
   });
 

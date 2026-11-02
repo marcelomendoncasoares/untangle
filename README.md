@@ -465,7 +465,7 @@ day, and once the review is up it says whether an upgrade brings a newer `untang
 | <kbd>Shift</kbd> <kbd>Space</kbd> | mark the hunk, or the member in a chain                                           |
 | <kbd>n</kbd> <kbd>p</kbd>         | next and previous chain with changes to review                                    |
 | <kbd>g</kbd>                      | the chain's graph, over the code, and back                                        |
-| <kbd>o</kbd>                      | the chain's outline, kept open as a column, and let go                            |
+| <kbd>o</kbd>                      | the outline of a chain or of the Tests view, kept open as a column, and let go    |
 | <kbd>Ctrl</kbd> <kbd>K</kbd>      | jump to a chain, file, symbol or thread                                           |
 | <kbd>c</kbd>                      | comment on the line you're on (a note, in local mode)                             |
 | <kbd>Alt</kbd> <kbd>←</kbd>       | back to where you were                                                            |

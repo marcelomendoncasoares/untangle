@@ -18,6 +18,7 @@ const cart = `int total(List<int> prices) => prices.fold(0, (sum, price) => sum 
 const discounted = `import 'ledger.dart';\n\n${lines(30, (i) => `/// Step ${i} of the discount.\n`)}int discounted(List<int> prices, int off) {\n${lines(30, (i) => `  final step${i} = prices.length + ${i};\n`)}  return total(prices) - off;\n}\n`;
 const ledger = `class: Ledger\ntable: ledgers\nfields:\n${lines(12, (i) => `  entry${i}: int\n`)}`;
 const doc = `# Discounts\n\n${lines(16, (i) => `A discount takes ${i} off the total.\n\n`)}`;
+const ledgerTests = `import 'package:core/ledger.dart';\n\nvoid main() {\n  group('Given an empty ledger,', () {\n    final ledger = Ledger();\n\n${lines(4, (i) => `    test('when entry ${i} is read, then it is zero.', () {\n      expect(ledger.entry(${i}), 0);\n    });\n\n`)}  });\n}\n`;
 const tests = `import 'package:sample/discount.dart';\n\nvoid main() {\n  group('Given a cart with a discount of one,', () {\n    final prices = [1, 2];\n\n${lines(6, (i) => `    test('when the total is taken ${i} times, then the discount comes off.', () {\n      expect(discounted(prices, 1), 2);\n    });\n\n`)}  });\n}\n`;
 
 /** The rail as read: shown or not, its dashes top to bottom (amber, ok, and the one being read), and whether it sits on the minimap's edge. */
@@ -70,6 +71,7 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     repo.write('lib/src/models/ledger.spy.yaml', ledger);
     repo.write('docs/discounts.md', doc);
     repo.write('test/discount_test.dart', tests);
+    repo.write('packages/core/test/ledger_test.dart', ledgerTests);
     const first = ada('2020-09-02T15:00:00Z');
     repo.commit({ subject: 'feat: Take a discount', author: first, committer: first });
     cache = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-cache-'));
@@ -100,7 +102,7 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     });
 
     it('then a rail on the minimap’s edge has a dash at each part’s place, the first one being read.', () => {
-      assert.equal(rail, 'at · · ·, top to bottom, on the minimap’s edge');
+      assert.equal(rail, 'at · · · ·, top to bottom, on the minimap’s edge');
     });
 
     it('then the code stops at the minimap, and the rail ends the page.', () => {
@@ -121,7 +123,7 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
       right = await read(page!, rightRead);
     });
 
-    it('then the outline opens with the chain’s parts by kind: the doc, the model, the code, then the test file.', () => {
+    it('then the outline opens with the chain’s parts by kind: the doc, the model, the code, then the test files.', () => {
       assert.equal(rows, [
         '# Docs · 1',
         '  • discounts.md 1',
@@ -129,7 +131,8 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
         '  • Ledger (ledger.spy.yaml) 1',
         '# Code · 1',
         '> • discounted (discount.dart) 2',
-        '# Tests · 1',
+        '# Tests · 2',
+        '  • ledger_test.dart (4 new) 6',
         '  • discount_test.dart (6 new) 8',
       ].join('\n'));
     });
@@ -157,11 +160,11 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     });
 
     it('then the page goes to the doc, the header reads it and the rail lights its dash, the outline still open.', () => {
-      assert.equal(went, 'Reading discounts.md · 3 of 5 | · at · ·, top to bottom, on the minimap’s edge | open');
+      assert.equal(went, 'Reading discounts.md · 3 of 6 | · at · · ·, top to bottom, on the minimap’s edge | open');
     });
 
     it('then the outline closes, and the page stays at the doc.', () => {
-      assert.equal(left, 'Reading discounts.md · 3 of 5 | · at · ·, top to bottom, on the minimap’s edge');
+      assert.equal(left, 'Reading discounts.md · 3 of 6 | · at · · ·, top to bottom, on the minimap’s edge');
     });
   });
 
@@ -228,7 +231,38 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     });
   });
 
-  describe('when the page is a phone’s, and the header’s Reading is tapped, then the test file’s row, ', () => {
+  describe('when the Tests view opens, and the pointer rests on its rail, ', () => {
+    let atRest = '';
+    let rows = '';
+
+    before(async () => {
+      await rest(page!);
+      await page!.click('[data-tab="chains"]');
+      await page!.click('[data-act="tests-open"]');
+      await page!.until(`!!document.querySelector('#vw-main .ol-file') && !document.querySelector('#vw-rail').hidden && !!document.querySelector('#vw-rail i[style]')`);
+      atRest = await read(page!, `document.querySelector('.fv-here').textContent + ' | ' + ${railRead} + ' | ' + ${rightRead}`);
+      await page!.hover('#vw-rail', { scroll: false });
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-open')`);
+      rows = await read(page!, outlineRead);
+      await page!.hover('.fv-head .crumbs', { scroll: false });
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-open')`);
+    });
+
+    it('then a minimap shows the page small with the rail on its edge, and the header reads the first test file.', () => {
+      assert.equal(atRest, 'Reading ledger_test.dart · 1 of 2 | at ·, top to bottom, on the minimap’s edge | code 1052px, minimap 64px, rail 12px, to the page’s edge');
+    });
+
+    it('then the outline lists its test files by package.', () => {
+      assert.equal(rows, [
+        '# packages/core · 1',
+        '> • ledger_test.dart (4 new) 6',
+        '# The repository’s package · 1',
+        '  • discount_test.dart (6 new) 8',
+      ].join('\n'));
+    });
+  });
+
+  describe('when the page is a phone’s, and the header’s Reading is tapped, then the last test file’s row, ', () => {
     let sheet = '';
     let went = '';
 
@@ -240,9 +274,9 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
       await page!.click('.fv-here');
       await page!.until(`document.querySelector('#viewer').classList.contains('co-open') && getComputedStyle(document.querySelector('#vw-shade')).opacity === '1'`);
       sheet = await read(page!, `(() => { const r = document.querySelector('#vw-ol').getBoundingClientRect(); return Math.round(r.left) + '–' + Math.round(r.right) + ' of ' + innerWidth + ', ' + (getComputedStyle(document.querySelector('#vw-shade')).opacity === '1' ? 'over a shade' : 'no shade'); })()`);
-      await page!.click('#vw-ol .co-r[data-key^="olf:"]');
+      await page!.click('#vw-ol .co-r[data-key^="olf:"]:last-of-type');
       await page!.until(`!document.querySelector('#viewer').classList.contains('co-open')`);
-      went = await read(page!, `(() => { const el = document.querySelector('.ol-sec[data-olf]'); const r = el.getBoundingClientRect(); return el.dataset.olf + ' at ' + (r.top >= 0 && r.top < innerHeight / 2 ? 'the top' : Math.round(r.top) + 'px'); })()`);
+      went = await read(page!, `(() => { const el = [...document.querySelectorAll('.ol-sec[data-olf]')].pop(); const r = el.getBoundingClientRect(); return el.dataset.olf + ' at ' + (r.top >= 0 && r.top < innerHeight / 2 ? 'the top' : Math.round(r.top) + 'px'); })()`);
       await page!.setViewport(1400, 900);
     });
 
