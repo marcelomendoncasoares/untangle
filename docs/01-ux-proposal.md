@@ -294,9 +294,11 @@ declared; the review collapses its back-and-forths.
    started of its own, is a **follow-up**: it joins that chain. Any other commit starts a
    chain with what it started: one that **builds on** the chain it revised, or that
    **revises** several.
-3. **Blocks.** A block goes to the chain that started most of its lines (the older one on a
-   tie), and a whole new declaration goes with it. A test group's setup is no declaration:
-   each of its blocks goes on its own.
+3. **Blocks.** A block goes to the chain that started most of its lines (on a tie, the one
+   that started more of its words, then the older one), and a whole new declaration goes with
+   it. A test group's setup is no declaration: each of its blocks goes on its own. A call's
+   `group(` that kept the origin of the one it replaced doesn't outweigh the title written
+   with it.
    - A block no commit made goes with the nearest change of its file, the one after it on a
      tie: the addition that replaces it. Git's diff of the whole review can pair lines the
      commits never touched; a closing brace pushed down shows as removed there and added
@@ -368,7 +370,9 @@ and reviewing a test starts there: the code is there to confirm it.
 5. **In a chain.** A chain reads its test members as their files' outlines, after its code: what
    it changed in what they assert, with every group that completes each sentence (dimmed when
    unchanged, with the commit that wrote it when another chain did). A group the chain wrote or
-   renamed brings the tests under it, whichever commit wrote them.
+   renamed brings the tests under it, whichever commit wrote them: one another commit wrote
+   reads as the change it is (its sign, its lines, its mark), with that commit named, as its
+   code does there, and stays out of the chain's counts, j, k and the pill.
    - Unchanged siblings fold under "+N unchanged whens"; code edited under sentences that stay
      (setup, bodies) follows the outline, and changes outside every call (imports, helpers)
      come last, both open: they're the chain's code.

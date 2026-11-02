@@ -4294,13 +4294,15 @@
   function olScope(f, chain) {
     const ol = olOf(f);
     const block = (k) => f.blocks[k];
-    const live = (b) => !!b && b.edits.length > 0 && (!chain || chain.blockSet.has(b.id));
-    const blocks = (ks) => (ks || []).map(block).filter(live);
-    const st = new Map();
-    for (const n of ol.nodes) {
-      const own = (n.own || []).filter(([k]) => live(block(k)));
-      const head = blocks(n.head).length > 0;
-      const via = n.k === 't' && olPath(n).slice(0, -1).some((g) => g.st === 'renamed' && blocks(g.head).length > 0);
+    const liveIn = (c) => (b) => !!b && b.edits.length > 0 && (!c || c.blockSet.has(b.id));
+    const live = liveIn(chain);
+    const blocks = (ks, ok = live) => (ks || []).map(block).filter(ok);
+    // A call's status in a scope (a chain, or the whole review) and its blocks there.
+    const statusIn = (c, n) => {
+      const ok = liveIn(c);
+      const own = (n.own || []).filter(([k]) => ok(block(k)));
+      const head = blocks(n.head, ok).length > 0;
+      const via = n.k === 't' && olPath(n).slice(0, -1).some((g) => g.st === 'renamed' && blocks(g.head, ok).length > 0);
       let s = null;
       if (n.k === 't') {
         if (n.st === 'new' && (own.length || head)) s = 'new';
@@ -4308,18 +4310,22 @@
         else if (n.st === 'regrouped' && (own.length || head || via)) s = 'regrouped';
         else if (own.length) s = 'edited';
       } else if (n.l) s = own.length ? 'edited' : null;
-      else if (n.st === 'new' && (head || (!chain && own.length))) s = 'new';
+      else if (n.st === 'new' && (head || (!c && own.length))) s = 'new';
       else if (n.st === 'renamed' && head) s = 'renamed';
       else if (own.length) s = 'edited';
       const mine = [...new Set(own.map((o) => o[0]).concat(n.head || []))];
-      st.set(n, { s, adds: own.reduce((x, o) => x + o[1], 0), dels: own.reduce((x, o) => x + o[2], 0), setup: own.length > 0, own: blocks(mine), all: blocks(n.b) });
-    }
+      return { s, adds: own.reduce((x, o) => x + o[1], 0), dels: own.reduce((x, o) => x + o[2], 0), setup: own.length > 0, own: blocks(mine, ok), all: blocks(n.b, ok) };
+    };
+    const st = new Map(ol.nodes.map((n) => [n, statusIn(chain, n)]));
     const show = new Set();
     const up = (n) => { for (let x = n; x; x = x.parent) show.add(x); };
     const primary = (n) => ['new', 'reworded', 'regrouped', 'renamed'].includes(st.get(n).s);
     ol.nodes.forEach((n) => { if (primary(n)) up(n); });
     // A group the scope wrote or renamed brings its tests along: it wrote part of their sentences.
     ol.nodes.forEach((g) => { if (g.k !== 't' && primary(g)) ol.nodes.forEach((n) => { if (n.k === 't' && olPath(n).includes(g)) up(n); }); });
+    // One that another chain wrote reads as the change it is, with its lines and its mark, as its
+    // code does here: other, so the chain's counts, j, k and the pill pass it by.
+    if (chain) show.forEach((n) => { if (n.k === 't' && !st.get(n).s) { const r = statusIn(null, n); if (r.s) st.set(n, { ...r, other: true }); } });
     const rm = ol.removed.filter((r) => blocks(r.b).length > 0);
     rm.forEach((r) => up(r.parent));
     const edited = ol.nodes.filter((n) => !show.has(n) && st.get(n).s === 'edited');
@@ -4328,7 +4334,7 @@
   }
   function olCounts(sc) {
     const c = { new: 0, reworded: 0, regrouped: 0, removed: 0 };
-    sc.show.forEach((n) => { const s = sc.st.get(n).s; if (n.k === 't' && c[s] != null) c[s]++; });
+    sc.show.forEach((n) => { const s = sc.st.get(n); if (n.k === 't' && !s.other && c[s.s] != null) c[s.s]++; });
     sc.rm.forEach((r) => { c.removed += r.leaves.length; });
     return c;
   }
@@ -4424,7 +4430,7 @@
     return `<div class="code ol-code" data-p="${esc(f.p)}" style="--d:${n.removed ? (n.parent ? n.parent.depth + 1 : 0) : n.depth}">${h}</div>`;
   }
   // One call's row. o.chips: name the chain that wrote what this row shows as changed (the Tests
-  // view); in a chain, groups another chain wrote name it.
+  // view); in a chain, the calls another chain wrote name it.
   function olRowHtml(sc, n, o) {
     const f = sc.f, s = sc.st.get(n) || { s: null, own: [], all: [] };
     const key = olKey(f, n);
@@ -4438,7 +4444,7 @@
     const body = test && s.s === 'edited';
     if (body) tags.push(olTag(`body ${olPm(s.adds, s.dels)}`, 'Its body changed; its sentence didn’t'));
     const shown = s.s === 'new' || s.s === 'renamed' || (s.s === 'reworded' && was);
-    const writer = (o.chips && shown) || (sc.chain && !shown) ? olWriter(f, n) : null;
+    const writer = (o.chips && shown) || (sc.chain && (!shown || s.other)) ? olWriter(f, n) : null;
     const chip = writer && (!sc.chain || (writer.id !== sc.chain.id && !(sc.chain.sha && chainSha(writer) === sc.chain.sha))) ? olChip(writer, key, o.chips) : '';
     const marks = s.s ? s.all : [];
     const st = stats(marks), todo = stats(s.own).open > 0;
@@ -4446,12 +4452,12 @@
     // A group partly reviewed: its mark shows a dash, and its title mutes once its own lines are.
     const part = !test && st.open > 0 && st.open < st.total;
     const tick = marks.length && !outOfLens(st) ? olTickHtml(marks, st, test ? 'Mark this test reviewed' : part ? `Mark the rest of this group reviewed (${st.open} of ${st.total} to review)` : 'Mark this group reviewed: its setup and everything under it') : '<span class="ol-tick-sp"></span>';
-    const nav = s.own.length ? ` data-mark="${esc(s.own.map((b) => b.id).join(' '))}" data-block="${esc(s.own[0].id)}"${todo ? ' data-nav="1"' : ''}` : '';
+    const nav = s.own.length && !s.other ? ` data-mark="${esc(s.own.map((b) => b.id).join(' '))}" data-block="${esc(s.own[0].id)}"${todo ? ' data-nav="1"' : ''}` : '';
     const muted = marks.length && (!st.open || (!test && s.own.length && !todo));
     return `<div class="ol-row ${cls}${n.l ? ' lbl' : ''}${open ? ' open' : ''}${muted ? ' done' : ''}" data-act="ol-open" data-ol="${esc(key)}"${nav} style="--d:${n.depth}" role="button" tabindex="0" aria-expanded="${open}">`
       + `<span class="ol-mk" aria-hidden="true">${OL_MARK[cls] || ''}</span>`
       + `<span class="ol-tt">${n.l ? esc(n.t) : olWords(n.t, was)}${olNoSetup(n)}</span>`
-      + `<span class="ol-meta">${olExpects(n)}${body ? '' : olDiff(sc, n)}${chip}<button type="button" class="ol-go" data-open="${esc(f.p)}" data-line="${n.s}" title="Open in the file, at line ${n.s}" aria-label="Open in the file">${ICON.intoFile}</button>${tags.join('')}${tick}</span></div>`
+      + `<span class="ol-meta">${olExpects(n)}${body ? '' : olDiff(s.other ? { ...sc, chain: null } : sc, n)}${chip}<button type="button" class="ol-go" data-open="${esc(f.p)}" data-line="${n.s}" title="Open in the file, at line ${n.s}" aria-label="Open in the file">${ICON.intoFile}</button>${tags.join('')}${tick}</span></div>`
       + (open ? olCodeHtml(sc, n) : '');
   }
   // A review mark for what a row covers: on when all of it is reviewed, a dash when some of it is.

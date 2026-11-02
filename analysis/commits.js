@@ -4,8 +4,9 @@
 // that changed more lines of one chain than it started of its own is a follow-up and joins that
 // chain. Any other commit starts a chain with the lines it started, linked to the chains whose
 // lines it changed: it builds on one, or revises several. A block goes to the chain that started
-// most of its lines, and a whole new declaration goes with it; a change no commit made goes with
-// the change beside it. Merges from the base's branch start nothing.
+// most of its lines (on a tie, most of its words), and a whole new declaration goes with it; a
+// change no commit made goes with the change beside it. Merges from the base's branch start
+// nothing.
 
 const CONV = /^(\w+)(\(([^)]*)\))?!?:\s*(.*)$/;
 
@@ -19,6 +20,7 @@ export function subjectParts(subject) {
 
 const lineCount = (text) => (!text ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0));
 const wordy = (row) => /\w/.test(row.text);
+const words = (row) => (row.text.match(/\w+/g) || []).length;
 
 /**
  * Families of blocks by commit. `blocks`: the review's changes, each with its reading unit.
@@ -74,17 +76,25 @@ export function commitFamilies({ provenance, files, blocks }) {
     else if (byFamily.size > 1) roles[i].role = 'revises';
   });
 
-  // A block, or a whole new declaration, goes to the family that started most of its lines;
-  // the older one on a tie. A test group's setup is no declaration: each of its blocks votes.
+  // A block, or a whole new declaration, goes to the family that started most of its lines; on a
+  // tie, the one that started more of its words (a call's `group(` that kept the origin of one
+  // it replaced doesn't outweigh the title written with it), then the older one. A test group's
+  // setup is no declaration: each of its blocks votes.
   const whole = (b) => (b.unit && b.unit.kind !== 'setup' ? b.unit : null);
   const vote = (list) => {
     const tally = new Map();
     for (const b of list) for (const r of counted(b)) {
       const c = creditOf(b.file, r);
-      if (c >= 0) { const f = find(c); tally.set(f, (tally.get(f) || 0) + 1); }
+      if (c < 0) continue;
+      const f = find(c), t = tally.get(f) || { lines: 0, words: 0 };
+      t.lines++;
+      t.words += words(r);
+      tally.set(f, t);
     }
-    let best = -1, most = 0;
-    tally.forEach((n, f) => { if (n > most || (n === most && f < best)) { best = f; most = n; } });
+    let best = -1, most = { lines: 0, words: 0 };
+    tally.forEach((t, f) => {
+      if (t.lines > most.lines || (t.lines === most.lines && (t.words > most.words || (t.words === most.words && f < best)))) { best = f; most = t; }
+    });
     return best;
   };
   const rootOf = new Map();

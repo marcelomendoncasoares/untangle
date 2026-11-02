@@ -395,3 +395,37 @@ describe('Given a commit that adds a test file and a later commit that adds a te
     });
   });
 });
+
+describe('Given a commit that adds a test under a Given and a later commit that moves it under a new Given beside a new test, ', { skip: skipDart }, () => {
+  const tests = (given: string, more: string) => `import 'package:sample/report.dart';\n\nvoid main() {\n  group(\n    '${given}',\n    () {\n      test('then it reports one.', () {\n        report(1);\n      });\n${more}    },\n  );\n}\n`;
+  const base = { 'lib/report.dart': 'void report(int total) {}\n' };
+  const commits: FeatureCommit[] = [
+    { subject: 'test: Cover the report', files: { 'test/report_test.dart': tests('Given a report of a total taken from a single long import,', '') } },
+    { subject: 'test: Name the empty ledger', files: { 'test/report_test.dart': tests('Given an empty ledger,', "\n      test('then it reports none.', () {\n        report(0);\n      });\n") } },
+  ];
+
+  describe('when the review follows the commits, ', () => {
+    let review: BuiltReview | undefined;
+
+    before(async () => {
+      review = await buildDartHistory(base, commits);
+    });
+
+    after(() => review?.remove());
+
+    it('then the Given goes with the commit that wrote its title, though its group( line kept the first one\'s origin.', () => {
+      assert.equal(familiesOf(review!), [
+        'by history',
+        'test Cover the report',
+        '  commits: test: Cover the report (start)',
+        '  chains: commit Cover the report [test/report_test.dart#0 test/report_test.dart#1 test/report_test.dart#3]',
+        '  changed later by: test: Name the empty ledger (1)',
+        'test Name the empty ledger',
+        '  commits: test: Name the empty ledger (builds-on)',
+        '  chains: commit Name the empty ledger [test/report_test.dart#2 test/report_test.dart#4]',
+        '  builds on: Cover the report',
+        'renames: none',
+      ].join('\n'));
+    });
+  });
+});

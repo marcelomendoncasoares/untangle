@@ -305,12 +305,12 @@ describe('Given a served review by commit: a discount with its tests, more tests
       ].join('\n'));
     });
 
-    it('then the tests another commit wrote in the file are still to review.', () => {
+    it('then the tests another commit wrote in the file are still to review, and the one the marked commit added under its Given reads reviewed there too.', () => {
       assert.equal(other, [
         'cart_test.dart · 1 new',
         '  + Given a cart with a discount of one,',
         '    + when the total is taken, then the discount comes off.',
-        `    · when nothing is bought, then nothing comes off. [${moreSha.slice(0, 7)}]`,
+        `    + when nothing is bought, then nothing comes off. [${moreSha.slice(0, 7)}] (reviewed)`,
         'file to review',
       ].join('\n'));
     });
@@ -360,21 +360,28 @@ describe('Given a served review by commit: a discount with its tests, more tests
 
   describe('when the chain of the commit that changes code and tests is opened, ', () => {
     let page1 = '';
+    let later = '';
 
     before(async () => {
       await rest(page!);
       await openChain(page!, 'Take a discount');
-      page1 = await read(page!, `[...document.querySelectorAll('#vw-main .sec > .sec-h > b, #vw-main .ol-sect')].map((el) => el.textContent.trim()).join(' | ') + '\\n' + ${rowsRead}`);
+      page1 = await read(page!, `[...document.querySelectorAll('#vw-main .sec > .sec-h > b, #vw-main .ol-sect')].map((el) => el.textContent.trim()).join(' | ') + '\\n' + ${rowsRead} + '\\n' + (document.querySelector('#vw-pill .pill-n')?.textContent ?? 'no pill')`);
+      later = await read(page!, `(() => { const row = document.querySelector(${JSON.stringify(await rowSelector(page!, 'when nothing is bought, then nothing comes off.'))}); return [row.querySelector('.ol-df')?.textContent ?? 'no lines', row.querySelector('.ol-tick')?.title ?? 'no mark', row.hasAttribute('data-nav') ? 'a stop' : 'no stop'].join(' · '); })()`);
     });
 
-    it('then its tests follow its code, as their outline, with the test a later commit added to its new Given.', () => {
+    it('then its tests follow its code, as their outline, with the test a later commit added to its new Given, which the pill leaves to that commit.', () => {
       assert.equal(page1, [
         'discounted | Tests',
         'cart_test.dart · 1 new',
         '  + Given a cart with a discount of one,',
         '    + when the total is taken, then the discount comes off.',
-        `    · when nothing is bought, then nothing comes off. [${moreSha.slice(0, 7)}]`,
+        `    + when nothing is bought, then nothing comes off. [${moreSha.slice(0, 7)}]`,
+        '1 of 3',
       ].join('\n'));
+    });
+
+    it('then that test reads as the addition it is: its lines and its mark show, and j and k pass it by.', () => {
+      assert.equal(later, '+2 · Mark this test reviewed · no stop');
     });
   });
 
@@ -387,13 +394,13 @@ describe('Given a served review by commit: a discount with its tests, more tests
       rows = await read(page!, rowsRead);
     });
 
-    it('then the Given shows the words that changed, and its test reads reworded through it.', () => {
+    it('then the Given shows the words that changed, its test reads reworded through it, and the test a later commit added under it reads new, with that commit named.', () => {
       assert.equal(rows, [
         'cart_test.dart · 1 reworded',
         '  ~ Given a cart [-with-]{+holding+} two items,',
         '    · when the total is taken,',
         '      ~ then it adds the prices. [reworded above]',
-        `      · then it is positive. [${moreSha.slice(0, 7)}]`,
+        `      + then it is positive. [${moreSha.slice(0, 7)}]`,
       ].join('\n'));
     });
   });

@@ -194,13 +194,13 @@ describe('Given a served review with a commit that adds tests to an earlier one�
       ].join('\n'));
     });
 
-    it('then the tests the earlier commit wrote in the file are still to review.', () => {
+    it('then the tests the earlier commit wrote in the file are still to review, and the one the marked commit added under its Given reads reviewed there too.', () => {
       assert.equal(other, [
         'Tests · Diff Close',
         'cart_test.dart · 1 new',
         '  + Given a cart with a discount of one,',
         '    + when the total is taken, then the discount comes off.',
-        '    · when nothing is bought, then nothing comes off.',
+        '    + when nothing is bought, then nothing comes off. (reviewed)',
       ].join('\n'));
     });
   });
