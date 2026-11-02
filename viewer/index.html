@@ -275,11 +275,14 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* The scrollbar's room is kept while nothing scrolls: what opens never narrows the page. */
 .vw-main { position: absolute; inset: 0; right: calc(var(--mini-w) + var(--rail-w) + var(--col-w)); overflow: auto; scrollbar-gutter: stable; container-type: inline-size; background: var(--sheet); scrollbar-width: thin; scrollbar-color: #2C2C34 transparent; }
 /* What sits at the page's right, which narrows for it: the minimap, the chain outline's rail on its
-   edge, and the outline itself, kept open as a column. */
+   edge, and the outline itself, kept open as a column. Kept or let go, the column's room grows or
+   shrinks and the page slides with it. */
+@property --col-w { syntax: '<length>'; inherits: true; initial-value: 0px; }
 .vw { --mini-w: 0px; --rail-w: 0px; --col-w: 0px; }
 .vw.mini-on { --mini-w: 64px; }
 .vw.co-rail { --rail-w: 12px; }
 .vw.co-pin { --col-w: 300px; }
+.vw.co-moving { transition: --col-w var(--med) var(--ease); }
 .vw-pill { margin-left: calc((var(--mini-w) + var(--rail-w) + var(--col-w)) / -2); }
 /* Room under the last line for the review pill. */
 .vw-main::after { content: ""; display: block; height: 88px; }
@@ -307,6 +310,9 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .vw-ol[hidden] { display: none; }
 .vw.co-open .vw-ol { visibility: visible; transform: none; transition: transform var(--med) var(--ease); }
 .vw.co-pin .vw-ol { top: 0; z-index: 4; visibility: visible; transform: none; background: var(--sheet); box-shadow: -1px 0 0 var(--hair); transition: none; }
+/* Kept, it slides in as the column, or the outline over the code grows up into it; let go, it
+   slides back out. */
+.vw.co-moving .vw-ol { transition: transform var(--med) var(--ease), top var(--med) var(--ease), background-color var(--med) var(--ease), box-shadow var(--med) var(--ease), visibility var(--med); }
 .co-h { display: flex; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--hair); font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .co-h b { font-size: 13px; font-weight: 600; color: var(--text); }
 .co-h .co-keep { margin-left: auto; }

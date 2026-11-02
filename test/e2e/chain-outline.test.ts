@@ -45,6 +45,34 @@ const rightRead = `(() => {
   return parts.map(([name, r]) => name + ' ' + (r[1] - r[0]) + 'px').join(', ') + (Math.round(parts[parts.length - 1][1][1]) === Math.round(sheet.right) ? ', to the page’s edge' : '');
 })()`;
 
+/**
+ * Arms a record of the transitions the next key or click starts on the page's right side, read
+ * from window.__moves: the page's room for the column, and the outline's place and top, each from
+ * what to what. Read as the action lands, it doesn't hang on how many frames a busy machine draws.
+ */
+const movesWatch = `void (() => {
+  window.__moves = null;
+  if (window.__movesOn) return;
+  window.__movesOn = true;
+  const record = () => {
+    if (window.__moves !== null) return;
+    const page = document.querySelector('#viewer'), ol = document.querySelector('#vw-ol');
+    getComputedStyle(page).getPropertyValue('--col-w');
+    getComputedStyle(ol).transform;
+    const seen = [];
+    for (const [name, el, props] of [['page', page, ['--col-w']], ['outline', ol, ['transform', 'top']]]) {
+      for (const a of el.getAnimations()) {
+        if (!props.includes(a.transitionProperty)) continue;
+        const kf = a.effect.getKeyframes();
+        seen.push(name + ' ' + a.transitionProperty + ' ' + kf[0][a.transitionProperty] + ' → ' + kf[kf.length - 1][a.transitionProperty]);
+      }
+    }
+    window.__moves = seen.join('; ') || 'nothing moved';
+  };
+  document.addEventListener('keydown', record);
+  document.addEventListener('click', record);
+})()`;
+
 describe('Given a served review by commit of a commit that changes a doc, a model, code and its tests, ', { skip, timeout: 240_000 }, () => {
   let repo: TempRepo | undefined;
   let run: UntangleRun | undefined;
@@ -246,6 +274,66 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
 
     it('then Esc in it lets it go, and the code takes its room back.', () => {
       assert.equal(esc, 'code 1052px, minimap 64px, rail 12px, to the page’s edge');
+    });
+  });
+
+  describe('with motion on, when o keeps the outline, then lets it go, and the rail’s outline is kept, then let go from its pin, ', () => {
+    let kept = '';
+    let letGo = '';
+    let grown = '';
+    let still = '';
+
+    before(async () => {
+      await rest(page!);
+      await openChain();
+      await page!.reducedMotion(false);
+      try {
+        await page!.eval(movesWatch);
+        await page!.key('o');
+        await page!.until(`!document.querySelector('#viewer').classList.contains('co-moving')`);
+        kept = await read(page!, `window.__moves + '\\n' + ${rightRead}`);
+        await page!.eval(movesWatch);
+        await page!.key('o');
+        await page!.until(`!document.querySelector('#viewer').classList.contains('co-moving') && getComputedStyle(document.querySelector('#vw-ol')).visibility === 'hidden'`);
+        letGo = await read(page!, `window.__moves + '\\n' + ${rightRead}`);
+        await page!.hover('#vw-rail', { scroll: false });
+        await page!.until(`document.querySelector('#viewer').classList.contains('co-open') && getComputedStyle(document.querySelector('#vw-ol')).transform === 'none'`);
+        await page!.eval(movesWatch);
+        await page!.click('#vw-ol [data-act="co-keep"]');
+        await page!.until(`!document.querySelector('#viewer').classList.contains('co-moving')`);
+        grown = await read(page!, `window.__moves + '\\n' + ${rightRead}`);
+        await page!.click('#vw-ol [data-act="co-keep"]');
+        await page!.until(`!document.querySelector('#viewer').classList.contains('co-moving') && getComputedStyle(document.querySelector('#vw-ol')).visibility === 'hidden'`);
+        await page!.eval(`new Promise((r) => setTimeout(r, 500))`);
+        still = await read(page!, `(document.querySelector('#viewer').classList.contains('co-open') ? 'open' : 'closed') + ', the pointer on ' + (document.querySelector('#vw-rail').matches(':hover') ? 'the rail' : 'something else')`);
+      } finally {
+        await page!.reducedMotion(true);
+      }
+    });
+
+    it('then the column slides in from the right as its room grows, the code narrowing and the minimap sliding over with it.', () => {
+      assert.equal(kept, [
+        'page --col-w 0px → 300px; outline transform translateX(104%) → none',
+        'code 752px, minimap 64px, rail 12px, outline 300px, to the page’s edge',
+      ].join('\n'));
+    });
+
+    it('then it slides back out as its room shrinks, the code widening and the minimap sliding back.', () => {
+      assert.equal(letGo, [
+        'page --col-w 300px → 0px; outline transform none → translateX(104%)',
+        'code 1052px, minimap 64px, rail 12px, to the page’s edge',
+      ].join('\n'));
+    });
+
+    it('then the outline over the code grows up into the column, in its place, as the page slides out from under it.', () => {
+      assert.equal(grown, [
+        'page --col-w 0px → 300px; outline top 86px → 0px',
+        'code 752px, minimap 64px, rail 12px, outline 300px, to the page’s edge',
+      ].join('\n'));
+    });
+
+    it('then the rail sliding back under the still pointer doesn’t open the outline again.', () => {
+      assert.equal(still, 'closed, the pointer on the rail');
     });
   });
 

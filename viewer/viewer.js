@@ -4928,7 +4928,7 @@
   // read. Hovered, the outline slides in from the right over the minimap and the code; kept (o, a
   // click on the rail, or the header's Reading), it's a column at the page's right, and the page
   // narrows for it. On a phone, the header's Reading opens it as a sheet.
-  const CO = { parts: [], els: [], ys: [], at: null, went: null, open: false, openT: 0, closeT: 0, placed: false };
+  const CO = { parts: [], els: [], ys: [], at: null, went: null, open: false, openT: 0, closeT: 0, moveT: 0, still: null, placed: false };
   const CO_KINDS = [['doc', 'Docs'], ['model', 'Models'], ['deps', 'Dependencies'], ['code', 'Code'], ['tests', 'Tests']];
   const coKind = (p) => (/\.(md|markdown)$/i.test(p) ? 'doc' : /\.spy\.ya?ml$/.test(p) ? 'model' : /(^|\/)pubspec\.yaml$/.test(p) ? 'deps' : 'code');
   // A chain's groups: its kinds, in their order.
@@ -4979,7 +4979,8 @@
     coRailIn.innerHTML = CO.parts.map((p) => `<i class="${coDone(stats(p.blocks)) ? 'ok' : ''}"></i>`).join('');
     CO.placed = false;
     coPanel.hidden = false;
-    coPanel.innerHTML = coPinned() || CO.open ? coPanelHtml() : '';
+    // Drawn while it shows; as it goes, it's left as it was, to slide out whole.
+    if (coPinned() || CO.open) coPanel.innerHTML = coPanelHtml();
     CO.at = null;
     coSpy();
   }
@@ -5057,17 +5058,37 @@
     if (!coOn()) return;
     if (compact()) coOpen(!CO.open);
     else {
+      // Kept from nothing, it comes in at its full height, as it goes back out once let go: not
+      // from or to the hover's top. Kept from the hover, it grows up from there.
+      if (!CO.open) { viewer.style.setProperty('--co-top', '0px'); void getComputedStyle(coPanel).top; }
       UI.outline = !UI.outline;
       saveUI();
+      // Let go, the rail slides back to the page's edge, maybe under the pointer: that doesn't open
+      // the outline again until the pointer moves.
+      CO.still = !UI.outline && pointerAt ? [...pointerAt] : null;
+      coMove();
       CO.open = false;
       viewer.classList.remove('co-open');
       coRender();
-      mini.update();
     }
     const shown = CO.open || coPinned();
     if (shown && fromKey) (coPanel.querySelector('.co-r[aria-current="true"]') || coPanel.querySelector('.co-r'))?.focus({ preventScroll: true });
     if (!shown && coPanel.contains(document.activeElement)) document.activeElement.blur();
   }
+  // The column's room grows or shrinks, and the page slides with it; once it's settled, the
+  // minimap and the rail measure the page at its new width.
+  function coMove() {
+    clearTimeout(CO.moveT);
+    const anim = moving();
+    viewer.classList.toggle('co-moving', anim);
+    CO.moveT = setTimeout(coSettled, anim ? 1000 : 0);
+  }
+  function coSettled() {
+    clearTimeout(CO.moveT);
+    viewer.classList.remove('co-moving');
+    mini.update();
+  }
+  viewer.addEventListener('transitionend', (e) => { if (e.target === viewer && e.propertyName === '--col-w') coSettled(); });
   function coGo(key) {
     const p = CO.parts.find((x) => x.key === key);
     if (!p) return;
@@ -5078,7 +5099,10 @@
     if (el) glideTo(el, headH() + 8, 0, () => { if (row) { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); } there(); });
   }
   if (coRail) {
-    coRail.addEventListener('pointerenter', () => { clearTimeout(CO.closeT); if (!coPinned() && !CO.open) CO.openT = setTimeout(() => coOpen(true), 120); });
+    const still = () => !!CO.still && !!pointerAt && pointerAt[0] === CO.still[0] && pointerAt[1] === CO.still[1];
+    const rest = () => { if (!coPinned() && !CO.open) CO.openT = setTimeout(() => coOpen(true), 120); };
+    coRail.addEventListener('pointerenter', () => { clearTimeout(CO.closeT); if (!still()) rest(); });
+    coRail.addEventListener('pointermove', () => { if (CO.still && !still()) { CO.still = null; rest(); } });
     coRail.addEventListener('pointerleave', coLeave);
     coPanel.addEventListener('pointerenter', () => clearTimeout(CO.closeT));
     coPanel.addEventListener('pointerleave', coLeave);

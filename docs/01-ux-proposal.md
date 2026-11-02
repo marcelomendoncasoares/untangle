@@ -498,8 +498,9 @@ in the group's body.
   details, grows from where it was asked and folds back there when it closes; a test's code, or
   what an outline's fold holds, opens downward from its row and folds back into it; going to a
   change scrolls to it and pulses it; landing further down the page jumps, then glides over the
-  last 120 px; another view fades in (from above, going back). With "reduce motion", all of it is
-  instant.
+  last 120 px; another view fades in (from above, going back); a chain's outline, kept, slides in
+  as a column (or grows up into it from its hover) as the page slides over for it, and let go,
+  slides back out. With "reduce motion", all of it is instant.
 - **Panels:** the sidebar resizes from its edge and hides (Ctrl B); a minimap at the right of the
   code shows the view small, with what's left to review in amber and threads in blue. It shows
   where there's code or an outline of tests, the Tests view's included, drawing an outline's rows
