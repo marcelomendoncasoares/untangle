@@ -101,7 +101,7 @@ Space marks the change in front of you and goes to the next; the pill under the 
 you are among the changes left ("1 of 224"). Reviewed code stays on screen, muted, and a hunk
 folds away once its last change is reviewed. In the Files tab, a file's dot marks all of its
 changes, and a folder's, at the end of its row under the pointer, those of every file under it;
-the toast says what was marked, with Undo. Your review is kept in git: the base plus every
+in a chain's outline, a part's dot marks the part's. The toast says what was marked, with Undo. Your review is kept in git: the base plus every
 change you marked. A new push brings back only what changed since you looked, and a rebase
 replays your marks onto the new base.
 

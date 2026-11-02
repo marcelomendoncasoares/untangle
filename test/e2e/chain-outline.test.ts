@@ -243,6 +243,61 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     });
   });
 
+  describe('when a test file’s mark is clicked in the outline, then the toast’s Undo, then Shift+Space on its row in the column, ', () => {
+    const row = '#vw-ol .co-r[data-key="olf:test/discount_test.dart"]';
+    let marked = '';
+    let undone = '';
+    let keyed = '';
+
+    before(async () => {
+      await rest(page!);
+      await openChain();
+      await page!.hover('#vw-rail', { scroll: false });
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-open')`);
+      await page!.click(`${row} .mk-b`);
+      await page!.until(`!!document.querySelector('${row} .mk.ok')`);
+      marked = await read(page!, `${outlineRead} + '\\n' + ${railRead} + '\\n' + document.querySelector('#vw-toast').childNodes[0].textContent + '\\n' + (document.querySelector('#viewer').classList.contains('co-open') ? 'still open' : 'closed')`);
+      await page!.click('#vw-toast [data-undo]');
+      await page!.until(`!document.querySelector('#vw-rail i:last-child').classList.contains('ok')`);
+      undone = await read(page!, railRead);
+      await page!.key('o');
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-pin')`);
+      await page!.eval(`document.querySelector('${row}').focus()`);
+      await page!.key(' ', { shift: true });
+      await page!.until(`!!document.querySelector('${row} .mk.ok')`);
+      keyed = await read(page!, `(document.activeElement === document.querySelector('${row}') ? 'the focus on its row, ' : 'the focus elsewhere, ') + ${railRead}`);
+      await page!.key(' ', { shift: true });
+      await page!.until(`!document.querySelector('${row} .mk.ok')`);
+      await page!.key('o');
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-pin')`);
+    });
+
+    it('then its changes are marked reviewed: its row checks, its group counts it, its dash turns green, and the toast says so, the outline still open.', () => {
+      assert.equal(marked, [
+        '# Docs · 1',
+        '  • discounts.md 1',
+        '# Models · 1',
+        '  • Ledger (ledger.spy.yaml) 1',
+        '# Code · 1',
+        '> • discounted (discount.dart) 2',
+        '# Tests · 2 · 1 reviewed',
+        '  • ledger_test.dart (4 new) 6',
+        '  ✓ discount_test.dart (6 new) ',
+        'at · · · ok, top to bottom, on the minimap’s edge',
+        'Marked 8 changes reviewed, in discount_test.dart',
+        'still open',
+      ].join('\n'));
+    });
+
+    it('then Undo puts its marks back.', () => {
+      assert.equal(undone, 'at · · · ·, top to bottom, on the minimap’s edge');
+    });
+
+    it('then Shift+Space on its row marks it too, and the row keeps the focus.', () => {
+      assert.equal(keyed, 'the focus on its row, at · · · ok, top to bottom, on the minimap’s edge');
+    });
+  });
+
   describe('when o is pressed, ', () => {
     let pinned = '';
     let again = '';

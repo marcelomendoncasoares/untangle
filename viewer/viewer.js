@@ -4928,7 +4928,7 @@
   // read. Hovered, the outline slides in from the right over the minimap and the code; kept (o, a
   // click on the rail, or the header's Reading), it's a column at the page's right, and the page
   // narrows for it. On a phone, the header's Reading opens it as a sheet.
-  const CO = { parts: [], els: [], ys: [], at: null, went: null, open: false, openT: 0, closeT: 0, moveT: 0, still: null, placed: false };
+  const CO = { parts: [], els: [], ys: [], at: null, went: null, open: false, openT: 0, closeT: 0, moveT: 0, still: null, placed: false, sig: '' };
   const CO_KINDS = [['doc', 'Docs'], ['model', 'Models'], ['deps', 'Dependencies'], ['code', 'Code'], ['tests', 'Tests']];
   const coKind = (p) => (/\.(md|markdown)$/i.test(p) ? 'doc' : /\.spy\.ya?ml$/.test(p) ? 'model' : /(^|\/)pubspec\.yaml$/.test(p) ? 'deps' : 'code');
   // A chain's groups: its kinds, in their order.
@@ -4946,10 +4946,15 @@
   const coPinned = () => coOn() && !!UI.outline && !compact();
   const coEl = (p) => main.querySelector(p.sel);
   const coDone = (st) => st.total > 0 && !st.open;
+  // What a part's mark and its toast call it.
+  const coName = (p) => (p.key === 'tests:code' ? 'the code under sentences that stay' : p.title);
+  // A part's row goes to it; its mark marks it, as a file's does in the Files tab.
   function coRowHtml(p) {
     const st = stats(p.blocks), sub = p.said || p.where;
     const title = `${p.title}${p.paths.length === 1 && !p.said ? ` · ${p.paths[0]}` : ''}: ${leftWords(st)}`;
-    return `<button type="button" class="sb-row co-r${coDone(st) ? ' done' : ''}" data-act="co-go" data-key="${esc(p.key)}"${CO.at === p.key ? ' aria-current="true"' : ''} title="${esc(title)}">${markHtml(st)}<span class="nm">${esc(p.title)}${sub ? `<span class="sn">${esc(sub)}</span>` : ''}</span><span class="cnt">${p.paths.length === 1 ? openThreadsHtml(p.paths[0]) : ''}${st.open ? `<span>${fmt(st.open)}</span>` : ''}</span></button>`;
+    const mark = treeMarkHtml(st, `data-act="co-mark" data-key="${esc(p.key)}"`, 'the', ` in ${coName(p)}`);
+    const tag = mark ? 'div role="button" tabindex="0"' : 'button type="button"';
+    return `<${tag} class="sb-row co-r${coDone(st) ? ' done' : ''}" data-act="co-go" data-key="${esc(p.key)}"${CO.at === p.key ? ' aria-current="true"' : ''} title="${esc(title)}">${mark || markHtml(st)}<span class="nm">${esc(p.title)}${sub ? `<span class="sn">${esc(sub)}</span>` : ''}</span><span class="cnt">${p.paths.length === 1 ? openThreadsHtml(p.paths[0]) : ''}${st.open ? `<span>${fmt(st.open)}</span>` : ''}</span></${mark ? 'div' : 'button'}>`;
   }
   function coPanelHtml() {
     let h = '';
@@ -4973,15 +4978,25 @@
       if (coPanel) { coPanel.hidden = true; coPanel.innerHTML = ''; }
       if (coRailIn) coRailIn.innerHTML = '';
       CO.els = [];
+      CO.sig = '';
       return;
     }
+    // Another page's parts: the part being read is found again, and its row scrolled to.
+    const sig = CO.parts.map((p) => p.key).join(' ');
+    if (sig !== CO.sig) { CO.sig = sig; CO.at = null; }
     CO.els = CO.parts.map(coEl);
-    coRailIn.innerHTML = CO.parts.map((p) => `<i class="${coDone(stats(p.blocks)) ? 'ok' : ''}"></i>`).join('');
+    coRailIn.innerHTML = CO.parts.map((p) => `<i class="${coDone(stats(p.blocks)) ? 'ok' : ''}${p.key === CO.at ? ' at' : ''}"></i>`).join('');
     CO.placed = false;
     coPanel.hidden = false;
-    // Drawn while it shows; as it goes, it's left as it was, to slide out whole.
-    if (coPinned() || CO.open) coPanel.innerHTML = coPanelHtml();
-    CO.at = null;
+    // Drawn while it shows, its list scrolled where it was and the focus on the row that had it;
+    // as it goes, it's left as it was, to slide out whole.
+    if (coPinned() || CO.open) {
+      const box = coPanel.querySelector('.co-b'), top = box && CO.at ? box.scrollTop : 0;
+      const had = coPanel.contains(document.activeElement) && document.activeElement.closest('.co-r');
+      coPanel.innerHTML = coPanelHtml();
+      if (top) coPanel.querySelector('.co-b').scrollTop = top;
+      if (had) coPanel.querySelector(`.co-r[data-key="${CSS.escape(had.dataset.key)}"]`)?.focus({ preventScroll: true });
+    }
     coSpy();
   }
   // Where each part starts in the page, measured with the minimap's rows; then its dash's place
@@ -5061,6 +5076,8 @@
       // Kept from nothing, it comes in at its full height, as it goes back out once let go: not
       // from or to the hover's top. Kept from the hover, it grows up from there.
       if (!CO.open) { viewer.style.setProperty('--co-top', '0px'); void getComputedStyle(coPanel).top; }
+      // Shown from nothing, its list comes to the part being read.
+      if (!CO.open && !coPinned()) CO.at = null;
       UI.outline = !UI.outline;
       saveUI();
       // Let go, the rail slides back to the page's edge, maybe under the pointer: that doesn't open
@@ -5089,6 +5106,18 @@
     mini.update();
   }
   viewer.addEventListener('transitionend', (e) => { if (e.target === viewer && e.propertyName === '--col-w') coSettled(); });
+  // A part marked from its row's mark: its changes, as a file's mark in the Files tab marks its
+  // own (all reviewed: unmarked), the toast saying what, with Undo.
+  function coMark(key) {
+    const p = CO.parts.find((x) => x.key === key);
+    const blocks = p ? p.blocks.filter((b) => b.edits.length) : [];
+    if (!blocks.length) return;
+    const st = stats(blocks), on = st.open > 0, was = marksOf(blocks);
+    toggleBlocks(blocks);
+    hint({ mark: blocks.map((b) => b.id) });
+    render();
+    toast(`Marked ${plural(on ? st.open : st.total, 'change')} ${on ? 'reviewed' : 'unreviewed'}, in ${coName(p)}`, () => { restoreMarks(was); render(); });
+  }
   function coGo(key) {
     const p = CO.parts.find((x) => x.key === key);
     if (!p) return;
@@ -9011,6 +9040,7 @@
     if (act === 'code-size') { UI.codeSize = Math.min(16, Math.max(10, Math.round(codeSize()) + Number(d.step))); saveUI(); applyCode(); MENU.html = ''; renderMenu(); return render(); }
     if (act === 'shade') { if (SIDE.open) sideDrawer(false); if (CO.open) coOpen(false); return; }
     if (act === 'co-go') return coGo(d.key);
+    if (act === 'co-mark') return coMark(d.key);
     if (act === 'co-toggle' || act === 'co-keep') return coToggle(false);
     if (act === 'threads-fold') {
       const folded = new Set(Array.isArray(UI.foldedThreads) ? UI.foldedThreads : []);

@@ -512,8 +512,9 @@ in the group's body.
   the rail, or the minimap's edge beside it, slides the outline in from the right, over the
   minimap and the code, the page still; it goes when the pointer leaves. Kept open (o, a click
   on the rail, or the header's Reading), it's a column at the page's right, and the page narrows
-  for it; Esc in it lets it go. On a phone, Reading opens it as a sheet. The Tests view has one
-  too: its test files by package (the folders above their test folder), then the code under
+  for it; Esc in it lets it go. A row's dot marks its part, as a file's does in the Files tab,
+  with Undo in the toast. On a phone, Reading opens it as a sheet. The Tests view has one too:
+  its test files by package (the folders above their test folder), then the code under
   sentences that stay, its header reading the test file you're in.
 - **The Files tab is a folder tree,** folders first, with a folder that holds only one folder
   shown with it (`lib/src/mcp`), as VS Code compacts them.
