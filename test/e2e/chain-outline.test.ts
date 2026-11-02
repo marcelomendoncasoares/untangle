@@ -142,6 +142,53 @@ describe('Given a served review by commit of a commit that changes a doc, a mode
     });
   });
 
+  describe('when the pointer rests on the minimap’s edge beside the rail, and then on its middle, ', () => {
+    let edge = '';
+    let middle = '';
+
+    before(async () => {
+      await rest(page!);
+      await openChain();
+      await page!.hover('#vw-mini', { scroll: false, x: 0.9 });
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-open')`);
+      edge = await read(page!, `document.querySelector('#viewer').classList.contains('co-open') ? 'open' : 'closed'`);
+      await page!.hover('.fv-head .crumbs', { scroll: false });
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-open')`);
+      await page!.hover('#vw-mini', { scroll: false, x: 0.5 });
+      await page!.eval(`new Promise((r) => setTimeout(r, 500))`);
+      middle = await read(page!, `document.querySelector('#viewer').classList.contains('co-open') ? 'open' : 'closed'`);
+    });
+
+    it('then the edge opens the outline, as the rail does.', () => {
+      assert.equal(edge, 'open');
+    });
+
+    it('then the middle is the minimap’s alone.', () => {
+      assert.equal(middle, 'closed');
+    });
+  });
+
+  describe('when the outline is kept, and the minimap’s edge is clicked near its bottom, ', () => {
+    let clicked = '';
+
+    before(async () => {
+      await rest(page!);
+      await openChain();
+      await page!.key('o');
+      await page!.until(`document.querySelector('#viewer').classList.contains('co-pin')`);
+      await page!.eval(`document.querySelector('#vw-main').scrollTop = 0`);
+      await page!.clickRatio('#vw-mini', 0.9, 0.9, { scroll: false });
+      await page!.until(`document.querySelector('#vw-main').scrollTop > 0`);
+      clicked = await read(page!, `(document.querySelector('#viewer').classList.contains('co-pin') ? 'kept' : 'let go') + ', the page ' + (document.querySelector('#vw-main').scrollTop > 0 ? 'moved' : 'still')`);
+      await page!.click('#vw-ol [data-act="co-keep"]');
+      await page!.until(`!document.querySelector('#viewer').classList.contains('co-pin')`);
+    });
+
+    it('then the click is the minimap’s: the page moves, and the outline stays a column.', () => {
+      assert.equal(clicked, 'kept, the page moved');
+    });
+  });
+
   describe('when the doc’s row is clicked, and then the pointer leaves the outline, ', () => {
     let went = '';
     let left = '';

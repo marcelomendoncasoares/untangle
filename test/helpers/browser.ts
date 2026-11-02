@@ -64,7 +64,8 @@ export interface Browser {
   dragOnto(from: string, onto: string): Promise<void>;
   /** Clicks at a fraction of the element's box, 0 to 1 from the top left. */
   clickRatio(selector: string, xRatio: number, yRatio: number, opts?: { scroll?: boolean }): Promise<void>;
-  hover(selector: string, opts?: { scroll?: boolean }): Promise<void>;
+  /** Moves the pointer to the element's center, or to `x` and `y`, fractions of its box from the top left. */
+  hover(selector: string, opts?: { scroll?: boolean; x?: number; y?: number }): Promise<void>;
   /** Moves the pointer to the element's center and, two frames later, turns the wheel `dy` pixels there. */
   wheel(selector: string, dy: number): Promise<void>;
   type(text: string): Promise<void>;
@@ -380,9 +381,9 @@ export async function launchBrowser(width = 1400, height = 900): Promise<Browser
       const box = await boxOf(selector, opts.scroll !== false);
       await clickAt(box.left + box.width * xRatio, box.top + box.height * yRatio, 0, 1);
     },
-    async hover(selector: string, opts: { scroll?: boolean } = {}) {
+    async hover(selector: string, opts: { scroll?: boolean; x?: number; y?: number } = {}) {
       const box = await boxOf(selector, opts.scroll !== false);
-      await at(box.left + box.width / 2, box.top + box.height / 2, 'mouseMoved', 0, 0);
+      await at(box.left + box.width * (opts.x ?? 0.5), box.top + box.height * (opts.y ?? 0.5), 'mouseMoved', 0, 0);
     },
     async swipe(selector: string, dy: number) {
       const box = await boxOf(selector, false);

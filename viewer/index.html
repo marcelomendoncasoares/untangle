@@ -290,8 +290,13 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* The chain's outline. At rest, a rail on the minimap's edge: a dash at each part's place in the
    minimap, amber with changes to review, green reviewed, white for the part being read. Hovered,
    the outline slides in from the right over the minimap and the code, under the header, the page
-   still; kept open, it's a column at the page's right, and the page narrows for it. */
-.vw-rail { position: absolute; top: 0; right: var(--col-w); z-index: 3; width: 12px; height: 100%; overflow: hidden; cursor: pointer; }
+   still; kept open, it's a column at the page's right, and the page narrows for it. The rail
+   answers the pointer over the minimap's edge too, to be easier to hit; its dashes stay clipped
+   to it. Kept, a click there is the minimap's. */
+.vw-rail { position: absolute; top: 0; right: var(--col-w); z-index: 3; width: 12px; height: 100%; clip-path: inset(0 0 0 -12px); cursor: pointer; }
+.vw-rail::before { content: ""; position: absolute; top: 0; bottom: 0; right: 100%; width: 12px; }
+.vw.co-pin .vw-rail { clip-path: inset(0); }
+.vw.co-pin .vw-rail::before { display: none; }
 .vw-rail[hidden] { display: none; }
 .vw-rail > div { position: absolute; top: 0; left: 0; right: 0; }
 .vw-rail i { position: absolute; top: -8px; right: 2px; width: 7px; height: 3px; border-radius: 2px; background: var(--accent); opacity: .75; transition: width var(--fast) var(--ease), opacity var(--fast) var(--ease); }
