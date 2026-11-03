@@ -7536,6 +7536,39 @@
     const n = STACK.legs.length, behind = STACK.legs.some((l) => { const x = legNow(l.number); return !!x && x.notMergedUp > 0; });
     return `<button type="button" class="t-stack${behind ? ' warn' : ''}" data-act="menu" data-menu="stack" aria-haspopup="dialog" aria-expanded="${MENU.open === 'stack'}" title="${esc(`This review covers a stack of ${n} pull requests, from ${STACK.base.ref} up to #${topLeg()}${behind ? '. One has commits the pull request above it doesn’t have yet' : ''}`)}">${ICON.stack}<span>Stack of ${n}</span>${ICON.chevronDown}</button>`;
   }
+  // A window too narrow for all the top bar holds: what it can do without gives way a step at a
+  // time until the rest fits whole, so nothing is cut or drawn over what's beside it. The title's
+  // words shrink first, as the jump's do; then the jump's words, the memory and CPU, the alarm's
+  // aside, the jump's keys and the Reviews button's word go; then the title's facts, the last
+  // first; and last the pills and the agents' labels end in an ellipsis. It's worked out again
+  // when the bar changes size or what it holds.
+  const BAR = $('.vw-bar'), BAR_STEPS = ['bs-jump', 'bs-use', 'bs-aside', 'bs-keys', 'bs-revs'];
+  let barFrame = 0;
+  function fitBar() {
+    barFrame = 0;
+    const title = $('#vw-title');
+    BAR.classList.remove(...BAR_STEPS, 'bs-tight');
+    title.querySelectorAll(':scope > .gone').forEach((e) => e.classList.remove('gone'));
+    if (compact()) return;
+    // Whole: nothing past the bar's end, nothing of the title's facts clipped, and its badges of what
+    // isn't on GitHub all in sight.
+    const local = title.querySelector('.t-local'), end = () => BAR.getBoundingClientRect().right - parseFloat(getComputedStyle(BAR).paddingRight);
+    const last = () => [...BAR.children].reverse().find((e) => e.getClientRects().length);
+    const fits = () => last().getBoundingClientRect().right <= end() + 0.5 && title.scrollWidth <= title.clientWidth + 1 && (!local || local.classList.contains('gone') || local.scrollHeight <= local.clientHeight + 1);
+    for (const step of BAR_STEPS) {
+      if (fits()) return;
+      BAR.classList.add(step);
+    }
+    for (const fact of [...title.children].filter((e) => !e.classList.contains('t-pr') && e.getClientRects().length).reverse()) {
+      if (fits()) return;
+      fact.classList.add('gone');
+    }
+    if (!fits()) BAR.classList.add('bs-tight');
+  }
+  const fitBarSoon = () => { if (!barFrame) barFrame = requestAnimationFrame(fitBar); };
+  new ResizeObserver(fitBarSoon).observe(BAR);
+  new MutationObserver(fitBarSoon).observe(BAR, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
+  document.fonts?.ready.then(fitBarSoon);
   // The app bar, in a narrow window, names where you are: the view, and under it what the
   // header says about your place in it (the member being read), else its facts.
   let whereHtml = '';

@@ -132,7 +132,9 @@ mark { background: var(--accent-soft); color: var(--accent-ink); border-radius: 
 .vw-bar > .sp { flex: 1 1 0; min-width: 8px; }
 .vw-side-btn { margin: 0 -4px 0 -6px; }
 .vw-side-btn[hidden] { display: none; }
-.vw-title { display: flex; align-items: center; gap: 18px; min-width: 0; }
+/* The title clips what it can't fit, never drawn over what's beside it: its padding, taken back by
+   its margin, leaves room for its buttons' focus rings and hover. */
+.vw-title { display: flex; align-items: center; gap: 18px; min-width: 0; overflow: hidden; padding: 5px 6px; margin: -5px -6px; }
 /* Reviews: the others, from this one. Its count is the ones that need you. */
 .vw-revs { appearance: none; border: 0; display: inline-flex; align-items: center; gap: 7px; flex: none; height: 30px; margin-right: 2px; padding: 0 9px; border-radius: 8px; background: var(--raised); color: var(--text-2); font: 600 12.5px/1 var(--ui); white-space: nowrap; cursor: pointer; }
 .vw-revs:hover, .vw-revs[aria-expanded="true"] { background: var(--hover); color: var(--text); }
@@ -260,6 +262,20 @@ a.t-pr:hover { text-decoration: underline; text-decoration-color: var(--text-3);
 /* The box for a note on the review starts at two lines, and grows with what's written. */
 .ag-pop .cmp-ta, .ag-pop .cmp-pre { min-height: 60px; }
 .vw-review[hidden] { display: none; }
+/* A window too narrow for all the bar holds: what it can do without gives way a step at a time
+   (fitBar), each step a class on the bar. */
+.vw-bar.bs-jump .vw-jump { flex: none; min-width: 0; }
+.vw-bar.bs-jump .vw-jump > span, .vw-bar.bs-keys .vw-jump kbd, .vw-bar.bs-use .lsp-use, .vw-bar.bs-aside .vw-alarm em, .vw-bar.bs-revs .vw-revs > span, .vw-title > .gone { display: none; }
+.vw-bar.bs-keys .vw-jump { width: 30px; padding: 0; justify-content: center; }
+.vw-bar.bs-revs .vw-revs { padding: 0 8px; }
+/* Last, once the title's words are gone, the pills and the agents' labels end in an ellipsis,
+   their buttons whole. */
+.vw-bar.bs-tight .vw-title { flex-shrink: 1000000; }
+.vw-bar.bs-tight .vw-fresh { flex: 0 1 236px; width: auto; min-width: 132px; }
+.vw-bar.bs-tight .vw-alarm { flex: 0 1 auto; min-width: 128px; }
+.vw-bar.bs-tight .vw-agents, .vw-bar.bs-tight .vw-agent-w { flex: 0 1 auto; min-width: 64px; }
+.vw-bar.bs-tight .vw-agent { max-width: 100%; }
+.vw-bar.bs-tight .vw-alarm > span, .vw-bar.bs-tight .vw-agent .ag-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .vw-body { display: grid; grid-template-columns: var(--side-w) 0 minmax(0, 1fr); min-height: 0; }
 .vw.side-off .vw-body { grid-template-columns: 0 0 minmax(0, 1fr); }
 .vw.side-off .vw-side { visibility: hidden; padding: 0; }

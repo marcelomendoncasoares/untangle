@@ -27,6 +27,33 @@ const squeezed = `(() => {
   return seen;
 })()`;
 
+// The top bar at each width from 1800 px down to 961, a few frames apart so it fits itself: what
+// gave way, in order, and anything cut, past the bar's end or over the item beside it.
+const narrowed = `(async () => {
+  const bar = document.querySelector('.vw-bar'), title = document.querySelector('#vw-title'), seen = [], wrong = new Set();
+  const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const words = { 'bs-jump': 'the jump’s words', 'bs-use': 'the memory and CPU', 'bs-aside': 'the alarm’s aside', 'bs-keys': 'the jump’s keys', 'bs-revs': 'the Reviews button’s word', 't-local': 'the not pushed count', 't-commit': 'the commit', 't-state': 'the state', 't-stack': 'the stack', 'bs-tight': 'the pills’ and labels’ words, to an ellipsis' };
+  const name = (e) => e.id || e.className;
+  for (let w = 1800; w >= 961; w -= 3) {
+    bar.style.width = w + 'px';
+    await frames();
+    const end = bar.getBoundingClientRect().right - parseFloat(getComputedStyle(bar).paddingRight);
+    const items = [...bar.children].filter((e) => e.getClientRects().length && !e.classList.contains('sp'));
+    items.forEach((e, i) => {
+      const r = e.getBoundingClientRect();
+      if (r.right > end + 0.5) wrong.add(name(e) + ' past the end');
+      if (items[i + 1] && items[i + 1].getBoundingClientRect().left < r.right - 0.5) wrong.add(name(e) + ' over ' + name(items[i + 1]));
+      e.querySelectorAll('button').forEach((b) => { const x = b.getBoundingClientRect(); if (x.width && (x.left < r.left - 0.5 || x.right > r.right + 0.5)) wrong.add(b.textContent.trim() + ' cut'); });
+    });
+    if (title.scrollWidth > title.clientWidth + 1) wrong.add('the title’s facts cut');
+    const gave = [...bar.classList, ...[...title.querySelectorAll(':scope > .gone')].reverse().map((e) => e.classList[0])].filter((c) => words[c]).map((c) => words[c]);
+    const s = gave.join(', ') || 'all whole';
+    if (s !== seen[seen.length - 1]) seen.push(s);
+  }
+  bar.style.width = '';
+  return { seen, wrong: [...wrong] };
+})()`;
+
 describe('Given a pull request opened from its link, which an agent holds, with its page open, ', { skip, timeout: 300_000 }, () => {
   let f: ReturnType<typeof workingFixture>;
   let run: UntangleRun;
@@ -159,6 +186,22 @@ describe('Given a pull request opened from its link, which an agent holds, with 
     async () => {
       await page.until(`(document.querySelector('#vw-title .t-np') || {}).textContent === '1 not pushed'`, 30_000);
       assert.deepEqual(await page.eval(squeezed), ['the count whole', 'the count out of sight']);
+    },
+  );
+
+  it(
+    'when a report is drafted too, and the window narrows from 1800 px to 961, '
+    + 'then the bar never cuts an item, or draws one past its end or over another: what it can do without gives way, in order.',
+    async () => {
+      await client.call('feedback/draft', { method: 'POST', body: { kind: 'bug', text: 'The top bar', details: [], running: [] } });
+      await page.until(`!document.querySelector('#vw-alarm').hidden`, 30_000);
+      await page.setViewport(1800, 900);
+      try {
+        const steps = ['the jump’s words', 'the memory and CPU', 'the alarm’s aside', 'the jump’s keys', 'the Reviews button’s word', 'the not pushed count', 'the commit'];
+        assert.deepEqual(await page.eval(narrowed), { seen: ['all whole', ...steps.map((_, i) => steps.slice(0, i + 1).join(', '))], wrong: [] });
+      } finally {
+        await page.setViewport(1400, 900);
+      }
     },
   );
 });
