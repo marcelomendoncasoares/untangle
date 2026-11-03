@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { cacheRoot, worktreeDir } from './cache.js';
-import { git, gitAsync, gitMaybe, has, runAsync } from './exec.js';
+import { git, gitAsync, gitMaybe, has, runAsync, runDart } from './exec.js';
 
 /** A detached checkout of a commit, made once and reused. */
 export async function worktree(repo: string, repoKey: string, sha: string): Promise<string> {
@@ -164,11 +164,12 @@ export async function pubGet(dirs: string[], log: (line: string) => void): Promi
   const failed: string[] = [];
   for (const dir of dirs.filter((d) => !resolved(d))) {
     try {
-      await runAsync('dart', ['pub', 'get'], { cwd: dir, onLine: log });
+      await runDart(['pub', 'get'], { cwd: dir, onLine: log });
     } catch {
       try {
         if (!has('flutter')) throw new Error('no flutter');
-        await runAsync('flutter', ['pub', 'get'], { cwd: dir, onLine: log });
+        // On Windows flutter is flutter.bat, which only the shell starts.
+        await runAsync('flutter', ['pub', 'get'], { cwd: dir, onLine: log, shell: process.platform === 'win32' });
       } catch {
         failed.push(dir);
       }

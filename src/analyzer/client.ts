@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import { runAsync } from '../exec.js';
+import { runDart } from '../exec.js';
 import { ROOT } from '../version.js';
 
 export type Location = [string, number, number];
@@ -119,7 +119,7 @@ export class Analyzer {
   static async start(paths: string[], log: (line: string) => void = () => {}): Promise<Analyzer> {
     const executable = path.join(ROOT, 'dist', process.platform === 'win32' ? 'dart-analyzer.exe' : 'dart-analyzer');
     if (!fs.existsSync(executable)) throw new Error('The Dart extractor is not built. Install Dart 3.12+ and run npm run build.');
-    const sdk = (await runAsync('dart', [path.join(ROOT, 'scripts/dart-sdk.dart')])).trim();
+    const sdk = (await runDart([path.join(ROOT, 'scripts/dart-sdk.dart')])).trim();
     const analyzer = new Analyzer(executable, log);
 
     try {

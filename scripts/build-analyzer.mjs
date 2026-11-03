@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// tsc has built it: dart as untangle starts it, Flutter's dart.bat on Windows included.
+import { dartSpawn } from '../dist/exec.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = path.join(root, 'analyzer');
@@ -12,7 +14,7 @@ const stamp = output + '.sha256';
 let version;
 
 try {
-  version = execFileSync('dart', ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  version = execFileSync(...dartSpawn(['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
 } catch (error) {
   if (error.code !== 'ENOENT') throw error;
   console.log('Dart is unavailable; skipping the analyzer build. Dart reviews require Dart 3.12+ and npm run build.');
@@ -29,8 +31,8 @@ fs.mkdirSync(path.dirname(output), { recursive: true });
 const temporary = output + '.' + process.pid;
 
 try {
-  execFileSync('dart', ['pub', 'get', '--enforce-lockfile'], { cwd: source, stdio: 'inherit' });
-  execFileSync('dart', ['compile', 'exe', 'bin/extract.dart', '-o', temporary], { cwd: source, stdio: 'inherit' });
+  execFileSync(...dartSpawn(['pub', 'get', '--enforce-lockfile'], { cwd: source, stdio: 'inherit' }));
+  execFileSync(...dartSpawn(['compile', 'exe', 'bin/extract.dart', '-o', temporary], { cwd: source, stdio: 'inherit' }));
   fs.renameSync(temporary, output);
   fs.writeFileSync(stamp, fingerprint);
 } finally {

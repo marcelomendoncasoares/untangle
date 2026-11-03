@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter, type MessageConnection } from 'vscode-jsonrpc/node.js';
+import { dartSpawn } from '../exec.js';
 
 export interface Location {
   /** Absolute path. */
@@ -70,12 +71,12 @@ export class DartServer {
   }
 
   static async start(folders: Array<{ name: string; dir: string }>, opts: { clientVersion: string; log?: (line: string) => void }): Promise<DartServer> {
-    const child = spawn('dart', ['language-server', '--protocol=lsp', '--client-id', 'untangle', '--client-version', opts.clientVersion], {
+    const child = spawn(...dartSpawn(['language-server', '--protocol=lsp', '--client-id', 'untangle', '--client-version', opts.clientVersion], {
       cwd: folders[0].dir,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: GROUPS,
       windowsHide: true,
-    });
+    }));
     running.add(child);
     child.on('exit', () => running.delete(child));
     const conn = createMessageConnection(new StreamMessageReader(child.stdout!), new StreamMessageWriter(child.stdin!));

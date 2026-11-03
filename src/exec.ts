@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type SpawnOptions } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -57,6 +57,49 @@ export function runAsync(cmd: string, args: string[], opts: { cwd?: string; onLi
     child.on('close', (code) => (code === 0 ? resolve(out) : reject(new CommandError([cmd, ...args].join(' '), code, err || out))));
   });
 }
+
+/** How untangle starts dart: the program, what its environment adds, and whether it needs the shell. */
+export interface DartCommand { cmd: string; env?: Record<string, string>; shell?: boolean }
+
+const isFile = (p: string) => {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The dart on PATH, as untangle can start it. On Windows, a program started without the shell must
+ * be an .exe, and Flutter puts dart.bat on PATH: the dart.exe of the SDK it wraps runs instead, with
+ * FLUTTER_ROOT set as dart.bat sets it, so pub finds Flutter's packages. Another .bat or .cmd runs
+ * through the shell.
+ */
+export function dartCommand(): DartCommand {
+  if (process.platform !== 'win32') return { cmd: 'dart' };
+  const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase());
+  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    const file = exts.map((e) => path.join(dir, 'dart' + e)).find(isFile);
+    if (!file) continue;
+    if (/\.(exe|com)$/.test(file)) return { cmd: file };
+    const sdk = path.join(dir, 'cache', 'dart-sdk', 'bin', 'dart.exe');
+    return isFile(sdk) ? { cmd: sdk, env: { FLUTTER_ROOT: path.dirname(dir) } } : { cmd: file, shell: true };
+  }
+  return { cmd: 'dart' };
+}
+
+// Quoted for Windows' shell, which takes the line as it is.
+const forShell = (s: string) => (/^[\w.:/=@,+-]+$/.test(s) ? s : `"${s.replace(/"/g, '""')}"`);
+
+/** dart's program, arguments and options, as spawn takes them. */
+export function dartSpawn<T extends SpawnOptions>(args: string[], opts: T): [string, string[], T] {
+  const d = dartCommand();
+  const options = { ...opts, ...(d.env && { env: { ...(opts.env ?? process.env), ...d.env } }), ...(d.shell && { shell: true }) };
+  return d.shell ? [forShell(d.cmd), args.map(forShell), options] : [d.cmd, args, options];
+}
+
+/** Runs dart as runAsync runs a command. */
+export const runDart = (args: string[], opts: Parameters<typeof runAsync>[2] = {}) => runAsync(...dartSpawn(args, opts));
 
 /** Whether a command exists on PATH. */
 export function has(cmd: string): boolean {

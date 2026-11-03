@@ -276,7 +276,7 @@ sent, to delete when you like. Without `gh`, it fills in GitHub's form instead.
 ### 1. Install the requirements
 
 - **Node** 22 or later, and **git** 2.40 or later.
-- **Dart** 3.12 or later, with `dart` on `PATH` (Flutter's works).
+- **Dart** 3.12 or later, with `dart` on `PATH` (Flutter's works, its `dart.bat` on Windows too).
 - [**gh**](https://cli.github.com), optional, logged in with `gh auth login`. It finds a
 directory's pull request, reads private repositories, and brings the comments and reviews.
 `untangle` asks GitHub through `gh` as your own login, so it never handles a token. Without
