@@ -139,14 +139,14 @@ describe('Given a served review by commit: a discount with its tests, more tests
       rows = await read(page!, rowsRead);
     });
 
-    it('then its new thens read under their Given and when, dimmed, with the commit that last wrote each Given named.', () => {
+    it('then its new thens read under their Given and when, the when dimmed and each Given as the change another commit made of it, with that commit named.', () => {
       assert.equal(rows, [
         'cart_test.dart · 2 new',
-        `  · Given a cart holding two items, [${nameSha.slice(0, 7)}]`,
+        `  ~ Given a cart [-with-]{+holding+} two items, [${nameSha.slice(0, 7)}]`,
         '    · when the total is taken,',
         '      + then it is positive.',
         '      + 1 unchanged then',
-        `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
+        `  + Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
         '    + when nothing is bought, then nothing comes off.',
         '    + 1 unchanged when',
       ].join('\n'));
@@ -277,7 +277,7 @@ describe('Given a served review by commit: a discount with its tests, more tests
       assert.equal(`${rows}\n${pill}`, [
         'cart_test.dart · 2 new',
         '  1 test reviewed',
-        `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
+        `  + Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
         '    + when nothing is bought, then nothing comes off.',
         '    + 1 unchanged when',
         '1 of 1',
@@ -288,11 +288,11 @@ describe('Given a served review by commit: a discount with its tests, more tests
       assert.equal(opened, [
         'cart_test.dart · 2 new',
         '  Fold the 1 reviewed test',
-        `  · Given a cart holding two items, [${nameSha.slice(0, 7)}]`,
+        `  ~ Given a cart [-with-]{+holding+} two items, [${nameSha.slice(0, 7)}]`,
         '    · when the total is taken,',
         '      + then it is positive. (reviewed)',
         '      + 1 unchanged then',
-        `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
+        `  + Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
         '    + when nothing is bought, then nothing comes off.',
         '    + 1 unchanged when',
       ].join('\n'));
@@ -349,11 +349,11 @@ describe('Given a served review by commit: a discount with its tests, more tests
     it('then the file opens again, its tests to review.', () => {
       assert.equal(rows, [
         'cart_test.dart · 2 new',
-        `  · Given a cart holding two items, [${nameSha.slice(0, 7)}]`,
+        `  ~ Given a cart [-with-]{+holding+} two items, [${nameSha.slice(0, 7)}]`,
         '    · when the total is taken,',
         '      + then it is positive.',
         '      + 1 unchanged then',
-        `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
+        `  + Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
         '    + when nothing is bought, then nothing comes off.',
         '    + 1 unchanged when',
         'file to review',

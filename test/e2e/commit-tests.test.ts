@@ -126,7 +126,7 @@ describe('Given a served review with a commit that adds tests to an earlier one�
         '  · Given a cart with two items,',
         '    · when the total is taken,',
         '      + then it is positive.',
-        '  · Given a cart with a discount of one,',
+        '  + Given a cart with a discount of one,',
         '    + when nothing is bought, then nothing comes off.',
       ].join('\n'));
     });
@@ -189,7 +189,7 @@ describe('Given a served review with a commit that adds tests to an earlier one�
         '  · Given a cart with two items,',
         '    · when the total is taken,',
         '      + then it is positive. (reviewed)',
-        '  · Given a cart with a discount of one,',
+        '  + Given a cart with a discount of one,',
         '    + when nothing is bought, then nothing comes off. (reviewed)',
       ].join('\n'));
     });

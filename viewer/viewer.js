@@ -4328,6 +4328,9 @@
     // One that another chain wrote reads as the change it is, with its lines and its mark, as its
     // code does here: other, so the chain's counts, j, k and the pill pass it by.
     if (chain) show.forEach((n) => { if (n.k === 't' && !st.get(n).s) { const r = statusIn(null, n); if (r.s) st.set(n, { ...r, other: true }); } });
+    // A group another chain wrote or renamed shows that sign, as its code does here, with that
+    // chain named; what it covers here stays the chain's.
+    if (chain) show.forEach((n) => { if (n.k !== 't' && !n.l && !primary(n)) { const r = statusIn(null, n).s; if (r === 'new' || r === 'renamed') st.set(n, { ...st.get(n), sign: r }); } });
     const rm = ol.removed.filter((r) => blocks(r.b).length > 0);
     rm.forEach((r) => up(r.parent));
     const edited = ol.nodes.filter((n) => !show.has(n) && st.get(n).s === 'edited');
@@ -4437,8 +4440,9 @@
     const f = sc.f, s = sc.st.get(n) || { s: null, own: [], all: [] };
     const key = olKey(f, n);
     const test = n.k === 't';
-    const cls = olStatus(s.s) || (test && s.s === 'edited' ? 'edit' : 'ctx');
-    const was = n.ot != null && (s.s === 'renamed' || s.s === 'reworded') ? n.ot : null;
+    const now = s.sign || s.s;
+    const cls = olStatus(now) || (test && now === 'edited' ? 'edit' : 'ctx');
+    const was = n.ot != null && (now === 'renamed' || now === 'reworded') ? n.ot : null;
     const tags = [];
     if (s.s === 'regrouped') tags.push(olTag('regrouped', `The same sentence, in a new group. It read: ${n.was || ''}`));
     if (s.s === 'reworded') tags.push(olTag(was ? 'reworded' : 'reworded above', `It read: ${n.was || ''}`));
@@ -4640,7 +4644,7 @@
   function olEditedRowsHtml(sc, o) {
     const keep = new Set();
     sc.edited.forEach((n) => { for (let x = n; x; x = x.parent) keep.add(x); });
-    const sub = { ...sc, st: new Map([...sc.st].map(([n, s]) => [n, sc.edited.includes(n) ? s : { ...s, s: null }])) };
+    const sub = { ...sc, st: new Map([...sc.st].map(([n, s]) => [n, sc.edited.includes(n) ? s : { ...s, s: null, sign: null }])) };
     let h = '';
     const walk = (list) => list.forEach((n) => { if (!keep.has(n)) return; h += olRowHtml(sub, n, o); walk(n.kids); });
     walk(sc.ol.top);
