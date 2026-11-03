@@ -402,9 +402,9 @@ and reviewing a test starts there: the code is there to confirm it.
    called by name, not in comments), muted, and the diff's lines in the call (+X −Y; in a chain,
    the chain's). Their room is kept, so nothing moves under the pointer. ↗ is drawn with strokes
    that stay whole at any zoom.
-10. **What's reviewed folds away,** in the Tests view, as reviewed hunks do. A test marked
-    reviewed settles, then folds into a line, "✓ 3 tests reviewed", that holds the reviewed rows
-    next to it and shows them again on a click. A group folds only once everything under it is
+10. **What's reviewed folds away,** in the Tests view and in a chain, as reviewed hunks do. A
+    test marked reviewed settles, then folds into a line, "✓ 3 tests reviewed", that holds the
+    reviewed rows next to it and shows them again on a click (a chain's lines open on their own). A group folds only once everything under it is
     reviewed; until then it stays, its mark shows a dash, and its title mutes once its own lines
     are reviewed. A file's mark reviews it whole, and a file reviewed whole folds to its line
     ("✓ 12 tests reviewed"), which opens on a click with every row shown. Space carries on from

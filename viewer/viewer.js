@@ -4527,8 +4527,9 @@
     ? [tests && plural(tests, 'test'), gone && plural(gone, 'removal')].filter(Boolean).join(' and ') + ' reviewed'
     : 'Fold the ' + [tests && plural(tests, 'reviewed test'), gone && plural(gone, tests ? 'removal' : 'reviewed removal')].filter(Boolean).join(' and '));
   // A run of reviewed rows, folded to one line that shows them again (as a reviewed hunk folds into
-  // its divider). It lists the calls it holds, so what's found by one of them finds the line.
-  const olRunKey = (sc, run) => 'ok|' + olKey(sc.f, run[0]);
+  // its divider). It lists the calls it holds, so what's found by one of them finds the line. In a
+  // chain, shown again there alone, as the chain's code is.
+  const olRunKey = (sc, run) => 'ok|' + olKey(sc.f, run[0]) + (sc.chain ? '@' + sc.chain.id : '');
   function olRunHtml(sc, run) {
     const key = olRunKey(sc, run), open = state.olUnfold.has(key);
     const x = run[0], d = x.removed ? (x.parent ? x.parent.depth + 1 : 0) : x.depth;
@@ -4537,7 +4538,7 @@
     return `<div class="ol-fold ok${open ? ' open' : ''}" data-act="ol-unfold" data-key="${esc(key)}" data-in="${esc(run.flatMap(under).join(' '))}" style="--d:${d}" role="button" tabindex="0" aria-expanded="${open}">${open ? '' : `<span class="ok-ic" aria-hidden="true">${ICON.check}</span>`}${what}</div>`;
   }
   // A file's outline for a scope. o: { secs: the chain's member numbers it stands for, chips,
-  // sentences, filter }.
+  // sentences, filter, settle: what's reviewed folds away }.
   function olFileHtml(sc, o = {}) {
     const f = sc.f, filter = o.filter || 'all';
     const c = olCounts(sc);
@@ -4554,14 +4555,16 @@
       if (open) h += olEditedRowsHtml(sc, o) + (sc.outside.length ? olOutsideHtml(sc) : '');
       return h + '</section>';
     }
-    // In the Tests view, a file reviewed whole folds to this line, as a reviewed hunk does, and its
-    // mark reviews it whole; what's reviewed in a file still open folds as it's marked.
+    // In the Tests view and in a chain, a file reviewed whole folds to this line, as a reviewed hunk
+    // does, and its mark reviews it whole; what's reviewed in a file still open folds as it's
+    // marked. A chain folds and opens its own.
     let settle = false;
     if (o.settle) {
-      const fkey = 'olf|' + f.p, marks = olFileMarks(sc);
+      const fkey = 'olf|' + f.p + (sc.chain ? '@' + sc.chain.id : ''), marks = olFileMarks(sc);
       const st = stats(marks), all = st.total > 0 && !st.open;
       const folded = state.collapsed.has(fkey) || (all && !state.expanded.has(fkey));
-      const said = folded && all ? `<span class="ok-ic" aria-hidden="true">${ICON.check}</span>${olReviewedWhat(c.new + c.reworded + c.regrouped, c.removed, true)}` : (olSaid(c) || 'no sentence changes') + (folded && st.open ? ` · ${st.open} to review` : '');
+      const tests = c.new + c.reworded + c.regrouped;
+      const said = folded && all ? `<span class="ok-ic" aria-hidden="true">${ICON.check}</span>${tests || c.removed ? olReviewedWhat(tests, c.removed, true) : 'no sentence changes, reviewed'}` : (olSaid(c) || 'no sentence changes') + (folded && st.open ? ` · ${st.open} to review` : '');
       h += `<div class="ol-file ck${all ? ' done' : ''}" data-key="${esc(fkey)}"${folded ? foldStop(marks) : ''}><button type="button" class="car" data-act="ol-file" data-key="${esc(fkey)}" aria-expanded="${!folded}" title="${folded ? 'Unfold' : 'Fold'}">${folded ? ICON.chevronRight : ICON.chevronDown}</button><button type="button" class="nm linkish" data-open="${esc(f.p)}" title="Open the file">${esc(fileName(f.p))}</button><span class="dir">${esc(dir)}</span><span class="sp"></span><span class="n">${said}</span>${olFileTickHtml(sc, marks, st)}</div>`;
       if (folded) return h + '</section>';
       settle = st.open > 0;
@@ -4732,7 +4735,7 @@
     const testsHtml = (files) => files.map((f) => {
       const sc = olScope(f, c);
       CO.parts.push(coTestPart(sc));
-      return olFileHtml(sc, { secs: tests.secs.get(f) });
+      return olFileHtml(sc, { secs: tests.secs.get(f), settle: true });
     }).join('');
     let h = headerHtml({
       crumbs: `<button type="button" data-map="${c.family}" title="Open the chain map">Map</button>${SEP}<b${proseName(c) ? ' class="ui"' : ''} title="${esc(c.name + ' · ' + kind)}">${esc(c.name)}</b>`,
@@ -7795,7 +7798,9 @@
     let h = '';
     el.classList.toggle('pick', !!PICK.path);
     if (PICK.path) h = pickBarHtml();
-    else if (PILL_VIEWS.has(state.view.kind) && main.querySelector('.tick[data-block], .ol-row[data-mark], ' + FOLDS)) {
+    // A view with marks: its changes' and rows', a fold's, or a test file's, which stays on its line
+    // once the file folds away reviewed.
+    else if (PILL_VIEWS.has(state.view.kind) && main.querySelector('.tick[data-block], .ol-row[data-mark], .ol-file .ol-tick, ' + FOLDS)) {
       const marks = changeMarks(true);
       const total = marks.reduce((x, m) => x + openIn(m), 0);
       if (total) {

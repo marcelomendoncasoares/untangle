@@ -245,26 +245,49 @@ describe('Given a served review by commit: a discount with its tests, more tests
     });
   });
 
-  describe('when a new then is marked reviewed with its mark, ', () => {
+  describe('when a new then is marked reviewed with its mark, its line is opened, and the Tests view is opened, ', () => {
     let rows = '';
     let pill = '';
+    let opened = '';
+    let tests = '';
 
     before(async () => {
       await rest(page!);
       await openChain(page!, 'Cover more totals');
       await page!.click(`${await rowSelector(page!, 'then it is positive.')} .ol-tick`);
-      await page!.until(`!!document.querySelector('#vw-main .ol-row.done')`);
+      await page!.until(`!!document.querySelector('#vw-main .ol-fold.ok')`);
       rows = await read(page!, rowsRead);
       pill = await read(page!, `document.querySelector('#vw-pill .pill-n')?.textContent ?? ''`);
+      await page!.click('#vw-main .ol-fold.ok');
+      await page!.until(`document.querySelector('#vw-main .ol-fold.ok').getAttribute('aria-expanded') === 'true'`);
+      opened = await read(page!, rowsRead);
+      await page!.click('[data-tab="chains"]');
+      await page!.click('[data-act="tests-open"]');
+      await page!.until(`!!document.querySelector('#vw-main .ol-file') && !!document.querySelector('#vw-main .ol-fold.ok')`);
+      tests = await read(page!, `[...document.querySelectorAll('#vw-main .ol-fold.ok')].map((el) => el.textContent.trim() + (el.getAttribute('aria-expanded') === 'true' ? ', open' : ', folded')).join(' | ')`);
     });
 
     after(async () => {
+      await openChain(page!, 'Cover more totals');
       await page!.click(`${await rowSelector(page!, 'then it is positive.')} .ol-tick`);
+      await page!.until(`!document.querySelector('#vw-main .ol-fold.ok')`);
     });
 
-    it('then that then reads reviewed and the pill counts the one sentence left.', () => {
+    it('then that then folds away reviewed, with the groups it completes, and the pill counts the one sentence left.', () => {
       assert.equal(`${rows}\n${pill}`, [
         'cart_test.dart · 2 new',
+        '  1 test reviewed',
+        `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
+        '    + when nothing is bought, then nothing comes off.',
+        '    + 1 unchanged when',
+        '1 of 1',
+      ].join('\n'));
+    });
+
+    it('then its line shows it again, muted, under a line that folds it back.', () => {
+      assert.equal(opened, [
+        'cart_test.dart · 2 new',
+        '  Fold the 1 reviewed test',
         `  · Given a cart holding two items, [${nameSha.slice(0, 7)}]`,
         '    · when the total is taken,',
         '      + then it is positive. (reviewed)',
@@ -272,8 +295,11 @@ describe('Given a served review by commit: a discount with its tests, more tests
         `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
         '    + when nothing is bought, then nothing comes off.',
         '    + 1 unchanged when',
-        '1 of 1',
       ].join('\n'));
+    });
+
+    it('then the Tests view folds it too, with the when it completes there, its line shut: what a chain opens stays in the chain.', () => {
+      assert.equal(tests, '2 tests reviewed, folded');
     });
   });
 
@@ -291,26 +317,19 @@ describe('Given a served review by commit: a discount with its tests, more tests
       other = await read(page!, `${rowsRead} + '\\n' + ${fileMark}`);
     });
 
-    it('then the tests that commit wrote in the file read reviewed, and so does the file.', () => {
+    it('then the tests that commit wrote in the file are reviewed, and the file folds to its line, reviewed.', () => {
       assert.equal(marked, [
-        'cart_test.dart · 2 new',
-        `  · Given a cart holding two items, [${nameSha.slice(0, 7)}]`,
-        '    · when the total is taken,',
-        '      + then it is positive. (reviewed)',
-        '      + 1 unchanged then',
-        `  · Given a cart with a discount of one, [${discountSha.slice(0, 7)}]`,
-        '    + when nothing is bought, then nothing comes off. (reviewed)',
-        '    + 1 unchanged when',
+        'cart_test.dart · 2 tests reviewed',
         'file reviewed',
       ].join('\n'));
     });
 
-    it('then the tests another commit wrote in the file are still to review, and the one the marked commit added under its Given reads reviewed there too.', () => {
+    it('then the tests another commit wrote in the file are still to review, and the one the marked commit added under its Given folds away reviewed there too.', () => {
       assert.equal(other, [
         'cart_test.dart · 1 new',
         '  + Given a cart with a discount of one,',
         '    + when the total is taken, then the discount comes off.',
-        `    + when nothing is bought, then nothing comes off. [${moreSha.slice(0, 7)}] (reviewed)`,
+        '    1 test reviewed',
         'file to review',
       ].join('\n'));
     });
@@ -323,11 +342,11 @@ describe('Given a served review by commit: a discount with its tests, more tests
       await rest(page!);
       await openChain(page!, 'Cover more totals');
       await page!.click('#vw-main .ol-file .ol-tick');
-      await page!.until(`!document.querySelector('#vw-main .ol-row.done')`);
+      await page!.until(`document.querySelector('#vw-main .ol-file .ol-tick').getAttribute('aria-pressed') === 'false'`);
       rows = await read(page!, `${rowsRead} + '\\n' + ${fileMark}`);
     });
 
-    it('then its tests are to review again.', () => {
+    it('then the file opens again, its tests to review.', () => {
       assert.equal(rows, [
         'cart_test.dart · 2 new',
         `  · Given a cart holding two items, [${nameSha.slice(0, 7)}]`,

@@ -150,8 +150,8 @@ describe('Given a served review of a new test file whose titles sit on lines of 
       await spaceThrough(page!);
       await page!.until(`document.querySelector('#vw-pill .pill-msg')?.textContent === 'All reviewed here'`);
       after = await read(page!, `[
-        ${outsideFold}.getAttribute('aria-expanded') === 'true' ? 'the fold open' : 'the fold shut',
-        ((code) => !!code && !code.querySelector('.tick[data-block]:not(.on), [data-nav]'))(document.querySelector('#vw-main .ol-out')) ? 'its code reviewed' : 'its code to review',
+        ...[...document.querySelectorAll('#vw-main .ol-file')].map((el) => el.querySelector('.nm').textContent + ' · ' + el.querySelector('.n').textContent),
+        ${outsideFold} ? 'the fold still there' : 'the fold gone with it',
         document.querySelector('#vw-main .ol-file').classList.contains('done') ? 'the file reviewed' : 'the file to review',
       ].join(' · ')`);
     });
@@ -161,8 +161,8 @@ describe('Given a served review of a new test file whose titles sit on lines of 
       assert.equal(folded, open);
     });
 
-    it('then Space opens the fold on its change and reviews it too, so the file is reviewed whole.', () => {
-      assert.equal(after, 'the fold open · its code reviewed · the file reviewed');
+    it('then Space opens the fold on its change and reviews it too, so the file is reviewed whole and folds to its line.', () => {
+      assert.equal(after, 'cart_test.dart · 2 tests reviewed · the fold gone with it · the file reviewed');
     });
   });
 
@@ -178,7 +178,7 @@ describe('Given a served review of a new test file whose titles sit on lines of 
       await page!.until(`${outsideFold}?.getAttribute('aria-expanded') === 'false' && !!document.querySelector('#vw-main .ol-row[data-nav]')`);
       counted = await read(page!, `document.querySelectorAll('#vw-main .ol-row[data-nav]').length + ' rows to review · ' + (${count})`);
       await spaceThrough(page!);
-      await page!.until(`document.querySelector('#vw-pill').hidden`);
+      await page!.until(`document.querySelector('#vw-pill .pill-msg')?.textContent === 'All reviewed here'`);
       after = await read(page!, `[...document.querySelectorAll('#vw-main .ol-file')].map((el) => el.querySelector('.nm').textContent + ' · ' + el.querySelector('.n').textContent).join('\\n')`);
     });
 
