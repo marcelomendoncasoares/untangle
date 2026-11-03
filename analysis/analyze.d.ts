@@ -6,6 +6,8 @@ export type RawDefinitions = Record<string, [string, number, number]>;
 export interface DiffFile {
   p: string;
   s: string;
+  /** Where a file git found moved came from: the path it had at the left commit. */
+  from?: string;
   a: number;
   d: number;
   ga: string;

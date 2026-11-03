@@ -69,6 +69,8 @@ export interface Stack {
 interface ModelFile {
   p: string;
   s: string;
+  /** The path a moved file had at the base. */
+  from?: string;
   hunks?: Array<{ o: number; n: number; rows: Array<[string, ...unknown[]]> }> | null;
 }
 
@@ -217,10 +219,12 @@ async function attribute(repo: string, base: string, head: string, commits: Hist
     if (!f.hunks || !f.hunks.length) return;
     const adds = f.hunks.some((h) => h.rows.some((r) => r[0] === '+'));
     const dels = f.hunks.some((h) => h.rows.some((r) => r[0] === '-'));
-    const blame = (args: string[]) => gitAsync(repo, ['blame', '--porcelain', '-w', ...args, '--', f.p]).then(blameLines, () => new Map<number, string>());
+    // Removed lines are blamed from the base, where a moved file had its old path.
+    const was = f.from ?? f.p;
+    const blame = (args: string[], p = f.p) => gitAsync(repo, ['blame', '--porcelain', '-w', ...args, '--', p]).then(blameLines, () => new Map<number, string>());
     const [added, removed] = await Promise.all([
       adds && f.s !== 'D' ? blame([`${base}..${head}`]) : Promise.resolve(new Map<number, string>()),
-      dels && f.s !== 'A' ? blame(['--reverse', `${base}..${head}`]) : Promise.resolve(new Map<number, string>()),
+      dels && f.s !== 'A' ? blame(['--reverse', `${base}..${head}`], was) : Promise.resolve(new Map<number, string>()),
     ]);
     rows[fi] = f.hunks.map((h) => {
       let o = h.o, n = h.n;
@@ -250,8 +254,8 @@ async function attribute(repo: string, base: string, head: string, commits: Hist
     });
     if (!atMerge.length || !fork || fork === base) return;
     const [diff, own] = await Promise.all([
-      gitAsync(repo, ['diff', '--unified=0', '--no-color', '--no-ext-diff', '--no-renames', fork, base, '--', f.p]).catch(() => null),
-      blame(['--reverse', '--first-parent', `${fork}..${head}`]),
+      gitAsync(repo, ['diff', '--unified=0', '--no-color', '--no-ext-diff', '--no-renames', fork, base, '--', was]).catch(() => null),
+      blame(['--reverse', '--first-parent', `${fork}..${head}`], was),
     ]);
     if (diff == null) return;
     const toFork = forkLines(diff);

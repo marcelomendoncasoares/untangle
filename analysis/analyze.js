@@ -15,6 +15,7 @@
 //    Renames keep their own chains.
 import '../viewer/core.js';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import YAML from 'yaml';
@@ -80,6 +81,8 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
 
   // ---------- tree-sitter helpers
   const pos = (line, col) => ({ row: line - 1, column: col });
+  // Where a file was at the base: where it came from, when git found it moved.
+  const oldPath = (f) => f.from || f.p;
   function spanNode(tree, a, b) { return tree.rootNode.descendantForPosition(a, b); }
   // The smallest run of complete sibling nodes that covers [a, b].
   const cmpPos = (p, q) => (p.row - q.row) || (p.column - q.column);
@@ -188,6 +191,96 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
     const m = /([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*(?:<[^>]*>)?\s*\(/.exec(sig.text);
     return m ? m[1] : sig.text.split('\n')[0].slice(0, 40);
   }
+  // ---------- a moved file, declarations' places aside
+  // A Dart file git found moved is diffed with the old file's declarations put in the new file's
+  // order, in the file and in each class, mixin, extension and enum: a declaration that only changed
+  // places isn't a change, and one edited shows only its edits. Declarations go by kind and name,
+  // directives by their text; an old one with no counterpart stays after the one it followed. Old
+  // lines keep their own numbers, so a hunk breaks where they jump.
+  const SKIP = new Set(['{', '}', ',', ';', 'function_body']);
+  function keyOf(n) {
+    if (isDirective(n)) return 'directive:' + n.text.replace(/\s+/g, ' ');
+    const name = n.childForFieldName && n.childForFieldName('name');
+    if (name) return n.type + ':' + name.text;
+    if (SIGNATURES.has(n.type)) return n.type + ':' + nameOf(n);
+    for (let i = 0; i < n.namedChildCount; i++) { const c = n.namedChild(i); if (SIGNATURES.has(c.type)) return c.type + ':' + nameOf(c); }
+    // A field or variable: its first name, before its value, a comma or its line's end.
+    const first = n.text.split('\n')[0], m = /([A-Za-z_$][\w$]*)\s*(?:=|;|,|$)/.exec(first);
+    return n.type + ':' + (m ? m[1] : first.trim());
+  }
+  // A container's declarations, as line ranges with their doc comments and annotations, a body or
+  // a separator joining the one before; null when two share a line, so lines can't carry them.
+  function partsOf(n) {
+    const parts = [];
+    for (let i = 0; i < n.childCount; i++) {
+      const c = n.child(i);
+      if (isLead(c)) continue;
+      if (SKIP.has(c.type)) { if (parts.length && c.type !== '{' && c.type !== '}') parts[parts.length - 1].end = Math.max(parts[parts.length - 1].end, c.endPosition.row + 1); continue; }
+      parts.push({ start: unitStart(c), end: c.endPosition.row + 1, node: c, key: keyOf(c) });
+    }
+    for (let i = 1; i < parts.length; i++) if (parts[i].start <= parts[i - 1].end) return null;
+    return parts;
+  }
+  const bodyOf = (n) => { for (let i = 0; i < n.childCount; i++) if (BODIES.has(n.child(i).type)) return n.child(i); return null; };
+  const lineRun = (a, b) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i);
+  // The old lines from..to, in the order of the new container's declarations.
+  function arranged(oc, nc, from, to) {
+    const op = partsOf(oc), np = partsOf(nc);
+    if (!op || !np || !op.length) return lineRun(from, to);
+    const last = op[op.length - 1].end;
+    // Each declaration with the lines after it, up to the next one.
+    op.forEach((p, i) => { p.to = i + 1 < op.length ? op[i + 1].start - 1 : last; });
+    const match = new Map(), out = lineRun(from, op[0].start - 1);
+    np.forEach((q) => { const p = op.find((x) => !match.has(x) && x.key === q.key); if (p) match.set(p, q); });
+    const emit = (p) => {
+      const q = match.get(p), ob = q && TYPES.has(p.node.type) && TYPES.has(q.node.type) && bodyOf(p.node), nb = ob && bodyOf(q.node);
+      out.push(...(nb ? arranged(ob, nb, p.start, p.to) : lineRun(p.start, p.to)));
+    };
+    const strays = (i) => { for (let j = i; j < op.length && !match.has(op[j]); j++) emit(op[j]); };
+    strays(0);
+    const byNew = new Map([...match].map(([p, q]) => [q, p]));
+    np.forEach((q) => { const p = byNew.get(q); if (!p) return; emit(p); strays(op.indexOf(p) + 1); });
+    return out.concat(lineRun(last + 1, to));
+  }
+  function reorderedHunks(f) {
+    const oldLines = f.oldSrc.replace(/\n$/, '').split('\n');
+    const order = arranged(f.oldTree.rootNode, f.newTree.rootNode, 1, oldLines.length);
+    if (order.length !== oldLines.length) return null;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-moved-'));
+    let text = '';
+    try {
+      fs.writeFileSync(path.join(dir, 'a'), order.map((o) => oldLines[o - 1]).join('\n') + (f.oldSrc.endsWith('\n') ? '\n' : ''));
+      fs.writeFileSync(path.join(dir, 'b'), f.newSrc);
+      // A declaration moved takes its blank lines along: one more or fewer between two isn't a change.
+      try { text = execFileSync('git', ['diff', '--no-index', '--no-color', '--no-ext-diff', '--ignore-blank-lines', '-U3', 'a', 'b'], { cwd: dir, encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] }); } catch (e) { text = e.stdout || ''; }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    // Back to the old lines' own numbers, a hunk breaking where they don't follow on. As in git's
+    // hunks, one's old line is its first; with none, the one its added lines follow.
+    const hunks = [];
+    let cur = null, o = 0, n = 0, was = 0, body = false;
+    for (const line of text.split('\n')) {
+      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (m) {
+        const count = m[2] == null ? 1 : +m[2];
+        o = count ? +m[1] : +m[1] + 1;
+        n = +m[3];
+        was = count ? order[o - 1] - 1 : o > 1 ? order[o - 2] : 0;
+        cur = null;
+        body = true;
+        continue;
+      }
+      if (!body || !/^[ +-]/.test(line)) continue;
+      const old = line[0] !== '+' ? order[o - 1] : null;
+      if (!cur || (old != null && old !== was + 1)) { cur = { o: null, after: was, n, h: '', l: [] }; hunks.push(cur); }
+      if (old != null && cur.o == null) cur.o = old;
+      cur.l.push(line);
+      if (old != null) { was = old; o++; }
+      if (line[0] !== '-') n++;
+    }
+    return hunks.filter((h) => h.l.some((l) => l[0] !== ' ')).map(({ after, ...h }) => ({ ...h, o: h.o ?? after }));
+  }
   function memberAt(tree, line, text) {
     if (!tree) return null;
     if (structures.has(tree)) return resolvedMemberAt(structures.get(tree), line, Math.max(0, text.search(/\S/)));
@@ -280,7 +373,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       if (byAttr || rule) {
         f.gen = byAttr ? '.gitattributes' : rule[1];
         if ((f.a + f.d) <= PEEK_MAX_LINES) {
-          const text = execFileSync('git', ['-C', REPO, 'diff', '--no-renames', '-U3', meta.left, meta.right, '--', f.p], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20 });
+          const text = execFileSync('git', ['-C', REPO, 'diff', ...(f.from ? ['-M'] : ['--no-renames']), '-U3', meta.left, meta.right, '--', ...(f.from ? [f.from] : []), f.p], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 << 20 });
           f.hunks = [];
           let cur = null;
           for (const line of text.split('\n')) {
@@ -291,15 +384,19 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
         generated.push(f);
         continue;
       }
-      f.oldSrc = f.s !== 'A' ? gitShow(meta.left, f.p) : null;
+      f.oldSrc = f.s !== 'A' ? gitShow(meta.left, oldPath(f)) : null;
       f.newSrc = f.s !== 'D' ? gitShow(meta.right, f.p) : null;
       if (C.langOf(f.p) === 'dart') {
         f.oldTree = parse(f.oldSrc);
         f.newTree = parse(f.newSrc);
         f.structure = structure?.[f.p];
-        f.oldStructure = OLD[name]?.structure?.[f.p];
+        f.oldStructure = OLD[name]?.structure?.[oldPath(f)];
         if (f.structure && f.newTree) structures.set(f.newTree, f.structure);
         if (f.oldStructure && f.oldTree) structures.set(f.oldTree, f.oldStructure);
+      }
+      if (f.from && f.oldTree && f.newTree && f.oldSrc != null && f.newSrc != null) {
+        const hunks = reorderedHunks(f);
+        if (hunks) Object.assign(f, { hunks, a: hunks.reduce((k, h) => k + h.l.filter((l) => l[0] === '+').length, 0), d: hunks.reduce((k, h) => k + h.l.filter((l) => l[0] === '-').length, 0) });
       }
       const tests = TEST_FILE.test(f.p);
       const newStarts = f.newTree ? unitStarts(f.newTree, tests) : null, oldStarts = f.oldTree ? unitStarts(f.oldTree, tests) : null;
@@ -692,7 +789,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       if (!old || u.b.move) return false;
       const tk = u.r.toks.find((t) => t.c === col || t.c + 1 === col);
       if (!tk || !tk.peer) return false;
-      const ot = old.raw[`${u.f.p}:${tk.peer.row.o}:${tk.peer.tk.c + (col - tk.c)}`], nt = defsRaw[`${u.f.p}:${u.r.n}:${col}`];
+      const ot = old.raw[`${oldPath(u.f)}:${tk.peer.row.o}:${tk.peer.tk.c + (col - tk.c)}`], nt = defsRaw[`${u.f.p}:${u.r.n}:${col}`];
       if (!ot || !nt || !ot[0].startsWith(old.dir) || !nt[0].startsWith(HEAD)) return false;
       return targetSig(ot[0], old.dir, ot[1], ot[2]) !== targetSig(nt[0], HEAD, nt[1], nt[2]);
     };
@@ -1004,7 +1101,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
 
     // Removed lines link the same way, through the old side's language server.
     const minusRow = new Map();
-    files.forEach((f) => f.blocks.forEach((b) => b.rows.forEach((r) => { if (r.type === '-' && (!b.changedOld || b.changedOld.has(r.o))) minusRow.set(f.p + ':' + r.o, { f, b, r }); })));
+    files.forEach((f) => f.blocks.forEach((b) => b.rows.forEach((r) => { if (r.type === '-' && (!b.changedOld || b.changedOld.has(r.o))) minusRow.set(oldPath(f) + ':' + r.o, { f, b, r }); })));
     if (old) {
       for (const [key, [tpath, tl, tc]] of Object.entries(old.raw)) {
         const i1 = key.lastIndexOf(':'), i0 = key.lastIndexOf(':', i1 - 1);
@@ -1034,9 +1131,9 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       edits.flatMap((e) => e.runs.map((r) => ({ ...r, block: e.block }))).forEach((e) => {
         if (e.op !== 'token' || e.where !== 'declaration') return;
         const od = e.atom.del[0], nd = e.atom.ins[0];
-        const ot = old.raw[`${e.block.file.p}:${od.row.o}:${od.tk.c}`];
-        if (!ot || ot[0] !== old.dir + e.block.file.p || ot[1] !== od.row.o - 1 || ot[2] !== od.tk.c) return;
-        const ok = `old:${e.block.file.p}:${od.row.o}:${od.tk.c}`, nk = `${e.block.file.p}:${nd.row.n}:${nd.tk.c}`;
+        const ot = old.raw[`${oldPath(e.block.file)}:${od.row.o}:${od.tk.c}`];
+        if (!ot || ot[0] !== old.dir + oldPath(e.block.file) || ot[1] !== od.row.o - 1 || ot[2] !== od.tk.c) return;
+        const ok = `old:${oldPath(e.block.file)}:${od.row.o}:${od.tk.c}`, nk = `${e.block.file.p}:${nd.row.n}:${nd.tk.c}`;
         const oldD = decls.get(ok);
         if (!oldD) return;
         let newD = decls.get(nk);
@@ -1648,13 +1745,13 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
     const openings = (dir, p, of) => { try { return of(fs.readFileSync(dir + p, 'utf8')); } catch { return null; } };
     const startsIn = (f) => {
       const of = /\.dart$/.test(f.p) ? dartOpenings : MODEL_FILE.test(f.p) ? modelOpenings : C.langOf(f.p) === 'md' ? markdownOpenings : null;
-      const was = of && OLD[name] ? openings(OLD[name].dir, f.p, of) : null, is = of ? openings(HEAD, f.p, of) : null;
+      const was = of && OLD[name] ? openings(OLD[name].dir, oldPath(f), of) : null, is = of ? openings(HEAD, f.p, of) : null;
       return (h) => { const so = was && h.o > 0 && was[h.o - 1], sn = is && h.n > 0 && is[h.n - 1]; return { ...(so ? { so } : {}), ...(sn ? { sn } : {}) }; };
     };
     const ser = {
       label: meta.label, left: meta.left.slice(0, 7), right: meta.right.slice(0, 7),
       files: files.map((f) => { const at = startsIn(f); return {
-        p: f.p, s: f.s, a: f.a, d: f.d, lang: f.lang,
+        p: f.p, s: f.s, ...(f.from && { from: f.from }), a: f.a, d: f.d, lang: f.lang,
         hunks: f.hunks.map((h) => ({ o: h.o, n: h.n, h: h.h, ...at(h), rows: h.rows.map((r) => {
           const row = [r.type, r.text];
           if (r.toks) {
@@ -1676,7 +1773,7 @@ export async function analyze({ repo, headDir, diff, defsRaw, old: oldSides = {}
       chainsBy: history ? 'history' : 'structure',
       families: history ? familiesOut(history) : undefined,
       chains: chains.map((c) => ({ id: c.id, name: c.name, kind: c.kind, rootKind: c.root ? c.root.kind : null, also: c.also.map(label).filter((x, i, a) => x !== c.name && a.indexOf(x) === i), blocks: [...c.blocks].map((b) => b.id).sort(), files: c.files, graph: c.graph, ext: history ? extOut(c) : undefined, links: c.links, uses: [...c.uses].sort((a, b) => a - b), shares: [...c.shares].sort((a, b) => a - b), depth: c.depth, family: c.family, adds: [...c.blocks].reduce((x, b) => x + b.adds, 0), dels: [...c.blocks].reduce((x, b) => x + b.dels, 0), focus: Object.fromEntries(Object.entries(c.focus).map(([k, v]) => [k, [...v].sort((x, y) => x - y)])) })),
-      generated: generated.map((f) => { const at = startsIn(f); return { p: f.p, s: f.s, a: f.a, d: f.d, gen: f.gen, hunks: f.hunks ? f.hunks.map((h) => ({ o: h.o, n: h.n, h: h.h, ...at(h), rows: h.l.map((l) => [l[0], l.slice(1)]) })) : null }; }),
+      generated: generated.map((f) => { const at = startsIn(f); return { p: f.p, s: f.s, ...(f.from && { from: f.from }), a: f.a, d: f.d, gen: f.gen, hunks: f.hunks ? f.hunks.map((h) => ({ o: h.o, n: h.n, h: h.h, ...at(h), rows: h.l.map((l) => [l[0], l.slice(1)]) })) : null }; }),
       models: models.length ? models : undefined,
       deps: pubspecs || undefined,
     };

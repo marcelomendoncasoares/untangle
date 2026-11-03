@@ -158,14 +158,11 @@ describe('Given a commit that removes a line of the base and another that rename
       replayed = await provenance(repo!.dir, base, head, nothingGenerated);
     });
 
-    it('then the removed line names the commit that removed it, and the renamed file\'s lines the rename.', () => {
+    it('then the removed line names the commit that removed it, and the renamed file, moved as it was, has no lines in the review\'s diff.', () => {
       assert.equal(provenanceText(replayed!), [
         'lib/a.dart',
         '-2 changed first by drops drop',
         'lib/new.dart',
-        '+1 started by no commit, moved by renames old',
-        'lib/old.dart',
-        '-1 changed first by renames old',
       ].join('\n'));
     });
   });

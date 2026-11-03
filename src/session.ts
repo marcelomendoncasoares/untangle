@@ -212,6 +212,13 @@ export class ReviewSession {
     return this.changes.get(`${p}\n${side}\n${line}`) || null;
   }
 
+  private movedFiles: Map<string, string> | null = null;
+  /** The files git found moved, by path, with the path each had at the base. */
+  moved(): Map<string, string> {
+    this.movedFiles ??= new Map(this.data.model.compares.base.files.filter((f: { from?: string }) => f.from).map((f: { p: string; from: string }) => [f.p, f.from]));
+    return this.movedFiles;
+  }
+
   /** What the notes need of this review: its commits, the change of each line, and GitHub to post to. */
   notesContext(name: string, branch: string | null, checkout: string | null): NotesContext {
     const gh = this.github;
@@ -221,6 +228,7 @@ export class ReviewSession {
       leg: (at, thread) => (thread && gh instanceof StackConversation ? gh.legOf(thread) : null) ?? this.stackLines?.owner(at.path, at.side ?? 'RIGHT', at.line ?? null) ?? null,
       legWork: this.legWork,
       change: (p, side, line) => this.changeAt(p, side, line),
+      moved: () => this.moved(),
       gh: gh ? {
         thread: (at, body, mode) => gh.postThread({ ...at, body }, mode),
         reply: (thread, body, mode) => gh.postReply(thread, body, mode),
@@ -310,7 +318,7 @@ export class ReviewSession {
     if (!g) return { status: 404, data: { error: `${p} is not a generated file of this review` } };
     if (g.hunks) return { data: { hunks: g.hunks } };
     if (g.a + g.d > GENERATED_MAX_LINES) return { status: 413, data: { error: `${(g.a + g.d).toLocaleString('en-US')} changed lines: too many to show here` } };
-    return { data: { hunks: fileHunks(this.target.repo, this.target.baseSha, this.target.headSha, p).map((h) => ({ o: h.o, n: h.n, h: h.h, rows: h.l.map((l) => [l[0], l.slice(1)]) })) } };
+    return { data: { hunks: fileHunks(this.target.repo, this.target.baseSha, this.target.headSha, p, g.from).map((h) => ({ o: h.o, n: h.n, h: h.h, rows: h.l.map((l) => [l[0], l.slice(1)]) })) } };
   }
 
   /** The page's API. */
@@ -328,8 +336,9 @@ export class ReviewSession {
       return { data: { target } };
     }
     if ((route === 'usages' || route === 'implementations') && method === 'GET') {
-      const gone = q.get('side') === 'base' ? 'A' : 'D';
-      const files = this.data.model.compares.base.files.filter((f: { s: string }) => f.s !== gone).map((f: { p: string }) => f.p);
+      const base = q.get('side') === 'base', gone = base ? 'A' : 'D';
+      // The base has a moved file at its old path.
+      const files = this.data.model.compares.base.files.filter((f: { s: string }) => f.s !== gone).map((f: { p: string; from?: string }) => (base && f.from) || f.p);
       const l = Number(q.get('l')), c = Number(q.get('c'));
       return { data: route === 'usages' ? await this.live.usages(where(), l, c, files) : await this.live.implementations(where(), l, c, files) };
     }

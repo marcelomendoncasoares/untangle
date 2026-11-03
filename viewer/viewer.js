@@ -14,6 +14,10 @@
   const defsNow = () => { if (DEFS_ALL.targets) return DEFS_ALL; const d = DEFS_ALL[state.compare]; return typeof d === 'string' ? DEFS_ALL[d] : d; };
   const REFS = JSON.parse($('#d-refs').textContent);
   const DEFS_OLD = JSON.parse($('#d-defs-old').textContent);
+  // A file git found moved, by its path, with the one it had at the base: the base side's code,
+  // definitions and source go by its old path.
+  const MOVED = new Map(Object.values(MODEL.compares || {}).flatMap((c) => [...(c.files || []), ...(c.generated || [])].filter((f) => f.from).map((f) => [f.p, f.from])));
+  const basePathOf = (p) => MOVED.get(p) || p;
   // The commits (newest first) and which wrote each changed line; null when git couldn't tell.
   const HISTORY = JSON.parse(($('#d-history') || { textContent: 'null' }).textContent || 'null');
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -114,6 +118,12 @@
   // moved on to newer commits (refreshed from another page): this one offers to reload.
   function api(path, init) {
     init = init || {};
+    // What the server is asked of the base side, it's asked by the path the base has.
+    const at = path.indexOf('?'), q = at < 0 ? null : new URLSearchParams(path.slice(at + 1));
+    if (q && q.get('side') === 'base' && MOVED.has(q.get('p'))) {
+      q.set('p', basePathOf(q.get('p')));
+      path = path.slice(0, at + 1) + q;
+    }
     const headers = Object.assign({}, init.headers, CONFIG.head ? { 'x-untangle-head': CONFIG.head } : {});
     return fetch('api/' + path, Object.assign({}, init, { headers })).then((r) => {
       if (r.status === 409) r.clone().json().then((j) => { if (j.moved) { FRESH.moved = j.moved; renderFresh(); } }).catch(() => {});
@@ -607,8 +617,8 @@
     return arr ? new Map(arr.map(([c, , ti]) => [c, ti])) : null;
   }
   function oldLineDefs(path, o) {
-    const d = DEFS_OLD[state.compare];
-    const arr = o != null && d && d.defs[path] && d.defs[path][o];
+    const d = DEFS_OLD[state.compare], was = basePathOf(path);
+    const arr = o != null && d && d.defs[was] && d.defs[was][o];
     return arr ? new Map(arr.map(([c, , ti]) => [c, ti])) : null;
   }
   // A line of code as tokens. opts: emphasis (mark changed tokens), refs with n or o (definitions
@@ -1708,7 +1718,7 @@
       showing();
       const more = [];
       if (localMode() ? NT.data : GH.on && GH.data && !GH.data.pr.locked) more.push({ label: localMode() ? 'Write a note on this file' : 'Comment on this file', icon: ICON.comment, data: { act: 'file-comment', p: f.p } });
-      if (CONFIG.served && f.s === 'M') more.push({ label: 'The file before these changes', icon: ICON.file, data: { act: 'open-source', side: 'base', p: f.p } });
+      if (CONFIG.served && f.s === 'M') more.push({ label: 'The file before these changes', icon: ICON.file, data: { act: 'open-source', side: 'base', p: basePathOf(f.p) } });
       if (more.length) items.push({ sep: true }, ...more);
     };
     if (v.kind === 'chain') {
@@ -1731,8 +1741,8 @@
       const s = sources.get(srcKey(v)) || {};
       const ed = editorItem({ side: v.side, p: v.path, ext: v.ext, abs: s.abs, line: v.line || 1 });
       if (ed) items.push(ed);
-      const f = v.ext == null && m.files.find((x) => x.p === v.path);
-      if (f && f.s === 'M') items.push({ label: v.side === 'base' ? 'The file after these changes' : 'The file before these changes', icon: ICON.file, data: { act: 'open-source', side: v.side === 'base' ? 'head' : 'base', p: v.path } });
+      const f = v.ext == null && m.files.find((x) => x.p === v.path || (v.side === 'base' && x.from === v.path));
+      if (f && f.s === 'M') items.push({ label: v.side === 'base' ? 'The file after these changes' : 'The file before these changes', icon: ICON.file, data: { act: 'open-source', side: v.side === 'base' ? 'head' : 'base', p: v.side === 'base' ? f.p : basePathOf(f.p) } });
       items.push({ label: 'Minimap', checked: UI.minimap, data: { act: 'minimap' } });
     }
     return items;
@@ -2016,9 +2026,11 @@
   // they are defined; lines this review changes are marked.
   function renderSource(v) {
     const s = loadSource(v);
-    const name = v.ext != null ? v.label || 'file' : v.path;
-    const f = v.ext == null ? M().files.find((x) => x.p === v.path) : null;
-    const g = v.ext == null ? M().generated.find((x) => x.p === v.path) : null;
+    // The base has a moved file at its old path.
+    const here = (x) => x.p === v.path || (v.side === 'base' && x.from === v.path);
+    const f = v.ext == null ? M().files.find(here) : null;
+    const g = v.ext == null ? M().generated.find(here) : null;
+    const name = v.ext != null ? v.label || 'file' : v.side === 'base' ? basePathOf(v.path) : v.path;
     const sha = v.side === 'base' ? CONFIG.base : CONFIG.head;
     const changed = new Set();
     if (f) f.hunks.forEach((hk) => hk.meta.forEach((r) => { if (v.side === 'base' ? r.t === '-' : r.t === '+') changed.add(v.side === 'base' ? r.o : r.n); }));
@@ -2026,7 +2038,7 @@
     let h = headerHtml({
       crumbs: v.ext != null ? `<span>${esc(cap(v.where || 'outside the repository'))}</span>${SEP}<b title="${esc(name)}">${esc(fileName(name))}</b>` : fileCrumbs(name),
       facts: `${where}${s.lines ? ` · ${linesWord(s.lines.length)}` : ''}${changed.size ? ` · <span class="${v.side === 'base' ? 'd' : 'a'}">${linesWord(changed.size)} ${v.side === 'base' ? 'removed' : 'added'} by this review</span>` : ''}${s.generated || g ? ' · generated' : ''}`,
-      action: f || g ? `<button type="button" class="btn" data-open="${esc(v.path)}">Show the changes</button>` : '',
+      action: f || g ? `<button type="button" class="btn" data-open="${esc((f || g).p)}">Show the changes</button>` : '',
     });
     if (s.status === 'loading') return h + '<div class="empty">Loading the file…</div>';
     if (s.status === 'error') return h + `<div class="empty">${esc(s.error)}</div>`;
@@ -2083,7 +2095,7 @@
   function declaredHere(el) {
     const d = el.dataset, old = d.o !== undefined, line = Number(old ? d.o : d.n), ti = Number(d.ti);
     const t = (old ? DEFS_OLD[state.compare] : defsNow()).targets[ti];
-    if (!t || t.w !== 'repo' || t.p !== d.path || t.l !== line) return false;
+    if (!t || t.w !== 'repo' || t.p !== (old ? basePathOf(d.path) : d.path) || t.l !== line) return false;
     const cols = [...((old ? oldLineDefs(d.path, line) : lineDefs(d.path, line)) || [])].filter(([, x]) => x === ti).map(([c]) => c);
     return Math.min(...cols) === Number(d.col);
   }
@@ -5832,7 +5844,7 @@
     const chains = [...new Set(f.blocks.flatMap((b) => m.chainsOf.get(b.id) || []))];
     let h = headerHtml({
       crumbs: fileCrumbs(f.p),
-      facts: `${f.s === 'A' ? 'Added · ' : f.s === 'D' ? 'Deleted · ' : ''}${leftWords(s)} · ${plusMinus(sumOf(f.blocks, 'adds'), sumOf(f.blocks, 'dels'))}${openThreadsHtml(f.p)}`,
+      facts: `${f.s === 'A' ? 'Added · ' : f.s === 'D' ? 'Deleted · ' : ''}${leftWords(s)}${f.from && !f.hunks.length ? '' : ` · ${plusMinus(sumOf(f.blocks, 'adds'), sumOf(f.blocks, 'dels'))}`}${movedWords(f)}${openThreadsHtml(f.p)}`,
       tools: wholeBtn(f) + (chains.length ? iconBtn(ICON.graph, `The graph of ${chains.length > 1 ? 'the chains of ' : ''}the change you’re reading: hover for a look, click to keep it open (g)`, 'data-act="graph" aria-haspopup="dialog" aria-expanded="false"') : ''),
       chip: chains.length ? `<button type="button" class="chip" data-act="menu" data-menu="chains" aria-haspopup="menu" aria-expanded="${MENU.open === 'chains'}" title="The chains this file's changes are in">In ${chains.length} chain${chains.length > 1 ? 's' : ''}${ICON.chevronDown}</button>` : '',
       nav: true,
@@ -5843,7 +5855,18 @@
     // Loaded ahead, so the whole file shows at once.
     if (CONFIG.served && f.s === 'M') loadSource({ side: 'head', path: f.p });
     h += fileThreadsHtml(f) + `<div class="code" data-p="${esc(f.p)}">` + (CONFIG.served && state.whole.has(f.p) ? wholeHtml(f, ctx) : sectionsHtml(f, f.hunks.map((hk, hi) => sectionOf(f, hi, 0, hk.rows.length, ctx)), ctx));
-    return h + '</div>';
+    // Moved as it was: nothing in it to review.
+    return h + '</div>' + (f.from && !f.hunks.length ? `<div class="empty">The file moved here from <code>${esc(f.from)}</code> as it was.</div>` : '');
+  }
+  // Where a file git found moved came from: its old name, in its folder when it was renamed there,
+  // else from the last folder the two paths share.
+  function movedWords(f) {
+    if (!f.from) return '';
+    const was = f.from.split('/'), is = f.p.split('/');
+    let k = 0;
+    while (k < was.length - 1 && k < is.length - 1 && was[k] === is[k]) k++;
+    const same = k === was.length - 1 && k === is.length - 1;
+    return ` · <span title="${esc(`${same ? 'Renamed' : 'Moved'} from ${f.from}`)}">${same ? 'Renamed' : 'Moved'} from ${esc(was.slice(same ? k : Math.max(0, k - 1)).join('/'))}</span>`;
   }
   // A generated file's rows: for reference, without definitions.
   function genRowsHtml(f, hi, s, e) {
@@ -6615,7 +6638,7 @@
       const shown = (files) => (hide ? files.filter((f) => !out([f])) : files);
       // A file the changes add, or delete, says so in its color, as in a diff.
       const status = (f) => ' s-' + f.s.toLowerCase();
-      const statusWords = (f) => (f.s === 'A' ? 'added, ' : f.s === 'D' ? 'deleted, ' : '');
+      const statusWords = (f) => (f.s === 'A' ? 'added, ' : f.s === 'D' ? 'deleted, ' : f.from ? `moved from ${f.from}, ` : '');
       // What the review covers, in lines: the generated files and migrations below aren't in it.
       // Hidden files are left out of the count, which says so.
       const files = shown(m.files);
@@ -8282,12 +8305,13 @@
     }
     if (on('files')) {
       const add = (f, gen) => {
-        const r = fuzzy(f.p, q);
+        // A moved file is found by the path it had too, and says so.
+        const now = fuzzy(f.p, q), r = now || (f.from && fuzzy(f.from, q));
         if (!r) return;
-        const i = f.p.lastIndexOf('/') + 1;
+        const p = now ? f.p : f.from, i = p.lastIndexOf('/') + 1;
         const st = gen ? null : stats(f.blocks);
         // A match in the file's name counts more than one in its folders.
-        out.files.push({ score: r.score + (r.at.length && r.at[0] >= i ? 300 : 0) + (st && st.open ? 40 : 0) - (gen ? 200 : 0), icon: ICON.file, html: `<span class="dir">${matched(f.p.slice(0, i), r.at)}</span><span class="fn">${matched(f.p.slice(i), r.at, i)}</span>`, hint: gen ? 'generated' : st.open ? `${st.open} to review` : 'reviewed', go: () => openFile(f.p) });
+        out.files.push({ score: r.score + (r.at.length && r.at[0] >= i ? 300 : 0) + (st && st.open ? 40 : 0) - (gen ? 200 : 0), icon: ICON.file, html: now ? `<span class="dir">${matched(f.p.slice(0, i), r.at)}</span><span class="fn">${matched(f.p.slice(i), r.at, i)}</span>` : `<span class="dir">${esc(f.p.slice(0, f.p.lastIndexOf('/') + 1))}</span><span class="fn">${esc(fileName(f.p))}</span>`, hint: now ? (gen ? 'generated' : st.open ? `${st.open} to review` : 'reviewed') : `moved from ${fileName(f.from)}`, go: () => openFile(f.p) });
       };
       m.files.forEach((f) => add(f, false));
       m.generated.forEach((f) => add(f, true));

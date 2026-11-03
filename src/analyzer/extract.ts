@@ -26,7 +26,8 @@ export async function extract(diff: Diff, head: string, base: string, progress: 
   const supers: RawDefinitions = {};
   const graph: Record<string, string[]> = {};
   const calls: CallGraph = { depth: CALL_DEPTH, seeds: [], graph };
-  const paths = files.flatMap((file) => [path.join(head, file.p), path.join(base, file.p)]).filter((file) => fs.existsSync(file));
+  // A moved file is read at its old path in the base: facts on the base side go by base paths.
+  const paths = files.flatMap((file) => [path.join(head, file.p), path.join(base, file.from ?? file.p)]).filter((file) => fs.existsSync(file));
   const output = { defs: defs.data, defsOld: defsOld.data, structure, structureOld, supers, calls };
   if (!paths.length) return output;
 
@@ -64,17 +65,19 @@ export async function extract(diff: Diff, head: string, base: string, progress: 
 
       for (const side of ['head', 'base'] as const) {
         const current = side === 'head';
-        const abs = path.join(current ? head : base, file.p);
+        const rel = current ? file.p : file.from ?? file.p;
+        const abs = path.join(current ? head : base, rel);
         if (!fs.existsSync(abs)) continue;
-        progress.detail(`Dart files ${++done} of ${paths.length}: ${file.p}`, [done, paths.length]);
+        progress.detail(`Dart files ${++done} of ${paths.length}: ${rel}`, [done, paths.length]);
         const facts = await analyzer.file(abs);
         if (!facts) {
-          refused.add(file.p);
+          refused.add(rel);
           continue;
         }
-        const lines = current ? headLines : baseLines;
+        // A moved file's diff is made again from its declarations, by the analysis: every line of it.
+        const lines = file.from ? { has: () => true } : current ? headLines : baseLines;
         const collector = current ? defs : defsOld;
-        (current ? structure : structureOld)[file.p] = {
+        (current ? structure : structureOld)[rel] = {
           declarations: facts.declarations,
           directives: facts.directives,
           scenarios: facts.scenarios,
@@ -83,7 +86,7 @@ export async function extract(diff: Diff, head: string, base: string, progress: 
 
         for (const [position, length] of Object.entries(facts.unresolved)) {
           const [line, col] = position.split(':').map(Number);
-          if (lines.has(line) && !facts.references[position]) collector.add(file.p, line, col, length, null);
+          if (lines.has(line) && !facts.references[position]) collector.add(rel, line, col, length, null);
         }
 
         for (const [position, reference] of Object.entries(facts.references)) {
@@ -93,7 +96,7 @@ export async function extract(diff: Diff, head: string, base: string, progress: 
           // An import's URI names a file and uses nothing in it: the page can go there, but it ties
           // no change to another, nor calls anything from a test.
           const uri = reference.kind === 'uri';
-          collector.add(file.p, line, col, reference.length, { path: target, line: targetLine, col: targetCol }, !uri);
+          collector.add(rel, line, col, reference.length, { path: target, line: targetLine, col: targetCol }, !uri);
 
           if (current && TEST_FILE.test(file.p) && added.has(`${file.p}:${line}`) && !uri) {
             const key = nodeKey(reference.target);
@@ -109,7 +112,7 @@ export async function extract(diff: Diff, head: string, base: string, progress: 
           }
         }
         const errors = facts.diagnostics.filter((diagnostic) => diagnostic.severity === 'ERROR');
-        if (errors.length) progress.verbose(`${file.p}: ${errors.length} analyzer diagnostics; unresolved references are omitted`);
+        if (errors.length) progress.verbose(`${rel}: ${errors.length} analyzer diagnostics; unresolved references are omitted`);
       }
     }
     if (refused.size) {

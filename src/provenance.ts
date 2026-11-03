@@ -377,8 +377,8 @@ export async function provenance(repo: string, base: string, head: string, gener
     }
   });
 
-  // The review's own diff, line by line.
-  const review = parsePatch(await git(repo, ['diff', '--unified=0', '--no-color', '--no-ext-diff', '--no-renames', base, head]));
+  // The review's own diff, line by line: a moved file's, as the review shows it, from its old path.
+  const review = parsePatch(await git(repo, ['diff', '--unified=0', '--no-color', '--no-ext-diff', '-M', base, head]));
   const forkOf = new Map<string, (line: number) => number | null>();
   for (const file of review) {
     if (file.binary) continue;

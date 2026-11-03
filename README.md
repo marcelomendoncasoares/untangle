@@ -90,7 +90,8 @@ in that file are one stretch of it. `-chains structure` follows the code alone, 
 The same edit in many places reads once. In #168, `spaceId → userId` is 126 changes in 31 files
 and one row in the sidebar: each place shows its whole edit, and they can be marked together or
 one at a time. Moved code shows only its real edits, with the old copy as one line that opens the
-new one. [Generated code](#generated-code), migrations included, is not reviewed or counted, and
+new one, and a moved or renamed file is one file at its new path, saying where it came from, with
+only what changed in it. [Generated code](#generated-code), migrations included, is not reviewed or counted, and
 opens read-only.
 
 ![The rename spaceId → userId: one change in 31 files, each place showing its edit](docs/images/rename.png)

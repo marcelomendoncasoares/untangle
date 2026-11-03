@@ -128,6 +128,8 @@ export interface NotesContext {
   legWork?(pr: number): Promise<WorkingCopy | null>;
   /** The change a line is in: its chain's name and the commit that started it. */
   change(path: string, side: Side, line: number): { name: string; sha: string | null } | null;
+  /** The files the review shows moved, by path, with the path each had at the base. */
+  moved?(): Map<string, string>;
   /** The pull request on GitHub, to post to; null without one, or without gh. */
   gh: NotesGitHub | null;
 }
@@ -393,6 +395,8 @@ export class Notes {
     const d = this.data;
     if (d.notes.length && d.head && (d.head !== ctx.head || d.base !== ctx.base)) this.move({ base: d.base || ctx.base, head: d.head }, ctx);
     for (const note of d.notes) {
+      // Written on a file's removed lines before it was found moved: on its new path now.
+      if (note.side === 'LEFT' && !note.review) note.path = this.reviewPath(note.path);
       if (!note.review && note.pr == null && !note.gone) note.pr = ctx.leg?.({ path: note.path, side: note.side, line: note.line ?? undefined }) ?? null;
     }
     d.base = ctx.base;
@@ -425,6 +429,17 @@ export class Notes {
     return this.lines.get(key)!;
   }
 
+  /** A file's path on a side: a moved file had its old one at the base. */
+  private sidePath(side: Side, p: string): string {
+    return side === 'LEFT' ? this.ctx?.moved?.().get(p) ?? p : p;
+  }
+
+  /** The review's path for a file named by the path it had at the base, when it moved. */
+  private reviewPath(p: string): string {
+    for (const [to, from] of this.ctx?.moved?.() ?? []) if (from === p) return to;
+    return p;
+  }
+
   private codeOf(sha: string, p: string, from: number | null, to: number | null): string[] {
     if (to == null) return [];
     const all = this.fileAt(sha, p) || [];
@@ -447,14 +462,14 @@ export class Notes {
       const d = diffs[note.side];
       if (!d) {
         // Without the old commit, the lines stay where they were: changed if their text did.
-        const now = this.codeOf(sha, note.path, note.startLine, note.line);
+        const now = this.codeOf(sha, this.sidePath(note.side, note.path), note.startLine, note.line);
         if (now.join('\n') !== note.code.join('\n')) note.changed = true;
         note.code = now;
         continue;
       }
-      const f = d.get(note.path);
+      const f = d.get(this.sidePath(note.side, note.path));
       if (f && f.to === null) { note.gone = true; continue; }
-      if (f) note.path = f.to!;
+      if (f) note.path = note.side === 'LEFT' ? this.reviewPath(f.to!) : f.to!;
       if (f && !note.file) {
         const r = f.binary ? null : follow(f.hunks, note.startLine ?? note.line!, note.line!);
         if (!r) { note.gone = true; continue; }
@@ -464,7 +479,7 @@ export class Notes {
         note.startLine = r.from !== r.to ? r.from : null;
         note.startSide = note.startLine == null ? null : note.side;
       } else if (f && (f.hunks.length || f.binary)) note.changed = true;
-      note.code = this.codeOf(sha, note.path, note.startLine, note.line);
+      note.code = this.codeOf(sha, this.sidePath(note.side, note.path), note.startLine, note.line);
     }
   }
 
@@ -555,10 +570,12 @@ export class Notes {
     }
     const file = !!a.file || a.line == null;
     if (typeof a.path !== 'string') throw new NoteError('which file?');
+    // A moved file goes by its new path, even named by its old one.
+    const p = this.reviewPath(a.path);
     // A note on a deleted file is on the base's.
-    const side: Side = a.side === 'LEFT' || (file && !this.fileAt(ctx.head, a.path)) ? 'LEFT' : 'RIGHT';
+    const side: Side = a.side === 'LEFT' || (file && !this.fileAt(ctx.head, p)) ? 'LEFT' : 'RIGHT';
     const sha = side === 'LEFT' ? ctx.base : ctx.head;
-    const text = this.fileAt(sha, a.path);
+    const text = this.fileAt(sha, this.sidePath(side, p));
     if (!text) throw new NoteError(`${a.path} is not a file of this review${side === 'LEFT' ? ' on its base' : ''}`);
     const line = file ? null : Number(a.line);
     // A note's lines are on one side: the page sends a range across both as its new lines.
@@ -566,10 +583,10 @@ export class Notes {
     if (!file && (!Number.isInteger(line) || line! < 1 || (startLine != null && (!Number.isInteger(startLine) || startLine < 1 || startLine > line!)))) throw new NoteError('which lines?');
     if (line != null && line > text.length) throw new NoteError(`${a.path} has ${plural(text.length, 'line', 'lines')} at ${short(sha)}`);
     const startSide = startLine == null ? null : side;
-    const code = this.codeOf(sha, a.path, startLine, line);
+    const code = this.codeOf(sha, this.sidePath(side, p), startLine, line);
     const note: Note = {
-      n: d.next++, pr: ctx.leg?.({ path: a.path, side, line: line ?? undefined }, about?.kind === 'thread' ? about.thread : undefined) ?? null, path: a.path, file, side, line, startSide, startLine, code,
-      wrote: { head: ctx.head, path: a.path, line, startLine, code }, changed: false, gone: false,
+      n: d.next++, pr: ctx.leg?.({ path: p, side, line: line ?? undefined }, about?.kind === 'thread' ? about.thread : undefined) ?? null, path: p, file, side, line, startSide, startLine, code,
+      wrote: { head: ctx.head, path: p, line, startLine, code }, changed: false, gone: false,
       resolved: null, copied: false, about, ...this.newTalk(by, body, draft), said: [],
     };
     d.notes.push(note);
@@ -596,7 +613,8 @@ export class Notes {
     if (note.review) return 'the review';
     if (note.file) return `${note.path} (the whole file)`;
     const at = `${note.path}:${range(note.startLine, note.line)}`;
-    return note.side === 'LEFT' ? `${at}, removed lines (numbered as on the base)` : at;
+    const was = this.sidePath('LEFT', note.path);
+    return note.side === 'LEFT' ? `${at}, removed lines (numbered as on the base${was !== note.path ? `, where the file is ${was}` : ''})` : at;
   }
 
   /** The head of a copy: what the notes are on. */
