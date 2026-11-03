@@ -606,6 +606,12 @@ export class Notes {
     return `My review notes on ${ctx.name}${ctx.branch ? ` (branch ${ctx.branch}, at ${short(ctx.head)})` : ` (at ${short(ctx.head)})`}. Line numbers are on that commit.${this.checkedOut()}${this.stackText()}`;
   }
 
+  /** What the notes are on, as the agent hears it: the commit, and where its code is. */
+  atText(): string {
+    const ctx = this.ctx;
+    return ctx ? `on ${ctx.name} at ${short(ctx.head)}. Line numbers are on that commit.${this.checkedOut()}${this.stackText()}` : '';
+  }
+
   private stackText(): string {
     const stack = this.ctx?.stack;
     if (!stack) return '';
@@ -1081,9 +1087,8 @@ export class Notes {
   private deliver(agent: string) {
     const h = this.holder(agent);
     const a = this.data.agents[agent];
-    const ctx = this.ctx!;
     const opening = this.data.opening.trim();
-    const at = `on ${ctx.name} at ${short(ctx.head)}. Line numbers are on that commit.${this.checkedOut()}${this.stackText()}`;
+    const at = this.atText();
     const seen = new Set<number>();
     let text: string, notes: Note[], replies = 0, read: Note[];
     if (h.fresh) {

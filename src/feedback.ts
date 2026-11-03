@@ -4,8 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { cacheRoot } from './cache.js';
+import { chatOf } from './chats.js';
 import { call } from './client.js';
 import { runAsync } from './exec.js';
+import { heldBy } from './records.js';
 import { findRun, wantedDir, wantedUrl } from './runs.js';
 import { isPrUrl, type Target } from './target.js';
 import { ROOT, VERSION } from './version.js';
@@ -315,7 +317,9 @@ export async function feedbackCommand(opts: { kind: FeedbackKind; text: string; 
     for await (const chunk of process.stdin) text += chunk.toString();
   }
   const wanted = opts.target ? wantedUrl(opts.target) : wantedDir(process.cwd());
-  const run = wanted ? findRun(wanted) : null;
+  // From a chat with no review here, the one the chat held last.
+  const chat = opts.target ? null : chatOf();
+  const run = (wanted ? findRun(wanted) : null) ?? (chat ? heldBy(chat.id)[0] ?? null : null);
   const [info, ps] = await Promise.all([facts(), run ? quiet('ps', ['-A', '-o', 'pid=,ppid=,etime=,args=']) : null]);
   const draft: FeedbackDraft = {
     kind: opts.kind, text: text.slice(0, 60_000),

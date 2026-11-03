@@ -31,6 +31,11 @@ export interface RunInfo {
   claimed?: string;
   /** The process list its pid is in (Linux's PID namespace): a command in another one can't see it. */
   ns?: string | null;
+  /**
+   * Once its target is known, where its code is in the cache: the reviewed commit's checkout and the
+   * working copies of a pull request opened from its link. A command run in one is about this review.
+   */
+  folders?: string[];
 }
 
 /**
@@ -133,16 +138,26 @@ export function wantedUrl(url: string): Wanted | null {
 
 const same = (a?: string | null, b?: string | null) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
+/** Whether a folder, as a review names it, is the one at `dir` (its links resolved). */
+const isDir = (folder: string, dir: string) => {
+  try {
+    return fs.realpathSync(folder) === dir;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * The review running for what's wanted: of that pull request (from its link, or from a directory
- * on its branch), of that directory, or of a pull request on that directory's branch (reviewed
- * from its URL, in the cache's clone).
+ * on its branch), of that directory, the one whose checkout or working copy that directory is, or
+ * of a pull request on that directory's branch (reviewed from its URL, in the cache's clone).
  */
 export function findRun(w: Wanted): RunInfo | null {
   const runs = listRuns();
   return runs.find((r) => w.pr && r.pr === w.pr)
     || runs.find((r) => w.key && r.key === w.key && same(r.repoKey, w.repoKey))
     || runs.find((r) => w.dir && r.dir === w.dir)
+    || runs.find((r) => w.dir && r.folders?.some((f) => isDir(f, w.dir!)))
     || runs.find((r) => w.branch && same(r.repoKey, w.repoKey) && r.branch === w.branch)
     || null;
 }

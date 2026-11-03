@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
@@ -123,6 +124,21 @@ describe('Given a review’s run file, ', () => {
       assert.equal(draft.text, 'The review hangs');
       assert.ok(draft.details.find((d) => d.k === 'untangle')!.v.startsWith('0.1.0, at '));
       assert.equal(f.gh.calls().some((c) => ['issue', 'gist'].includes(c.args[0])), false);
+    });
+  });
+
+  describe('when untangle feedback runs in a chat that held the review of a pull request, from a folder with no review of its own, ', () => {
+    it('then the draft goes to that review.', async () => {
+      f = await feedbackFixture();
+      const chat = 'ffffffff-0000-4000-8000-000000000006', cache = f.env.UNTANGLE_CACHE;
+      writeRun({ pid: process.pid, url: f.url, token: new URL(f.url).searchParams.get('token')!, dir: null, pr: 'acme/widget#9', repoKey: 'github.com/acme/widget', key: 'pr-9', started: new Date().toISOString() });
+      const record = path.join(cache, 'sessions/github.com/acme/widget/pr-9.json');
+      fs.mkdirSync(path.dirname(record), { recursive: true });
+      fs.writeFileSync(record, JSON.stringify({ version: 1, target: 'https://github.com/acme/widget/pull/9', chats: [{ agent: 'Claude', kind: 'claude', id: chat, folder: f.root, home: null, orca: null, at: new Date().toISOString() }] }));
+      const result = await untangleCommand(['feedback', 'untangle note says no review is running'], { cwd: f.root, cacheDir: cache, gh: f.gh, env: { UNTANGLE_FEEDBACK_REPO: 'fixture/feedback', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: chat } });
+      assert.equal(result.code, 0, result.err);
+      assert.match(result.out, /the report is on the review’s page, for you to check and send/);
+      assert.equal(((await f.client.call('feedback')).data as { draft: { text: string } }).draft.text, 'untangle note says no review is running');
     });
   });
 

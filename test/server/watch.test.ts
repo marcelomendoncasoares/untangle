@@ -9,6 +9,7 @@ import { reviewClient, type ReviewClient } from '../helpers/http.ts';
 import { pubspec } from '../helpers/review.ts';
 import { TempRepo, type Person } from '../helpers/repo.ts';
 import { runsIn, stopRuns, untangleCommand } from '../helpers/run.ts';
+import { workingFixture } from './working-fixture.ts';
 
 const ada = (date: string): Person => ({ name: 'Ada Review', email: 'ada@example.com', date });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -279,7 +280,7 @@ describe('Given a Codex chat that asks for a review, ', { timeout: 300_000 }, ()
     + 'then it returns at once, saying untangle will put a line in the chat, and how the review works for Codex.',
     () => {
       const lines = first.out.split('\n');
-      assert.deepEqual([first.code, lines[2], lines[4]], [0, 'untangle: nothing to read yet: untangle will put a line in this chat when there is.', 'untangle: when there are unread notes or replies, untangle puts a line in this chat; untangle watch then prints them.']);
+      assert.deepEqual([first.code, lines[3], lines[5]], [0, 'untangle: nothing to read yet: untangle will put a line in this chat when there is.', 'untangle: when there are unread notes or replies, untangle puts a line in this chat; untangle watch then prints them.']);
     },
   );
 
@@ -365,6 +366,91 @@ describe('Given two Claude chats in Orca’s terminals, ', { timeout: 300_000 },
       assert.deepEqual([first.code, first.out.trim().split('\n').pop()], [0, 'untangle: another Claude chat took over this review: there’s nothing more to watch here.']);
       assert.match(second.out, /\nuntangle: you hold this review now: another Claude chat held it\. Here are its 2 open notes, on .+ at [0-9a-f]{7}\. Line numbers are on that commit\.\n[\s\S]*\nuntangle: this chat holds the code review\./);
       assert.deepEqual((await view()).agents.map((a) => [a.name, a.chat]), [['Claude', chats.b]]);
+    },
+  );
+});
+
+describe('Given a Claude chat that watches a pull request’s review from its link, in a folder that holds no repository, ', { timeout: 300_000 }, () => {
+  let f: ReturnType<typeof workingFixture>;
+  let folder = '', work = '', checkout = '';
+  let elsewhere: TempRepo;
+  let client: ReviewClient;
+  let first: { code: number | null; out: string; err: string };
+  const chats = { holder: 'dddddddd-0000-4000-8000-000000000004', other: 'eeeeeeee-0000-4000-8000-000000000005' };
+  // A command run from a folder: in a chat, or in a terminal that is none.
+  const command = (args: string[], cwd: string, chat: string | null = chats.holder) => untangleCommand(args, { cacheDir: f.cache, gh: f.gh, cwd, env: { ...f.env, UNTANGLE_NOTES_QUIET: '100', ...(chat ? { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: chat } : {}) } });
+  const header = () => `My review notes on acme/sample#7 (branch feature, at ${f.head.slice(0, 7)}). Line numbers are on that commit.`;
+
+  before(async () => {
+    f = workingFixture();
+    folder = fs.mkdtempSync(path.join(os.tmpdir(), 'untangle-chat-'));
+    elsewhere = TempRepo.create();
+    elsewhere.write('a.txt', 'a\n');
+    elsewhere.commit({ subject: 'Start', author: ada('2020-06-01T00:00:00Z'), committer: ada('2020-06-01T00:00:00Z') });
+    const watching = command(['watch', '-no-open', '-port', '0', f.url], folder);
+    client = reviewClient((await until('the review watch starts', () => runsIn(f.cache)[0])).url);
+    await client.open();
+    await until('Claude to listen', async () => (await client.call('notes')).status === 200 && ((await client.call('notes')).data as NotesView).agents.some((a) => a.state === 'listening'));
+    // The review's record names the chat that holds it.
+    const record = path.join(f.cache, 'sessions/github.com/acme/sample/pr-7.json');
+    await until('the record to name the chat', () => fs.existsSync(record) && (JSON.parse(fs.readFileSync(record, 'utf8')) as { chats: Array<{ id: string }> }).chats.some((c) => c.id === chats.holder));
+    assert.equal((await client.call('notes', { method: 'POST', head: f.head, body: { action: 'add', path: 'greeting.txt', side: 'RIGHT', line: 1, body: 'Why the world?' } })).status, 200);
+    first = await watching;
+    work = path.join(f.cache, 'work/github.com/acme/sample/7');
+    checkout = path.join(f.cache, 'worktrees/github.com/acme/sample', f.head.slice(0, 12));
+  });
+
+  after(async () => {
+    await stopRuns(f.cache);
+    elsewhere?.remove();
+    fs.rmSync(folder, { recursive: true, force: true });
+    f.remove();
+  });
+
+  it(
+    'when the review opens, '
+    + 'then the watch says at once the commit it’s on and where that commit and the branch are checked out, before any note comes.',
+    () => {
+      assert.deepEqual(first.out.split('\n').slice(1, 3), [
+        `untangle: #7 Greet the world is open at ${runsIn(f.cache)[0].url}.`,
+        `untangle: the review is on acme/sample#7 at ${f.head.slice(0, 7)}. Line numbers are on that commit. That commit is checked out at ${checkout}, for reading only. The pull request’s branch, feature, is checked out at ${work}, for changes: commit there, and push when asked.`,
+      ]);
+    },
+  );
+
+  it(
+    'when the chat writes a note from its folder, '
+    + 'then the note goes on the review the chat holds.',
+    async () => {
+      const r = await command(['note', 'greeting.txt:1', 'Say', 'hello', 'to', 'all?'], folder);
+      assert.deepEqual([r.code, r.err, r.out], [0, '', `untangle: wrote N2 on greeting.txt:1, at ${f.head.slice(0, 7)}:\n  hello world\n`]);
+    },
+  );
+
+  it(
+    'when the chat asks for the notes from a repository no review is running for, '
+    + 'then those of the review it holds print.',
+    async () => {
+      const r = await command(['notes'], elsewhere.dir);
+      assert.deepEqual([r.code, r.out.split('\n')[0]], [0, `${header()} That commit is checked out at ${checkout}, for reading only. The pull request’s branch, feature, is checked out at ${work}, for changes: commit there, and push when asked.`]);
+    },
+  );
+
+  it(
+    'when a terminal that is no chat asks for them from the working copy, and from the commit’s checkout, '
+    + 'then the review those are the copies of answers both.',
+    async () => {
+      const there = await command(['notes'], work, null), read = await command(['notes'], checkout, null);
+      assert.deepEqual([there.code, there.out.split(' That commit')[0], read.code, read.out.split(' That commit')[0]], [0, header(), 0, header()]);
+    },
+  );
+
+  it(
+    'when another chat, which holds no review, asks from that folder, '
+    + 'then it hears that no review of this directory is running.',
+    async () => {
+      const r = await command(['notes'], folder, chats.other);
+      assert.deepEqual([r.code, r.err], [1, 'untangle: no review of this directory is running: untangle watch starts one\n']);
     },
   );
 });

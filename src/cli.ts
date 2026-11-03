@@ -9,7 +9,7 @@ import path from 'node:path';
 import * as agent from './agent.js';
 import { feedbackUsage, noteUsage, notesUsage, parseCommand, replyUsage, restartArgs, reviewsUsage, skillUsage, stopUsage, upgradeUsage, usage, UsageError, watchUsage, type Options } from './args.js';
 import { buildReview, buildSteps, type ReviewData } from './build.js';
-import { reviewDir, worktreeDir } from './cache.js';
+import { reviewDir, workDir, worktreeDir } from './cache.js';
 import { chatFolder, chatFrom } from './chats.js';
 import { readHistory } from './history.js';
 import { gitMaybe } from './exec.js';
@@ -316,7 +316,7 @@ async function review(opts: Options): Promise<number> {
     try {
       if (route === 'notes' && method === 'GET') return { data: book.view() };
       if (route === 'notes' && method === 'POST') return { data: await book.act((body || {}) as NoteAction) };
-      if (route === 'notes/hello' && method === 'GET') return { data: { title: target ? names(target).title : '', url, head: target?.headSha, pages: server ? server.pageCount : 0, opened } };
+      if (route === 'notes/hello' && method === 'GET') return { data: { title: target ? names(target).title : '', url, head: target?.headSha, where: book.atText(), pages: server ? server.pageCount : 0, opened } };
       if (route === 'notes/watch' && (method === 'POST' || method === 'GET')) {
         const wait = Math.min(WATCH_ROUND, Math.max(0, Number(b.wait ?? query.get('wait')) || WATCH_ROUND));
         // The command the agent reads with, as it types it: it goes in the lines for its chat.
@@ -350,7 +350,7 @@ async function review(opts: Options): Promise<number> {
     }
     const context = s.notesContext(t.pr ? `${t.pr.owner}/${t.pr.repo}#${t.pr.number}` : t.repoKey.startsWith('local/') ? path.basename(t.repo) : n.repoName, t.pr ? t.pr.headRefName : n.branch, byUrl ? worktreeDir(t.repoKey, t.headSha) : null);
     notes.attach({ ...context, work: t.work });
-    if (run) writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: run.key === n.snapshotKey ? run.claimed : new Date().toISOString(), branch: t.pr ? t.pr.headRefName : n.branch, title: n.title, head: t.headSha });
+    if (run) writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: run.key === n.snapshotKey ? run.claimed : new Date().toISOString(), branch: t.pr ? t.pr.headRefName : n.branch, title: n.title, head: t.headSha, folders: folders(t) });
     // The record carries over what an earlier run of the review kept: when it started, its chats,
     // its checkouts and analyses. Opening a closed review opens it again.
     const now = new Date().toISOString();
@@ -391,6 +391,10 @@ async function review(opts: Options): Promise<number> {
     recordNow();
   };
 
+  // Where a pull request's review keeps its code in the cache: the reviewed commit's checkout and
+  // the working copies of its branches, a stack's lower ones among them. A command run in one finds
+  // the review, in the checkout of a commit it reviewed before a refresh too.
+  const folders = (t: Target) => [...new Set([...(run?.folders ?? []), ...(byUrl ? [worktreeDir(t.repoKey, t.headSha), ...(t.work ? [t.work.dir] : []), ...(t.stack?.legs ?? []).map((l) => workDir(t.repoKey, l.pr.number))] : [])])];
   const resolve = (progress: Narrator) => (byUrl ? resolveUrl(opts.target, (l) => progress.detail(l), opts.base) : resolveDirectory(dir, opts.base, (l) => progress.detail(l)));
   // What a review is called: in the terminal and the page, and the branch that keeps its marks.
   const names = (t: Target) => {
@@ -516,7 +520,7 @@ async function review(opts: Options): Promise<number> {
     say.title(n.title, n.where);
     // One untangle serves a review: this one takes it, unless another took it first.
     if (run) {
-      writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: new Date().toISOString() });
+      writeRun(run = { ...run, repoKey: t.repoKey, key: n.snapshotKey, claimed: new Date().toISOString(), folders: folders(t) });
       const other = holder(run, t.pr ? prKey(t.pr.owner, t.pr.repo, t.pr.number) : null);
       if (other && (await serves(other))) return giveWay(other, n.title);
     }

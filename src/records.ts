@@ -6,7 +6,7 @@ import path from 'node:path';
 import { cacheRoot, reviewDir, worktreeDir, workDir } from './cache.js';
 import { call, Gone } from './client.js';
 import type { LocalSource } from './local.js';
-import { pidAlive, removeRun, type RunInfo } from './runs.js';
+import { listRuns, pidAlive, removeRun, type RunInfo } from './runs.js';
 import type { StackRecord } from './stack.js';
 
 /** A chat that held a review: what resumes it, and where it ran. */
@@ -157,6 +157,15 @@ export async function serves(run: RunInfo): Promise<boolean> {
   }
   removeRun(run.pid);
   return false;
+}
+
+/**
+ * The reviews running now that a chat held, the one it held last first: what a command run in that
+ * chat is about, when it names no review and its folder has none.
+ */
+export function heldBy(chat: string, runs = listRuns()): RunInfo[] {
+  const at = (r: RunInfo) => (r.repoKey && r.key ? readRecord(recordFile(r.repoKey, r.key))?.chats.find((c) => c.id === chat)?.at : null) ?? '';
+  return runs.map((r) => ({ r, at: at(r) })).filter((x) => x.at).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map((x) => x.r);
 }
 
 /** The folders a record names: its checkouts and analyses. */

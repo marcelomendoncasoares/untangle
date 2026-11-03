@@ -396,8 +396,10 @@ chat is enough. The agent runs:
 | `untangle feedback <text>`                      | when untangle misbehaves: draft a bug report for you to check and send     |
 
 Claude runs `watch` in the background, and its end wakes the chat. Codex's `watch` returns at
-once, and untangle puts a line in its chat when there's something new. The review runs on its
-own, so a watch or a chat that ends never closes the page.
+once, and untangle puts a line in its chat when there's something new. The other commands act on
+the review of the folder they run in (its checkout or working copy, for a pull request's link),
+else on the one the chat holds, and `-review` names another. The review runs on its own, so a
+watch or a chat that ends never closes the page.
 
 ### Your reviews
 

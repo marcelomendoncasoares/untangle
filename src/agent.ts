@@ -11,6 +11,7 @@ import { launch, logTail } from './launcher.js';
 import { call, failed, Gone } from './client.js';
 import { isPrUrl } from './target.js';
 import { openBrowser } from './open.js';
+import { heldBy } from './records.js';
 import { findRun, listRuns, pidAlive, removeRun, wantedDir, wantedUrl, type RunInfo, type Wanted } from './runs.js';
 import { outdatedSkill } from './skill.js';
 
@@ -49,11 +50,10 @@ const alive = (pid: number) => listRuns().some((r) => r.pid === pid);
 const elsewhere = (agent: string) => say(`another ${agent} chat holds this review now: untangle watch here takes it back.`);
 
 /**
- * The review running for a target, when it answers: a run file left by a review that was killed
- * (whose process id another process now has) is removed.
+ * A review that runs, when it answers: a run file left by a review that was killed (whose process
+ * id another process now has) is removed.
  */
-async function find(target: string): Promise<RunInfo | null> {
-  const run = findRun(wanted(target));
+async function answering(run: RunInfo | null): Promise<RunInfo | null> {
   if (!run) return null;
   try {
     await call(run, 'GET', 'notes/hello');
@@ -64,6 +64,9 @@ async function find(target: string): Promise<RunInfo | null> {
     return null;
   }
 }
+
+/** The review running for a target, when it answers. */
+const find = (target: string) => answering(findRun(wanted(target)));
 
 /**
  * The untangle that took a review over when the one serving it restarted on a newer untangle, once
@@ -82,11 +85,17 @@ async function successor(run: RunInfo, agent: string, target: string, ms: number
   return null;
 }
 
-/** The review a command is about, or an error that says how to start one. */
+/**
+ * The review a command is about: the one -review names, else this folder's (or the one whose
+ * checkout or working copy this is), else the one this chat held last, as when it watches a pull
+ * request's review from its own folder. Or an error that says how to start one.
+ */
 async function running(review: string | null): Promise<RunInfo> {
-  const target = review ?? '.';
-  const run = await find(target);
-  if (!run) throw new Error(`no review of ${review ? target : 'this directory'} is running: untangle watch${review ? ' ' + sh(target) : ''} starts one`);
+  const here = review ? null : wantedDir('.');
+  let run = review ? await find(review) : here ? await answering(findRun(here)) : null;
+  const chat = review || run ? null : chatOf();
+  for (const held of chat ? heldBy(chat.id) : []) if ((run = await answering(held))) break;
+  if (!run) throw new Error(`no review of ${review ?? 'this directory'} is running: untangle watch${review ? ' ' + sh(review) : ''} starts one`);
   return run;
 }
 
@@ -150,7 +159,11 @@ export async function watch(o: { target: string; given: boolean; forward: string
   // Already running, with no page open: one opens, so the person can write the notes.
   let opened = log ? (hello.opened as string | null) : null;
   if (!log && !hello.pages) opened = await openBrowser(run.url);
-  if (log || !hello.pages) say(`${hello.title} is open ${opened === 'orca' ? 'in Orca’s browser' : opened === 'browser' ? 'in the browser' : `at ${run.url}`}.`);
+  if (log || !hello.pages) {
+    say(`${hello.title} is open ${opened === 'orca' ? 'in Orca’s browser' : opened === 'browser' ? 'in the browser' : `at ${run.url}`}.`);
+    // Where its code is, for a review of the change before any note comes.
+    if (hello.where) say(`the review is ${hello.where}`);
+  }
 
   // The commands to answer with, as this agent should type them.
   const extra = [o.agent ? `-agent ${sh(o.agent)}` : '', o.given ? `-review ${sh(o.target)}` : ''].filter(Boolean).join(' ');

@@ -202,7 +202,7 @@ function options(values: Map<string, string | boolean>, target: string): Options
 // ---- The commands a coding agent runs to hold a review.
 
 const AGENT: Flag = { name: 'agent', type: 'string', usage: 'the agent’s name, shown with its answers (default: from the environment, else "Agent")' };
-const REVIEW: Flag = { name: 'review', type: 'string', usage: 'the review’s directory or pull request URL', default: '.' };
+const REVIEW: Flag = { name: 'review', type: 'string', usage: 'the review’s directory or pull request URL (default: this folder’s review, else the one this chat holds)' };
 const WATCH_FLAGS: Flag[] = [AGENT, { name: 'timeout', type: 'duration', usage: 'stop waiting after this long (e.g. 9m), for an agent whose commands have a time limit; 0 waits until something comes', default: '0s' }];
 const REPLY_FLAGS: Flag[] = [AGENT, { name: 'resolve', type: 'bool', usage: 'resolve the note too, once it’s done' }, REVIEW];
 const NOTE_FLAGS: Flag[] = [AGENT, { name: 'removed', type: 'bool', usage: 'the lines are ones the change removed, numbered as on the base' }, REVIEW];
