@@ -370,10 +370,11 @@ and reviewing a test starts there: the code is there to confirm it.
 5. **In a chain.** A chain reads its test members as their files' outlines, after its code: what
    it changed in what they assert, with every group that completes each sentence (dimmed when
    unchanged; one another chain wrote or renamed shows its sign, as its code does, with that
-   commit named). A group the chain wrote or renamed brings the tests under it, whichever commit
-   wrote them: one another commit wrote reads as the change it is (its sign, its lines, its
-   mark), with that commit named, as its code does there, and stays out of the chain's counts,
-   j, k and the pill.
+   commit named, and its mark and lines take in its own lines with the chain's under it, while
+   j and k pass it by and it folds away with the chain's tests). A group the chain wrote or
+   renamed brings the tests under it, whichever commit wrote them: one another commit wrote
+   reads as the change it is (its sign, its lines, its mark), with that commit named, as its
+   code does there, and stays out of the chain's counts, j, k and the pill.
    - Unchanged siblings fold under "+N unchanged whens"; code edited under sentences that stay
      (setup, bodies) follows the outline, and changes outside every call (imports, helpers)
      come last, both open: they're the chain's code.

@@ -153,6 +153,57 @@ describe('Given a served review by commit: a discount with its tests, more tests
     });
   });
 
+  describe('when the mark of the Given another commit wrote is clicked in the chain of the commit that only adds tests, ', () => {
+    let given = '';
+    let mark = '';
+    let rows = '';
+    let there = '';
+
+    before(async () => {
+      await rest(page!);
+      await openChain(page!, 'Cover more totals');
+      given = await rowSelector(page!, 'Given a cart with a discount of one,');
+      mark = await read(page!, `(() => { const row = document.querySelector(${JSON.stringify(given)}); return [row.querySelector('.ol-df')?.textContent ?? 'no lines', row.querySelector('.ol-tick')?.title ?? 'no mark', row.hasAttribute('data-nav') ? 'a stop' : 'no stop'].join(' · '); })()`);
+      await page!.click(`${given} .ol-tick`);
+      await page!.until(`!document.querySelector(${JSON.stringify(given)})`);
+      rows = await read(page!, rowsRead);
+      await openChain(page!, 'Take a discount');
+      there = await read(page!, rowsRead);
+    });
+
+    after(async () => {
+      await openChain(page!, 'Cover more totals');
+      await page!.click('#vw-main .ol-fold.ok');
+      await page!.until(`!!document.querySelector(${JSON.stringify(given)})`);
+      await page!.click(`${given} .ol-tick`);
+      await page!.until(`!document.querySelector('#vw-main .ol-fold.ok')`);
+    });
+
+    it('then it has a mark, as the rows around it do, for its own lines and the test under it, whose lines it counts, and j and k pass it by.', () => {
+      assert.equal(mark, '+5 · Mark this group reviewed: its setup and everything under it · no stop');
+    });
+
+    it('then they are reviewed, and it folds away with the test under it.', () => {
+      assert.equal(rows, [
+        'cart_test.dart · 2 new',
+        `  ~ Given a cart [-with-]{+holding+} two items, [${nameSha.slice(0, 7)}]`,
+        '    · when the total is taken,',
+        '      + then it is positive.',
+        '      + 1 unchanged then',
+        '  1 test reviewed',
+      ].join('\n'));
+    });
+
+    it('then the chain of the commit that wrote it reads its own lines reviewed.', () => {
+      assert.equal(there, [
+        'cart_test.dart · 1 new',
+        '  + Given a cart with a discount of one, (reviewed)',
+        '    + when the total is taken, then the discount comes off.',
+        '    1 test reviewed',
+      ].join('\n'));
+    });
+  });
+
   describe('when a new then is opened, ', () => {
     let code = '';
 

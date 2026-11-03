@@ -4273,9 +4273,9 @@
     const w = n.k !== 't' && !n.l && !n.su && /^\s*(given|when)\b/i.exec(n.t);
     return w ? `<i class="ol-nosu" title="No setUp, setUpAll or shared variable in this ${/^g/i.test(w[1]) ? 'Given' : 'when'}"></i>` : '';
   };
-  // The diff's lines in a call's whole range, on both sides (in a chain, the chain's), shown while
-  // the row is hovered.
-  function olDiff(sc, n) {
+  // The diff's lines in a call's whole range, on both sides (in a chain, the chain's, and those of
+  // the blocks given), shown while the row is hovered.
+  function olDiff(sc, n, more) {
     const f = sc.f;
     let a = 0, d = 0;
     const count = (meta, from, to) => {
@@ -4285,7 +4285,7 @@
         else if (r.t === '-' && n.os != null && r.o >= n.os && r.o <= n.oe) d++;
       }
     };
-    if (sc.chain) f.blocks.forEach((b) => { if (sc.chain.blockSet.has(b.id)) count(hunkMeta(f.hunks[b.hunk]), b.first, b.first + b.len); });
+    if (sc.chain) f.blocks.forEach((b) => { if (sc.chain.blockSet.has(b.id) || (more && more.includes(b))) count(hunkMeta(f.hunks[b.hunk]), b.first, b.first + b.len); });
     else f.hunks.forEach((h) => { const meta = hunkMeta(h); count(meta, 0, meta.length); });
     if (!a && !d) return '';
     return `<span class="ol-df" title="The lines ${n.removed ? 'it removed' : `this ${n.k === 't' ? 'test' : 'group'} changed`}">${[a ? `<span class="a">+${fmt(a)}</span>` : '', d ? `<span class="d">−${fmt(d)}</span>` : ''].filter(Boolean).join(' ')}</span>`;
@@ -4329,8 +4329,13 @@
     // code does here: other, so the chain's counts, j, k and the pill pass it by.
     if (chain) show.forEach((n) => { if (n.k === 't' && !st.get(n).s) { const r = statusIn(null, n); if (r.s) st.set(n, { ...r, other: true }); } });
     // A group another chain wrote or renamed shows that sign, as its code does here, with that
-    // chain named; what it covers here stays the chain's.
-    if (chain) show.forEach((n) => { if (n.k !== 't' && !n.l && !primary(n)) { const r = statusIn(null, n).s; if (r === 'new' || r === 'renamed') st.set(n, { ...st.get(n), sign: r }); } });
+    // chain named; its mark and its lines take in its own lines with the chain's under it, and it
+    // folds away with the chain's.
+    if (chain) show.forEach((n) => {
+      if (n.k === 't' || n.l || primary(n)) return;
+      const r = statusIn(null, n), c = st.get(n);
+      if (r.s === 'new' || r.s === 'renamed') st.set(n, { ...c, sign: r.s, marks: [...new Set(r.own.concat(c.all))] });
+    });
     const rm = ol.removed.filter((r) => blocks(r.b).length > 0);
     rm.forEach((r) => up(r.parent));
     const edited = ol.nodes.filter((n) => !show.has(n) && st.get(n).s === 'edited');
@@ -4452,7 +4457,7 @@
     const shown = s.s === 'new' || s.s === 'renamed' || (s.s === 'reworded' && was);
     const writer = (o.chips && shown) || (sc.chain && (!shown || s.other)) ? olWriter(f, n) : null;
     const chip = writer && (!sc.chain || (writer.id !== sc.chain.id && !(sc.chain.sha && chainSha(writer) === sc.chain.sha))) ? olChip(writer, key, o.chips) : '';
-    const marks = s.s ? s.all : [];
+    const marks = s.marks || (s.s ? s.all : []);
     const st = stats(marks), todo = stats(s.own).open > 0;
     const open = state.olOpen.has(key);
     // A group partly reviewed: its mark shows a dash, and its title mutes once its own lines are.
@@ -4463,7 +4468,7 @@
     return `<div class="ol-row ${cls}${n.l ? ' lbl' : ''}${open ? ' open' : ''}${muted ? ' done' : ''}" data-act="ol-open" data-ol="${esc(key)}"${nav} style="--d:${n.depth}" role="button" tabindex="0" aria-expanded="${open}">`
       + `<span class="ol-mk" aria-hidden="true">${OL_MARK[cls] || ''}</span>`
       + `<span class="ol-tt">${n.l ? esc(n.t) : olWords(n.t, was)}${olNoSetup(n)}</span>`
-      + `<span class="ol-meta">${olExpects(n)}${body ? '' : olDiff(s.other ? { ...sc, chain: null } : sc, n)}${chip}<button type="button" class="ol-go" data-open="${esc(f.p)}" data-line="${n.s}" title="Open in the file, at line ${n.s}" aria-label="Open in the file">${ICON.intoFile}</button>${tags.join('')}${tick}</span></div>`
+      + `<span class="ol-meta">${olExpects(n)}${body ? '' : olDiff(s.other ? { ...sc, chain: null } : sc, n, s.marks)}${chip}<button type="button" class="ol-go" data-open="${esc(f.p)}" data-line="${n.s}" title="Open in the file, at line ${n.s}" aria-label="Open in the file">${ICON.intoFile}</button>${tags.join('')}${tick}</span></div>`
       + (open ? olCodeHtml(sc, n) : '');
   }
   // A review mark for what a row covers: on when all of it is reviewed, a dash when some of it is.
@@ -4644,7 +4649,7 @@
   function olEditedRowsHtml(sc, o) {
     const keep = new Set();
     sc.edited.forEach((n) => { for (let x = n; x; x = x.parent) keep.add(x); });
-    const sub = { ...sc, st: new Map([...sc.st].map(([n, s]) => [n, sc.edited.includes(n) ? s : { ...s, s: null, sign: null }])) };
+    const sub = { ...sc, st: new Map([...sc.st].map(([n, s]) => [n, sc.edited.includes(n) ? s : { ...s, s: null, sign: null, marks: null }])) };
     let h = '';
     const walk = (list) => list.forEach((n) => { if (!keep.has(n)) return; h += olRowHtml(sub, n, o); walk(n.kids); });
     walk(sc.ol.top);
