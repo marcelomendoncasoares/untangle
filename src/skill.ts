@@ -10,7 +10,7 @@ import { has } from './exec.js';
 
 export const SKILL = `---
 name: untangle
-description: Hold a code review with the user in untangle, a review page for this branch or a pull request, where the user writes notes on the code and the agent answers in each note's thread, or writes notes of its own from a review of the change. Use when the user asks for a review in untangle, to review a change in untangle, to open or continue the untangle review, or when a message or a command's output says there are new notes on the untangle review.
+description: Hold a code review with the user in untangle, a review page for this branch or a pull request, where the user writes notes on the code and the agent answers in each note's thread, or writes notes of its own from a review of the change. In build mode, the review starts with nothing to review, and the notes say what to build. Use when the user asks for a review in untangle, to review a change in untangle, to build a change in untangle or start untangle in build mode, to open or continue the untangle review, or when a message or a command's output says there are new notes on the untangle review.
 allowed-tools: Bash(untangle:*)
 ---
 
@@ -29,6 +29,10 @@ the review if needed and opens its page.
   something new, starting a new turn.
 - Codex: it returns at once, and from then on untangle puts a line in this chat when there is
   something new.
+
+When the user asks for build mode, or to build a change in untangle, run \`untangle watch -build\`:
+the review opens even with nothing to review yet, and the user's notes on the review say what to
+build. Build it on the folder's current branch and commit each step, so the review shows it.
 
 For a pull request opened from its link, the watch names untangle's checkout of the reviewed
 commit, for reading only, and, for an open pull request, a working copy of its branch, for

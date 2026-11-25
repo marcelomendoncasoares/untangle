@@ -75,6 +75,11 @@ export interface ReviewRecord {
   stack?: StackRecord | null;
   /** When its space was freed: its checkouts and analyses went, and opening it again builds them. */
   freed?: string | null;
+  /**
+   * Opened to build a change from its notes (-build): it opens with nothing to review yet, and stays
+   * a build until it's closed. On the branch it compares with, from is where the build started.
+   */
+  build?: { from: string | null } | null;
 }
 
 /** A record as it's listed: running, paused (stopped, kept to resume), or closed. */

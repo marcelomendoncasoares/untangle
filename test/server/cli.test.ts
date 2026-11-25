@@ -49,6 +49,8 @@ const usageText = [
   '    \tcompare with this branch or commit instead of the pull request’s base',
   '  -base-path string',
   '    \tbase URL path prefix to serve endpoints and assets from (e.g. /rev-123/)',
+  '  -build',
+  '    \topen the review with nothing to review yet, to build the change from its notes',
   '  -chains string',
   '    \twhat chains follow: "history", the commits that started each change, or "structure", the code alone (default "history")',
   '  -editor string',

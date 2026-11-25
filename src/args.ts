@@ -12,6 +12,7 @@ const FLAGS: Flag[] = [
   { name: 'autoclose', type: 'bool', usage: 'stop once the review’s last open page closes (a reload keeps it)', default: true },
   { name: 'base', type: 'string', usage: 'compare with this branch or commit instead of the pull request’s base' },
   { name: 'base-path', type: 'string', usage: 'base URL path prefix to serve endpoints and assets from (e.g. /rev-123/)' },
+  { name: 'build', type: 'bool', usage: 'open the review with nothing to review yet, to build the change from its notes' },
   { name: 'chains', type: 'string', usage: 'what chains follow: "history", the commits that started each change, or "structure", the code alone', default: 'history' },
   { name: 'editor', type: 'string', usage: 'open locations with this command, or this URL, where {file}, {line} and {col} are replaced (e.g. "code -g {file}:{line}:{col}"); VS Code\'s vscode:// link when omitted' },
   { name: 'export', type: 'string', usage: 'write the review to this HTML file, to share it read-only, and exit' },
@@ -31,6 +32,7 @@ export interface Options {
   autoclose: boolean;
   base: string | null;
   basePath: string;
+  build: boolean;
   chains: 'history' | 'structure';
   editor: string | null;
   exportTo: string | null;
@@ -183,6 +185,7 @@ function options(values: Map<string, string | boolean>, target: string): Options
     autoclose: values.has('autoclose') ? bool('autoclose') : true,
     base: str('base'),
     basePath,
+    build: bool('build'),
     chains,
     editor: str('editor'),
     exportTo: str('export'),

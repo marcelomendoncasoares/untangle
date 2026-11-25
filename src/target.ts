@@ -48,6 +48,22 @@ export interface Target {
   headDir: string | null;
   /** Notes for the narration: why the head or base is what it is. */
   notes: string[];
+  /** HEAD is on the branch the review compares with (main itself): its commits reach the base as they're made. */
+  onBase?: boolean;
+}
+
+/** Why the review of a target that adds nothing to its base doesn't open. */
+export const nothingToReview = (t: Pick<Target, 'pr' | 'baseRef'>, byUrl: boolean) =>
+  `${byUrl && t.pr ? `#${t.pr.number}` : 'HEAD'} adds nothing to ${t.baseRef}: there is nothing to review (-build opens it anyway, to build the change from its notes)`;
+
+/**
+ * A build's target: building on the branch it compares with, it goes on comparing with where the
+ * build started as its commits reach that branch, committed on it or pushed, unless the branch has
+ * left that commit behind.
+ */
+export function fromBuild(t: Target, from: string | null): Target {
+  if (!t.onBase || !from || from === t.baseSha || gitMaybe(t.repo, 'merge-base', '--is-ancestor', from, t.headSha) === null) return t;
+  return { ...t, baseSha: from, notes: [...t.notes, `comparing with ${from.slice(0, 7)}, where the build started`] };
 }
 
 const PR_URL = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/pull\/(\d+)(?:[/?#].*)?$/;
@@ -188,7 +204,8 @@ export async function tidyClone(repo: string): Promise<void> {
   }
 }
 
-export async function resolveUrl(url: string, say: (line: string) => void, baseOverride: string | null = null): Promise<Target> {
+/** A pull request's target. With `empty`, one that adds nothing to its base is one too, for a build. */
+export async function resolveUrl(url: string, say: (line: string) => void, baseOverride: string | null = null, opts: { empty?: boolean } = {}): Promise<Target> {
   const [, owner, name, num] = PR_URL.exec(url)!;
   say(`looking up ${owner}/${name}#${num}`);
   const pr = await fetchPr(owner, name, +num);
@@ -222,7 +239,7 @@ export async function resolveUrl(url: string, say: (line: string) => void, baseO
     const tip = tipOf(repo, baseOverride) ?? await fetchBranch(repo, 'origin', baseOverride);
     if (!tip) throw new Error(`cannot find -base ${baseOverride} in ${repo}`);
     const baseSha = (await gitAsync(repo, ['merge-base', tip, headSha])).trim();
-    if (baseSha === headSha) throw new Error(`#${pr.number} adds nothing to ${baseOverride}: there is nothing to review`);
+    if (baseSha === headSha && !opts.empty) throw new Error(nothingToReview({ pr, baseRef: baseOverride }, true));
     return { repo, repoKey, pr, work, stack: null, baseRef: baseOverride, baseSha, headSha, headDir: null, notes };
   }
   const stack = await findStack(repo, repoKey, pr, headSha, true, 'origin', work);
@@ -231,11 +248,12 @@ export async function resolveUrl(url: string, say: (line: string) => void, baseO
   const ref = `refs/untangle/base/${pr.baseRefName}`;
   const tip = await prBaseTip(repo, 'origin', pr, () => gitAsync(repo, ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${pr.baseRefName}:${ref}`]).then(() => git(repo, 'rev-parse', ref).trim(), () => null));
   const baseSha = git(repo, 'merge-base', tip, headSha).trim();
-  if (baseSha === headSha) throw new Error(`#${pr.number} adds nothing to ${pr.baseRefName}: there is nothing to review`);
+  if (baseSha === headSha && !opts.empty) throw new Error(nothingToReview({ pr, baseRef: pr.baseRefName }, true));
   return { repo, repoKey, pr, work, stack: null, baseRef: pr.baseRefName, baseSha, headSha, headDir: null, notes };
 }
 
-export async function resolveDirectory(dir: string, baseOverride: string | null, say: (line: string) => void): Promise<Target> {
+/** A directory's target. With `empty`, one that adds nothing to its base is one too, for a build. */
+export async function resolveDirectory(dir: string, baseOverride: string | null, say: (line: string) => void, opts: { empty?: boolean } = {}): Promise<Target> {
   const top = gitMaybe(dir, 'rev-parse', '--show-toplevel')?.trim();
   if (!top) throw new Error(`${dir} is not inside a git repository`);
   const repo = fs.realpathSync(top);
@@ -260,6 +278,7 @@ export async function resolveDirectory(dir: string, baseOverride: string | null,
 
   let baseRef: string, baseTip: string | null = null;
   let baseRemote: string | null = null;
+  let onBase = false;
   if (baseOverride) {
     baseRef = baseOverride;
     baseTip = gitMaybe(repo, 'rev-parse', '--verify', `${baseOverride}^{commit}`)?.trim() || null;
@@ -279,6 +298,7 @@ export async function resolveDirectory(dir: string, baseOverride: string | null,
       const def = remote && gitMaybe(repo, 'symbolic-ref', '--short', `refs/remotes/${remote}/HEAD`)?.trim();
       const branch = def ? def.slice(remote!.length + 1) : ['main', 'master'].find((b) => gitMaybe(repo, 'rev-parse', '--verify', `${b}^{commit}`)) || '';
       if (!branch) throw new Error('no pull request for this branch and no default branch to compare with; pass -base <branch>');
+      onBase = gitMaybe(repo, 'symbolic-ref', '--quiet', '--short', 'HEAD')?.trim() === branch;
       let fetched: string | null = null;
       if (remote) {
         say(`fetching ${remote}/${branch}`);
@@ -304,9 +324,9 @@ export async function resolveDirectory(dir: string, baseOverride: string | null,
   } catch (e) {
     throw e instanceof CommandError ? new Error(`${baseRef} and HEAD share no history`) : e;
   }
-  if (baseSha === headSha) throw new Error(`HEAD adds nothing to ${baseRef}: there is nothing to review`);
+  if (baseSha === headSha && !opts.empty) throw new Error(nothingToReview({ pr, baseRef }, false));
   // The directory itself is the head checkout when nothing in it is uncommitted.
   const dirty = (gitMaybe(repo, 'status', '--porcelain', '--untracked-files=no') || '').trim() !== '';
   if (dirty) notes.push('uncommitted changes are not part of the review');
-  return { repo, repoKey, pr, stack: null, baseRef, baseRemote, baseSha, headSha, headDir: dirty ? null : repo, notes };
+  return { repo, repoKey, pr, stack: null, baseRef, baseRemote, baseSha, headSha, headDir: dirty ? null : repo, notes, onBase };
 }

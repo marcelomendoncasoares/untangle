@@ -271,6 +271,8 @@
       return `<span class="prog"><span class="step"><b>${pct}%</b> ${esc(r.build.step ? r.build.step.label : 'starting')}</span><span class="track build"><i style="width:${pct}%"></i></span></span>`;
     }
     const p = r.progress;
+    // A build with nothing built yet has no changes to count.
+    if (r.builds && !p.total) return '<span class="prog"><span class="step">Nothing built yet</span><span class="track"><i style="width:0%"></i></span></span>';
     return `<span class="prog"><span><b>${fmt(p.done)}</b> <span class="of">of ${fmt(p.total)}</span></span><span class="track"><i style="width:${p.total ? ((100 * p.done) / p.total).toFixed(1) : 100}%"></i></span></span>`;
   }
 

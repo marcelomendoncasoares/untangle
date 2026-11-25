@@ -39,6 +39,13 @@ a review of the change, do it now, as described below. Then tell the user the re
 end the turn.`));
   });
 
+  it('when the skill is read for build mode, then it starts the review with -build and builds on the folder’s branch, a commit a step.', async () => {
+    const r = await run([]);
+    assert.deepEqual([r.out.includes('to build a change in untangle or start untangle in build mode'), r.out.includes(`When the user asks for build mode, or to build a change in untangle, run \`untangle watch -build\`:
+the review opens even with nothing to review yet, and the user's notes on the review say what to
+build. Build it on the folder's current branch and commit each step, so the review shows it.`)], [true, true]);
+  });
+
   it('when the skill is read for a stack, then it directs fixes to the named leg and merges and pushes in order.', async () => {
     const r = await run([]);
     assert.ok(r.out.includes(`When the review covers a stack of pull requests, each note names the pull request its line is

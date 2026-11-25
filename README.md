@@ -196,7 +196,9 @@ are also rows of the tab's Notes and GitHub, as those on lines are.
 When an agent wrote the code, keep your comments as local notes for it. With the
 [untangle skill](#with-a-coding-agent), ask in its chat, "review this in untangle": the review
 opens, your notes reach the agent as you write them, and it answers in their threads, commits and
-resolves what it fixed. Ask for its review too, and it writes notes of its own. It works with
+resolves what it fixed. Ask for its review too, and it writes notes of its own. Or build with it from
+nothing: "start untangle in build mode" opens the review before the branch has a change, your notes
+on the review say what to build, and Refresh brings in its commits as it builds. It works with
 Claude and Codex, and *Copy for agent* takes the notes to any other chat. The agent's label, in the
 top bar, says what its chat is doing, and its menu takes a note on the review as a whole, for what
 has no line. While the agent works, the tab's icon is a circle going round.
@@ -334,6 +336,9 @@ upstream's or your own), or to `-base <branch>`.
 - **A pull request URL** (`https://github.com/<owner>/<repo>/pull/<number>`) is cloned into the
 cache first; the next pull request of the same repository only fetches. An open one also gets a
 working copy of its branch, where its agent changes it, and the review follows that copy's commits.
+- **Nothing yet**: a branch that adds nothing opens with `-build`, to build the change from the
+review's notes. The review follows the commits that build it, and on the default branch itself it
+keeps comparing with where the build started as the commits reach that branch.
 - **A stacked pull request**, one whose base is another open pull request's branch, is reviewed with
 the pull requests under it, down to the first branch that isn't another one's head
 ([A stack, in one review](#a-stack-in-one-review)).
@@ -486,6 +491,7 @@ On a Mac, <kbd>⌘</kbd> takes Ctrl's place, and Back is <kbd>⌘</kbd> <kbd>[</
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-base string`      | compare with this branch or commit instead of the pull request's base                                                                                |
 | `-chains string`    | what chains follow: `history`, the commits that started each change (default), or `structure`, the code alone                                        |
+| `-build`            | open the review with nothing to review yet, to build the change from its notes; it stays a build until it's closed                                   |
 | `-autoclose`        | stop once the review's last open page closes (default true; `-autoclose=false` keeps serving)                                                        |
 | `-export string`    | write the review to this HTML file, to share it read-only, and exit                                                                                  |
 | `-editor string`    | open locations with this command or URL; `{file}`, `{line}` and `{col}` are replaced (also `UNTANGLE_EDITOR`; VS Code's `vscode://` link by default) |

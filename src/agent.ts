@@ -173,7 +173,7 @@ export async function watch(o: { target: string; given: boolean; forward: string
   const stop = new AbortController();
   process.once('SIGINT', () => stop.abort());
   process.once('SIGTERM', () => stop.abort());
-  const how = () => explain(chat, String(hello.url || run?.url), reply, again);
+  const how = () => explain(chat, String(hello.url || run?.url), reply, again, hello.build === true);
   for (;;) {
     const wait = Math.min(ROUND, deadline - Date.now());
     let r;
@@ -228,8 +228,9 @@ export async function watch(o: { target: string; given: boolean; forward: string
 }
 
 /** The first watch from a chat says how the review works, so asking for a review is all the setup it needs. */
-function explain(chat: Chat | null, url: string, reply: string, again: string) {
+function explain(chat: Chat | null, url: string, reply: string, again: string, build: boolean) {
   say(`this chat holds the code review. The person reviewing writes notes on the code in its page (${url}), and answers show under them at once.`);
+  if (build) say(`the review builds a change: notes on the review say what to build. Build it on the reviewed branch and commit each step, so the review shows it.`);
   if (chat?.kind === 'codex') say(`when there are unread notes or replies, untangle puts a line in this chat; ${again} then prints them.`);
   else say(`each ${again} waits for unread notes and replies, prints them and exits. After each answer, run it again in the background${chat ? '' : ', if possible'}.`);
   say(`answer in a note’s thread with ${reply} N2 'the answer'. Follow the line the notes open with: by default, change code only where a note explicitly asks for it. After making such a change, commit it and add -resolve.`);

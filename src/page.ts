@@ -29,6 +29,8 @@ export interface PageConfig {
   base?: string;
   /** The review's notes, kept on this machine: what the page shows of them at first. */
   notes?: unknown;
+  /** Opened to build the change from its notes (-build): with nothing built yet, it says so. */
+  build?: boolean;
 }
 
 const read = (f: string) => fs.readFileSync(path.join(ROOT, 'viewer', f), 'utf8');

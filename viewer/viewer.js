@@ -230,6 +230,9 @@
   // a string or a comment that an earlier line opened, a model's block, or a Markdown code block
   // (see rowsColors).
   const hunkOfRows = new WeakMap();
+  // A build with nothing built yet (untangle -build): notes on the review say what to build, and
+  // the changes come with its commits.
+  const unbuilt = () => !!CONFIG.build && !M().files.length && !M().generated.length;
   function M(name) {
     name = name || state.compare;
     if (models[name]) return models[name];
@@ -3279,16 +3282,18 @@
     } else {
       // No pull request on GitHub: the notes on the review, alone.
       const open = notes.filter((n) => !n.resolved).length;
+      const none = unbuilt();
       h = headerHtml({
         crumbs: `<button type="button" data-tab="comments" title="Show the threads">Threads</button>${SEP}<b class="ui">The review</b>`,
         facts: GH.on && !d ? (GH.error ? esc(GH.error) : 'Loading the conversation from GitHub…') : `${open} open note${open === 1 ? '' : 's'} on the review · on no line`,
       });
-      h += '<div class="conv">' + (notes.length ? notes.map((n) => noteHtml(n)).join('') : `<p class="onrev-none">A note on the review is for what has no line: how to go on, a question about the whole change, or what ${esc(agentWho())} found when it had nothing to say on a line. It reaches ${esc(agentWho())} as your notes on lines do.</p>`);
+      const lead = none ? `<p class="onrev-none">Nothing is built yet. Say what to build in a note on the review: ${esc(agentWho())} builds it and commits, and its commits come in when you refresh.</p>` : '';
+      h += '<div class="conv">' + lead + (notes.length ? notes.map((n) => noteHtml(n)).join('') : lead ? '' : `<p class="onrev-none">A note on the review is for what has no line: how to go on, a question about the whole change, or what ${esc(agentWho())} found when it had nothing to say on a line. It reaches ${esc(agentWho())} as your notes on lines do.</p>`);
     }
     // The box: a note to the agent about the whole review, or, switched, a comment on the conversation.
     const local = !d || voiceOf('issue') === 'local';
     h += `<div class="conv-new">${composerHtml('issue', {
-      local, dest: true, mode: !!d, rows: 3, placeholder: local ? `Write to ${agentWho()} about the review as a whole` : 'Add a comment to the conversation',
+      local, dest: true, mode: !!d, rows: 3, placeholder: !local ? 'Add a comment to the conversation' : unbuilt() ? `Tell ${agentWho()} what to build` : `Write to ${agentWho()} about the review as a whole`,
       buttons: local ? noteButtons('nt-review-add', '', 'Add note') : [['Comment', 'data-act="gh-comment"', true]],
     })}</div></div>`;
     return h;
@@ -3340,7 +3345,7 @@
     const open = sorted.filter((n) => !n.resolved), done = sorted.filter((n) => n.resolved);
     const group = (label, title, list) => (list.length ? `<div class="sb-group turn" title="${esc(title)}"><span>${esc(label)}</span><span>${list.length}</span></div>` + list.map(row).join('') : '');
     const them = ntThem(names);
-    let h = !open.length ? `<div class="sb-gh">${localMode() ? 'None open: the + on a line writes one.' : 'None open.'}</div>`
+    let h = !open.length ? `<div class="sb-gh">${unbuilt() ? 'None open: a note on the review says what to build.' : localMode() ? 'None open: the + on a line writes one.' : 'None open.'}</div>`
       : !names.length ? open.map(row).join('')
         : group('Waiting for you', `${names.length === 1 ? them : 'An agent'} had the last word: yours to answer or resolve`, open.filter((n) => n.turn === 'you'))
           + group(`Waiting for ${them}`, `You had the last word: ${them === 'the agents' ? 'theirs' : `${them}’s`} to answer`, open.filter((n) => n.turn !== 'you'));
@@ -5758,6 +5763,7 @@
   }
   function renderMap(famId) {
     const m = M();
+    if (unbuilt()) return headerHtml({ crumbs: '<b class="ui">Chain map</b>', facts: 'Nothing built yet', action: NT.on ? '<button type="button" class="btn primary" data-act="conversation">Say what to build</button>' : '' }) + '<div class="empty">The chains come with the commits that build the change. Say what to build in a note on the review.</div>';
     if (m.byCommit) return renderCommitMap();
     const fam = m.families.find((f) => f.id === famId) || m.families[0];
     const linked = m.families.filter((f) => f.chains.length > 1);
@@ -6568,7 +6574,8 @@
     const m = M();
     const all = m.files.flatMap((f) => f.blocks);
     const t = stats(all);
-    const pct = t.all ? Math.round((1 - t.lines / t.all) * 100) : 100;
+    const none = unbuilt();
+    const pct = none ? 0 : t.all ? Math.round((1 - t.lines / t.all) * 100) : 100;
     const v = state.view;
     // A tab's dot, by its count in no room of its own, says what's new in it.
     const tab = (k, label, n, fresh) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${state.tab === k}"${fresh ? ` title="${esc(fresh)}"` : ''}>${label}<i>${n}</i>${fresh ? '<span class="nw" aria-hidden="true"></span>' : ''}</button>`;
@@ -6579,8 +6586,8 @@
     const freshWords = fresh.length ? `New from ${fresh.length === 1 ? lastAgent(fresh[0]) : ntThem(ntNames())}: ${nList(fresh.map((x) => x.n))}` : '';
     const openNotes = NT.data ? NT.data.notes.filter((x) => !x.resolved).length : 0;
     const openThreads = GH.on && !GH.data && !GH.error ? '…' : (GH.data ? GH.data.threads.filter((x) => !x.resolved).length : 0) + openNotes;
-    let h = `<div class="sb-top">${compact() ? `<div class="sb-pr">${prHtml(true)}</div>` : ''}<div class="sb-prog${t.open ? '' : ' all'}" title="${pct}% of the changed lines reviewed: ${t.total - t.open} of ${t.total} changes">`
-      + (t.open ? `<b>${t.open}</b><span>change${t.open === 1 ? '' : 's'} to review</span>` : `<b>${ICON.check}</b><span>All ${t.total} changes reviewed</span>`)
+    let h = `<div class="sb-top">${compact() ? `<div class="sb-pr">${prHtml(true)}</div>` : ''}<div class="sb-prog${t.open || none ? '' : ' all'}" title="${none ? 'Nothing built yet: the changes come with its commits' : `${pct}% of the changed lines reviewed: ${t.total - t.open} of ${t.total} changes`}">`
+      + (none ? '<b>0</b><span>changes yet</span>' : t.open ? `<b>${t.open}</b><span>change${t.open === 1 ? '' : 's'} to review</span>` : `<b>${ICON.check}</b><span>All ${t.total} changes reviewed</span>`)
       + `<button type="button" class="ib" data-act="menu" data-menu="side" title="Where your marks are kept" aria-label="Marks" aria-haspopup="dialog" aria-expanded="${MENU.open === 'side'}">${ICON.more}</button><div class="sb-bar" aria-hidden="true"><i style="width:${pct}%"></i></div></div>`
       // Four tabs fit the sidebar without their counts: they show when it's wider.
       + `<div class="sb-tabs${threadsOn && hxOn() ? ' four' : ''}" role="tablist">${tab('chains', 'Chains', m.chains.length)}${tab('files', 'Files', m.files.length)}${threadsOn ? tab('comments', 'Threads', openThreads, freshWords) : ''}${hxOn() ? tab('commits', 'Commits', HISTORY.commits.length) : ''}</div></div>`;
@@ -8198,7 +8205,7 @@
   }
   function reloadHere() {
     const v = state.view;
-    const r = { tab: state.tab, kind: v.kind, path: v.path || null, chain: v.kind === 'chain' && M().chains[v.id] ? M().chains[v.id].name : null, from: CONFIG.head || null, lens: state.lens ? { ...state.lens } : null };
+    const r = unbuilt() ? { tab: 'chains', kind: 'map', from: CONFIG.head || null } : { tab: state.tab, kind: v.kind, path: v.path || null, chain: v.kind === 'chain' && M().chains[v.id] ? M().chains[v.id].name : null, from: CONFIG.head || null, lens: state.lens ? { ...state.lens } : null };
     try { sessionStorage.setItem(RESUME, JSON.stringify(r)); } catch (e) { /* storage unavailable */ }
     // The last marks get there first (a big review's are too big to finish after the page is gone).
     Promise.race([flushSave(true), new Promise((done) => setTimeout(done, 2000))]).then(() => location.reload());
@@ -9842,6 +9849,8 @@
     setInterval(() => { if (document.visibilityState === 'visible' && !GH.busy && Date.now() - GH.at > 60000) ghLoad(true); }, 15000);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !GH.busy && Date.now() - GH.at > 20000) ghLoad(true); });
   }
+  // A build with nothing built yet opens on the review's thread, where its notes say what to build.
+  if (unbuilt() && NT.on && state.view.kind === 'map') { state.view = { kind: 'conversation' }; state.tab = 'comments'; }
   render({ top: true });
   // The commits' live part (your last review, GitHub's checks and force pushes), and a lens kept
   // through a reload.

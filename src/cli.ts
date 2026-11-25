@@ -30,7 +30,7 @@ import { findRun, holder, listRuns, PID_NS, pidAlive, prKey, removeRun, wantedDi
 import { ReviewServer } from './server.js';
 import { editorFrom, ReviewSession } from './session.js';
 import { skill } from './skill.js';
-import { isPrUrl, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
+import { fromBuild, isPrUrl, nothingToReview, resolveDirectory, resolveUrl, upstreamOf, type Target } from './target.js';
 import { upgrade, upgradeNotice } from './upgrade.js';
 import { builtAt, STARTED_BUILT, VERSION } from './version.js';
 import { stackIdentity, stackRecord } from './stack.js';
@@ -109,6 +109,10 @@ async function review(opts: Options): Promise<number> {
     pages: () => server?.pageCount ?? 0,
   });
   let url = '';
+  // Built from its notes: opened with -build, or as a build that hasn't been closed since. It may
+  // open with nothing to review yet, and built on the branch it compares with (main itself), it
+  // keeps comparing with where the build started (from).
+  let build: { from: string | null } | null = null;
   // The review's notes: kept for its branch, they stay through refreshes. Where the page opened.
   let notes: Notes | null = null;
   // An agent's session started this review (its untangle watch, or untangle run in its chat).
@@ -150,7 +154,7 @@ async function review(opts: Options): Promise<number> {
       say,
       {
         // The page comes with the notes, so it opens in the mode they're in.
-        page: () => (render && session ? render({ ...session.config(), notes: notes?.view() }) : null),
+        page: () => (render && session ? render({ ...session.config(), notes: notes?.view(), build: !!build }) : null),
         asset: (name) => {
           const body = name === 'highlight.js' ? highlighter() : name === 'feedback-panel.js' ? feedbackPanel() : name === 'fonts.css' ? fonts() : null;
           return body && { type: name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8', body };
@@ -316,7 +320,7 @@ async function review(opts: Options): Promise<number> {
     try {
       if (route === 'notes' && method === 'GET') return { data: book.view() };
       if (route === 'notes' && method === 'POST') return { data: await book.act((body || {}) as NoteAction) };
-      if (route === 'notes/hello' && method === 'GET') return { data: { title: target ? names(target).title : '', url, head: target?.headSha, where: book.atText(), pages: server ? server.pageCount : 0, opened } };
+      if (route === 'notes/hello' && method === 'GET') return { data: { title: target ? names(target).title : '', url, head: target?.headSha, where: book.atText(), pages: server ? server.pageCount : 0, opened, build: !!build } };
       if (route === 'notes/watch' && (method === 'POST' || method === 'GET')) {
         const wait = Math.min(WATCH_ROUND, Math.max(0, Number(b.wait ?? query.get('wait')) || WATCH_ROUND));
         // The command the agent reads with, as it types it: it goes in the lines for its chat.
@@ -385,6 +389,7 @@ async function review(opts: Options): Promise<number> {
       freed: null,
       local: t.work ? { work: t.work.dir, branch: t.work.githubBranch, ref: t.work.ref } : was?.local ?? null,
       stack: stackRecord(t.stack),
+      build: build && { from: build.from },
     };
     local?.stop();
     local = new LocalChanges(t, byUrl, () => notes?.watched() ?? false, recordSoon);
@@ -395,7 +400,24 @@ async function review(opts: Options): Promise<number> {
   // the working copies of its branches, a stack's lower ones among them. A command run in one finds
   // the review, in the checkout of a commit it reviewed before a refresh too.
   const folders = (t: Target) => [...new Set([...(run?.folders ?? []), ...(byUrl ? [worktreeDir(t.repoKey, t.headSha), ...(t.work ? [t.work.dir] : []), ...(t.stack?.legs ?? []).map((l) => workDir(t.repoKey, l.pr.number))] : [])])];
-  const resolve = (progress: Narrator) => (byUrl ? resolveUrl(opts.target, (l) => progress.detail(l), opts.base) : resolveDirectory(dir, opts.base, (l) => progress.detail(l)));
+  // A target that adds nothing to its base is one too, until it's known whether the review builds.
+  const resolve = async (progress: Narrator) => building(await (byUrl ? resolveUrl(opts.target, (l) => progress.detail(l), opts.base, { empty: true }) : resolveDirectory(dir, opts.base, (l) => progress.detail(l), { empty: true })));
+  // Whether the review builds, as -build says or as its record kept it: then a target with nothing
+  // to review is its start, and one on the branch it compares with keeps the start it had.
+  const building = (t: Target): Target => {
+    if (!build) {
+      const kept = readRecord(recordFile(t.repoKey, names(t).snapshotKey));
+      const going = kept?.build && !kept.closed ? kept.build : null;
+      if (opts.build || going) build = { from: going?.from ?? null };
+    }
+    if (!build) {
+      if (t.baseSha === t.headSha) throw new Error(nothingToReview(t, byUrl));
+      return t;
+    }
+    const b = fromBuild(t, build.from);
+    build.from = b.onBase ? b.baseSha : null;
+    return b.baseSha === b.headSha ? { ...b, notes: [...b.notes, 'nothing to review yet: notes on the review say what to build'] } : b;
+  };
   // What a review is called: in the terminal and the page, and the branch that keeps its marks.
   const names = (t: Target) => {
     const pr = t.pr;

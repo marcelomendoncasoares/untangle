@@ -146,6 +146,8 @@ export interface Row {
   memory: Summary['memory'] | null;
   /** While it's being built: the step it's on, of the steps it expects. */
   build: { phase: string; step: { label: string; count: [number, number] | null } | null; plan: string[] | null; error: string | null } | null;
+  /** Opened to build a change from its notes (-build): with nothing built yet, it says so. */
+  builds: boolean;
   pages: number;
   /** Pausing once its agent's turn ends. */
   pausing: boolean;
@@ -208,6 +210,7 @@ function starting(run: RunInfo, s: Summary | undefined, pull: Pull | null): Row 
     progress: s?.progress ?? { done: 0, total: 0 }, notes: s?.notes ?? { open: 0, waiting: 0 }, waiting, agents: agentsOf(s), chat: null,
     memory: old ? memoryOf(run.pid) : s?.memory ?? null,
     build: old || s?.phase === 'ready' ? null : { phase: s?.phase ?? 'starting', step: s?.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s?.plan ?? null, error: s?.error ?? null },
+    builds: false,
     pages: s?.pages ?? 0, pausing: false, closing: false, github: null, stand: null, need: need(waiting), needAt: waiting.length ? Math.min(...waiting.map((w) => w.n)) : null, active: s?.active ?? null, disk: null, freed: null, parts: null, older: old, twin: false, local: s?.local ?? null, stack: s?.stack ?? null,
   };
 }
@@ -297,6 +300,7 @@ function row(r: Listed, s: Summary | undefined, disk: number | null, h: Holdings
     chat: c ? { agent: c.agent, kind: c.kind, id: c.id, orca: !!c.orca && (r.status === 'running' || !startedHere(c)) } : null,
     memory: s?.memory ?? null,
     build: s && s.phase !== 'ready' ? { phase: s.phase, step: s.step ? { label: s.step.label, count: s.step.count ?? null } : null, plan: s.plan, error: s.error } : null,
+    builds: !!r.build,
     pages: s?.pages ?? 0,
     pausing: false,
     closing: false,
